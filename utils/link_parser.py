@@ -29,30 +29,6 @@ def find_links_in_text(text: str) -> List[str]:
     return [m.group(1).strip().strip(".,)") for m in URL_REGEX.finditer(text)]
 
 
-def classify_link(url: str) -> str:
-    """
-    Return: 'gdrive' | 'telegram' | 'm3u8' | 'direct' | 'unknown'
-    """
-    u = url.strip()
-    u_low = u.lower()
-
-    if "drive.google.com" in u_low:
-        return "gdrive"
-    if "t.me/" in u_low or "telegram.me/" in u_low:
-        return "telegram"
-
-    # strip query & fragment for extension check
-    base = u_low.split("?", 1)[0].split("#", 1)[0]
-
-    if base.endswith(".m3u8"):
-        return "m3u8"
-
-    for ext in FILE_EXT:
-        if base.endswith(ext):
-            return "direct"
-
-    return "unknown"
-
 
 def extract_links_from_folder(base_dir: str) -> Dict[str, List[str]]:
     """
@@ -86,3 +62,35 @@ def extract_links_from_folder(base_dir: str) -> Dict[str, List[str]]:
                     all_links[kind].append(url)
 
     return all_links
+
+
+YTDL_DOMAINS = [
+    "instagram.com", "twitter.com", "x.com", "facebook.com", "fb.watch",
+    "tiktok.com", "vimeo.com", "dailymotion.com", "reddit.com", "twitch.tv",
+    "bilibili.com", "ok.ru", "vk.com",
+]
+
+def classify_link(url: str) -> str:
+    """
+    Return: 'gdrive' | 'telegram' | 'm3u8' | 'ytdl' | 'direct' | 'unknown'
+    """
+    u = url.strip()
+    u_low = u.lower()
+
+    if "drive.google.com" in u_low:
+        return "gdrive"
+    if "t.me/" in u_low or "telegram.me/" in u_low:
+        return "telegram"
+
+    for domain in YTDL_DOMAINS:
+        if domain in u_low:
+            return "ytdl"
+
+    base = u_low.split("?", 1)[0].split("#", 1)[0]
+    if base.endswith(".m3u8"):
+        return "m3u8"
+    for ext in FILE_EXT:
+        if base.endswith(ext):
+            return "direct"
+
+    return "unknown"

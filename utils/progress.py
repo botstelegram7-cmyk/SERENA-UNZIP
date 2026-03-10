@@ -3,23 +3,20 @@ import time
 from typing import Dict
 
 from pyrogram.types import Message
-
 from config import Config
 
-_last_update: Dict[int, float] = {}  # msg_id -> timestamp
+_last_update: Dict[int, float] = {}
 
 
 def human_bytes(size: int) -> str:
     if size == 0:
         return "0 B"
-    power = 1024
-    n = 0
-    power_labels = ["B", "KB", "MB", "GB", "TB"]
     size = float(size)
-    while size >= power and n < len(power_labels) - 1:
-        size /= power
-        n += 1
-    return f"{size:.2f} {power_labels[n]}"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} PB"
 
 
 def human_time(seconds: int) -> str:
@@ -34,6 +31,17 @@ def human_time(seconds: int) -> str:
     return f"{s}s"
 
 
+def _network_quality(speed_bps: float) -> str:
+    mb = speed_bps / (1024 * 1024)
+    if mb < 0.5:
+        return "📶 Slow"
+    if mb < 3:
+        return "📶 Normal"
+    if mb < 10:
+        return "📶 Fast"
+    return "📶 Very Fast"
+
+
 async def progress_for_pyrogram(
     current: int,
     total: int,
@@ -42,39 +50,31 @@ async def progress_for_pyrogram(
     file_name: str,
     direction: str = "to my server",
 ):
-    """
-    Pyrogram progress callback.
-    NOTE: start_time = time.time() hona chahiye. (bot.py me fix kiya gaya hai)
-    """
-    now = time.time()
+    now    = time.time()
     msg_id = message.id
-    last = _last_update.get(msg_id, 0)
+    last   = _last_update.get(msg_id, 0)
     if now - last < Config.PROGRESS_UPDATE_INTERVAL and current != total:
         return
-
     _last_update[msg_id] = now
 
-    if total <= 0:
-        percent = 0.0
-    else:
-        percent = current * 100 / total
+    percent = (current * 100 / total) if total > 0 else 0.0
+    elapsed = max(now - start_time, 1e-3)
+    speed   = current / elapsed
+    eta     = int((total - current) / speed) if speed > 0 and total > 0 else 0
 
-    elapsed = max(now - start_time, 1e-3)  # 0 se bachne ke liye
-    speed = current / elapsed  # bytes/sec
-    eta = int((total - current) / speed) if speed > 0 and total > 0 else 0
-
-    filled_len = int(20 * percent / 100)
-    bar = "●" * filled_len + "○" * (20 - filled_len)
+    filled = int(20 * percent / 100)
+    bar    = "●" * filled + "○" * (20 - filled)
 
     text = (
         "➵⋆🪐ᴛᴇᴄʜɴɪᴄᴀʟ_sᴇʀᴇɴᴀ𓂃\n\n"
-        f"{file_name}\n"
-        f"{direction}\n"
+        f"📄 {file_name}\n"
+        f"↔️ {direction}\n"
         f" [{bar}] \n"
-        f"◌Progress😉:〘 {percent:.2f}% 〙\n"
-        f"Done: 〘{human_bytes(current)} of {human_bytes(total)}〙\n"
-        f"◌Speed🚀:〘 {human_bytes(int(speed))}/s 〙\n"
-        f"◌Time Left⏳:〘 {human_time(eta)} 〙"
+        f"◌ Progress 😉 : 〘 {percent:.1f}% 〙\n"
+        f"✅ Done       : 〘 {human_bytes(current)} of {human_bytes(total)} 〙\n"
+        f"🚀 Speed      : 〘 {human_bytes(int(speed))}/s 〙\n"
+        f"⏳ ETA        : 〘 {human_time(eta)} 〙\n"
+        f"📶 Network    : {_network_quality(speed)}"
     )
 
     try:
@@ -82,5 +82,5 @@ async def progress_for_pyrogram(
     except Exception:
         pass
 
-    if current == total and msg_id in _last_update:
+    if current == total:
         _last_update.pop(msg_id, None)

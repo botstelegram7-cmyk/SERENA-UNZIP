@@ -1,0 +1,23 @@
+# utils/password_list.py
+COMMON_PASSWORDS = [
+    "1234", "12345", "123456", "1234567", "12345678", "123456789",
+    "password", "Password", "PASSWORD",
+    "admin", "Admin", "test", "Test",
+    "qwerty", "abc123", "Abc123",
+    "telegram", "Telegram",
+    "serena", "Serena",
+    "0000", "9999", "1111", "2222",
+    "123", "321", "000", "111",
+    "pass", "Pass",
+    "welcome", "Welcome",
+    "hello", "Hello",
+    "default", "Default",
+    "user", "User",
+    "root", "Root",
+    "guest", "Guest",
+    "india", "India",
+    "1234abcd", "abcd1234",
+    "p@ssw0rd", "P@ssw0rd",
+    "no_password", "nopassword",
+    "unrar", "unzip",
+]
