@@ -24,7 +24,7 @@ from database import (
     set_premium, update_user_stats,
 )
 from utils.cleanup import cleanup_worker
-from utils.cloud_upload import upload_to_catbox, upload_to_gofile
+from utils.cloud_upload import smart_upload, upload_to_gofile, upload_to_catbox
 from utils.extractors import detect_encrypted, extract_archive
 from utils.file_splitter import split_file, human_size
 from utils.gdrive import get_gdrive_direct_link
@@ -353,8 +353,7 @@ async def settings_cmd(client, message):
           f"🔤 Replace: <code>{cfg.get('replace_from') or 'None'}</code> → <code>{cfg.get('replace_to') or 'None'}</code>\n"
           f"🖼 Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
           "Use buttons below:")
-    if Config.START_PIC: await message.reply_photo(Config.START_PIC,caption=text,reply_markup=settings_keyboard())
-    else: await message.reply_text(text,reply_markup=settings_keyboard())
+    await message.reply_text(text, reply_markup=settings_keyboard())
 
 
 @app.on_message(filters.command("cancel") & (filters.private|filters.group))
@@ -727,6 +726,50 @@ async def group_text_handler(client, message):
     await get_or_create_user(uid)
     await process_links_message(client,message,txt.strip())
 
+
+async def _send_mystats(client, user, dest):
+    uid   = user.id
+    u     = await get_or_create_user(uid)
+    stats = u.get("stats", {})
+    cfg   = await get_user_settings(uid) or {}
+    is_prem   = await is_premium_user(uid)
+    prem_ts   = await get_premium_until(uid)
+    ref_count = await get_referral_count(uid)
+    prem_str  = "⭐ Active"
+    if is_prem and prem_ts:
+        exp = datetime.datetime.utcfromtimestamp(prem_ts).strftime("%d %b %Y")
+        prem_str += f" (expires {exp})"
+    elif not is_prem:
+        prem_str = "❌ Free"
+    text = (
+        f"📊 <b>Your Stats</b>\n\n"
+        f"👤 Name: <b>{user.first_name}</b>\n"
+        f"🆔 ID: <code>{uid}</code>\n"
+        f"⭐ Premium: {prem_str}\n\n"
+        f"📦 Tasks today: <b>{stats.get('daily_tasks',0)}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
+        f"💾 Data today: <b>{stats.get('daily_size_mb',0):.1f} MB/{Config.FREE_DAILY_SIZE_MB} MB</b>\n"
+        f"🏆 Total tasks: <b>{stats.get('total_tasks',0)}</b>\n"
+        f"🎁 Referrals: <b>{ref_count}</b>\n\n"
+        f"📝 Caption: <code>{cfg.get('caption_base') or 'None'}</code>\n"
+        f"🖼 Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>"
+    )
+    await dest.reply_text(text)
+
+
+async def _send_settings(client, user, dest):
+    uid = user.id
+    cfg = await get_user_settings(uid) or {}
+    text = (
+        f"{random_emoji()} <b>Your Settings</b>\n\n"
+        f"📝 Caption base: <code>{cfg.get('caption_base') or 'None'}</code>\n"
+        f"🔤 Replace: <code>{cfg.get('replace_from') or 'None'}</code> → "
+        f"<code>{cfg.get('replace_to') or 'None'}</code>\n"
+        f"🖼 Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
+        "Use buttons below:"
+    )
+    await dest.reply_text(text, reply_markup=settings_keyboard())
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # CALLBACKS
 # ════════════════════════════════════════════════════════════════════════════
@@ -736,16 +779,13 @@ async def callbacks(client, cq: CallbackQuery):
     if data=="retry_force_sub": await cq.message.delete(); return
     if data in ("show_help","help:unzip","help:link"):
         await cq.answer()
-        class FM: from_user=cq.from_user; command=["help"]; reply_text=cq.message.reply_text; chat=cq.message.chat
-        await help_cmd(client,FM()); return
+        await help_cmd(client, cq.message); return
     if data=="show_mystats":
         await cq.answer()
-        class FM: from_user=cq.from_user; command=["mystats"]; reply_text=cq.message.reply_text; chat=cq.message.chat
-        await mystats_cmd(client,FM()); return
+        await _send_mystats(client, cq.from_user, cq.message); return
     if data=="open_settings":
         await cq.answer()
-        class FM: from_user=cq.from_user; command=["settings"]; reply_text=cq.message.reply_text; chat=cq.message.chat
-        await settings_cmd(client,FM()); return
+        await _send_settings(client, cq.from_user, cq.message); return
     if data=="premium_info":
         await cq.answer()
         await cq.message.reply_text(
@@ -1590,8 +1630,9 @@ async def _do_cloud_upload(client, cq, orig, platform):
     except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
     await status.edit_text(f"☁️ Uploading to {platform}…")
     try:
-        if platform=="gofile": url=await upload_to_gofile(dl,Config.GOFILE_API_KEY or None)
-        else: url=await upload_to_catbox(dl)
+        if platform=="gofile": url=await upload_to_gofile(dl)
+        elif platform=="catbox": url=await upload_to_catbox(dl)
+        else: url=await smart_upload(dl)
         await status.edit_text(
             f"✅ <b>Uploaded to {platform}!</b>\n\n🔗 <a href='{url}'>Download Link</a>\n<code>{url}</code>")
     except Exception as e: await status.edit_text(f"❌ Cloud upload failed:\n<code>{e}</code>")
