@@ -6,36 +6,30 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 
-# Ensure current directory (jahan server.py hai) sys.path me ho
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Ab yaha se bot import karega
-from bot import app as tg_app  # pyrogram Client
+from bot import app as tg_app
 from utils.cleanup import cleanup_worker
 
-
-fastapi_app = FastAPI(title="Serena Unzip Web Service")
-
+fastapi_app = FastAPI(title="Serena Unzip Web Service v2")
 
 @fastapi_app.on_event("startup")
 async def on_startup():
-    # background cleanup worker
     asyncio.create_task(cleanup_worker())
-
-    # start Telegram bot client
     await tg_app.start()
-    print("Serena Unzip bot started (web service mode)")
-
+    print("Serena Unzip Bot v2 started")
 
 @fastapi_app.on_event("shutdown")
 async def on_shutdown():
-    # stop Telegram bot client
     await tg_app.stop()
-    print("Serena Unzip bot stopped")
-
+    print("Serena Unzip Bot v2 stopped")
 
 @fastapi_app.get("/", response_class=PlainTextResponse)
 async def root():
-    return "Serena Unzip Bot is running ✅"
+    return "Serena Unzip Bot v2 is running"
+
+@fastapi_app.get("/health", response_class=PlainTextResponse)
+async def health():
+    return "OK"
