@@ -1338,10 +1338,31 @@ async def _do_compress(client, cq, tid, res, crf=28):
             except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
             out_name=f"compressed_{label}_{Path(info['fname']).stem}.mp4"
             out=str(temp_root/out_name)
-            await status.edit_text(f"⚙️ Compressing [{label}]… This may take a while.")
+            import time as _time
+            _compress_start = _time.time()
+            await status.edit_text(f"⚙️ Compressing [{label}]… Starting…")
+
+            async def _compress_progress(pct, eta, speed, size):
+                elapsed = _time.time() - _compress_start
+                filled = int(20 * pct / 100)
+                bar = "●" * filled + "○" * (20 - filled)
+                text = (
+                    "➵⋆🪐ᴛᴇᴄʜɴɪᴄᴀʟ_sᴇʀᴇɴᴀ𓂃\n\n"
+                    f"⚙️ Compressing [{label}]\n"
+                    f" [{bar}] \n"
+                    f"◌ Progress 😉 : 〘 {pct:.1f}% 〙\n"
+                    f"📦 Output Size : 〘 {size} 〙\n"
+                    f"🚀 Speed       : 〘 {speed} 〙\n"
+                    f"⏳ ETA         : 〘 {eta} 〙"
+                )
+                try:
+                    await status.edit_text(text)
+                except Exception:
+                    pass
+
             try:
                 resolution=None if res in ("orig","None","none") else res
-                await compress_video(dl,out,resolution=resolution,crf=crf)
+                await compress_video(dl,out,resolution=resolution,crf=crf,on_progress=_compress_progress,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
             except Exception as e:
                 await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>")
                 _safe_cleanup(str(temp_root)); COMPRESS_TASKS.pop(tid,None); return
