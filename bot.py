@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pyrogram import Client, enums, filters, idle
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import MessageNotModified, UserIsBlocked, FloodWait, PeerIdInvalid
 from pyrogram.types import (
     CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message,
 )
@@ -52,6 +52,16 @@ app = Client(
     bot_token=Config.BOT_TOKEN,
     in_memory=True,
 )
+
+async def _safe_reply(message, text, **kwargs):
+    """Send reply, silently ignore if user blocked bot or peer not found."""
+    try:
+        return await message.reply_text(text, **kwargs)
+    except (UserIsBlocked, PeerIdInvalid, MessageNotModified):
+        pass
+    except Exception:
+        pass
+    return None
 
 VIDEO_EXT_SET = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts"}
 AUDIO_EXT_SET = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wav"}
@@ -684,19 +694,25 @@ async def on_file(client, message):
 async def process_links_message(client, message, content):
     if not message.from_user: return
     links=find_links_in_text(content or "")
-    if not links: await message.reply_text("No valid URLs found."); return
+    if not links:
+        try: await message.reply_text("No valid URLs found.")
+        except Exception: pass
+        return
     LINK_SESSIONS[(message.chat.id,message.id)]={"links":links,"content":content or ""}
     cats={}
     for u in links:
         k=classify_link(u); cats[k]=cats.get(k,0)+1
     em={"gdrive":"🗂","m3u8":"📺","direct":"💾","telegram":"✈️","unknown":"🔗"}
     lines=[f"{em.get(k,'🔗')} {k}: <b>{v}</b>" for k,v in cats.items()]
-    await message.reply_text(
-        f"🔗 <b>{len(links)} links found</b>\n\n"+"\n".join(lines)+"\n\nChoose action:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬇️ Download All",callback_data=f"links|download_all|{message.chat.id}|{message.id}")],
-            [InlineKeyboardButton("🧹 Cleaned TXT",callback_data=f"links|clean_txt|{message.chat.id}|{message.id}"),
-             InlineKeyboardButton("⏭ Skip",callback_data=f"links|skip|{message.chat.id}|{message.id}")]]))
+    try:
+        await message.reply_text(
+            f"🔗 <b>{len(links)} links found</b>\n\n"+"\n".join(lines)+"\n\nChoose action:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬇️ Download All",callback_data=f"links|download_all|{message.chat.id}|{message.id}")],
+                [InlineKeyboardButton("🧹 Cleaned TXT",callback_data=f"links|clean_txt|{message.chat.id}|{message.id}"),
+                 InlineKeyboardButton("⏭ Skip",callback_data=f"links|skip|{message.chat.id}|{message.id}")]]))
+    except (UserIsBlocked, PeerIdInvalid): pass
+    except Exception: pass
 
 
 @app.on_message((filters.text|filters.caption) & filters.private)
