@@ -11,16 +11,6 @@ class FFmpegError(RuntimeError):
     pass
 
 
-# ── Cancel hook ─────────────────────────────────────────────────────────────
-# bot.py can inject a cancel-check function here so FFmpeg jobs can self-abort.
-# Signature: (uid: int) -> bool  — returns True if the user has requested cancel.
-_cancel_checker = None   # set by bot.py at startup if desired
-
-# Per-process registration callback — bot.py sets this to _register_proc / _unregister_proc
-_on_proc_start = None   # callable(uid, proc)
-_on_proc_end   = None   # callable(uid, proc)
-
-
 _TS_RE    = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 _DUR_RE   = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)\.(\d+)")
 _SPEED_RE = re.compile(r"speed=\s*([\d.]+)x")
@@ -42,25 +32,20 @@ def _fmt_eta(sec: float) -> str:
     return f"{s}s"
 
 
-async def run_ffmpeg(cmd: list, timeout: int = 7200, uid: int = 0):
+async def run_ffmpeg(cmd: list, timeout: int = 1800):
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    if uid and _on_proc_start:
-        try: _on_proc_start(uid, proc)
-        except Exception: pass
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
-        try: proc.kill()
-        except Exception: pass
-        raise FFmpegError(f"FFmpeg timed out after {timeout}s.")
-    finally:
-        if uid and _on_proc_end:
-            try: _on_proc_end(uid, proc)
-            except Exception: pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise FFmpegError("FFmpeg timed out.")
     if proc.returncode != 0:
         raise FFmpegError(err.decode(errors="ignore"))
 
@@ -202,472 +187,173 @@ async def split_video(video_path: str, start: str, duration: str, output_path: s
     ])
 
 
-async def _pipe_encode(
-    input_path: str,
-    output_path: str,
-    out_w: int,
-    out_h: int,
-    cap_fps: float,
-    crf: int,
-    on_progress,
-    update_interval: float,
-    timeout: int = 7200,
-):
-    """
-    FAST 2-process pipe encoder:
-      Process-1: FFmpeg decode+scale → raw YUV420p on stdout  (CPU core 1)
-      Process-2: FFmpeg libx264 encode from stdin → output.mp4 (CPU core 2)
-    Both run in PARALLEL → ~5-9x faster than single-process on 2-core servers.
-    """
-    out_w = out_w if out_w % 2 == 0 else out_w + 1
-    out_h = out_h if out_h % 2 == 0 else out_h + 1
+async def _pipe_encode(input_path, output_path, out_w, out_h, cap_fps, crf, on_progress, update_interval, timeout=7200):
+    """2-process pipe: scale(proc1) | encode(proc2) — run in parallel for ~5-9x speed."""
+    out_w = out_w + (out_w % 2)  # ensure even
+    out_h = out_h + (out_h % 2)
 
     scale_cmd = [
         "ffmpeg", "-y", "-threads", "0",
         "-i", input_path,
-        "-vf", f"scale={out_w}:{out_h}:flags=fast_bilinear,fps=fps={cap_fps:.0f}",
-        "-f", "rawvideo", "-pix_fmt", "yuv420p",
-        "-an", "pipe:1",
+        "-vf", f"scale={out_w}:{out_h}:flags=fast_bilinear,fps=fps={int(cap_fps)}",
+        "-f", "rawvideo", "-pix_fmt", "yuv420p", "-an", "pipe:1",
     ]
     encode_cmd = [
         "ffmpeg", "-y", "-threads", "0",
         "-f", "rawvideo", "-pix_fmt", "yuv420p",
-        "-s", f"{out_w}x{out_h}", "-r", str(cap_fps),
+        "-s", f"{out_w}x{out_h}", "-r", str(int(cap_fps)),
         "-i", "pipe:0",
-        "-i", input_path,            # re-open original for audio
+        "-i", input_path,
         "-map", "0:v:0", "-map", "1:a:0?",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-crf", str(crf),
-        "-movflags", "+faststart",
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-crf", str(crf), "-movflags", "+faststart",
         "-c:a", "aac", "-b:a", "96k", "-ac", "2",
         output_path,
     ]
 
     proc1 = await asyncio.create_subprocess_exec(
-        *scale_cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+        *scale_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     proc2 = await asyncio.create_subprocess_exec(
-        *encode_cmd,
-        stdin=proc1.stdout,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
+        *encode_cmd, stdin=proc1.stdout,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+
+    total_sec = 0.0
+    last_upd  = 0.0
+    all_text  = ""
+    deadline  = time.time() + timeout
+    done_flag = False
+
+    async def _read():
+        nonlocal all_text, total_sec, done_flag
+        buf = b""
+        while True:
+            try:
+                chunk = await asyncio.wait_for(proc2.stderr.read(512), timeout=10.0)
+            except asyncio.TimeoutError:
+                if time.time() > deadline: break
+                continue
+            if not chunk: break
+            buf += chunk
+            norm  = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            parts = norm.split(b"\n")
+            buf   = parts[-1]
+            for part in parts[:-1]:
+                line = part.decode(errors="ignore").strip()
+                if not line: continue
+                all_text += line + "\n"
+                if total_sec == 0:
+                    dm = _DUR_RE.search(line)
+                    if dm: total_sec = _hms_to_sec(*dm.groups())
+        done_flag = True
+
+    async def _upd():
+        nonlocal last_upd
+        while not done_flag:
+            await asyncio.sleep(1.0)
+            if time.time() > deadline:
+                try: proc1.kill()
+                except Exception: pass
+                try: proc2.kill()
+                except Exception: pass
+                return
+            now = time.time()
+            if now - last_upd < update_interval or not all_text: continue
+            recent  = all_text[-3000:]
+            tm      = _TS_RE.findall(recent)
+            if not tm: continue
+            cur_sec = _hms_to_sec(*tm[-1])
+            pct     = min((cur_sec / total_sec * 100) if total_sec > 0 else 0, 99.9)
+            sm      = _SPEED_RE.search(recent)
+            spd_x   = float(sm.group(1)) if sm else 0.0
+            spd_str = f"{spd_x:.1f}x" if spd_x else "calculating..."
+            szl     = _SIZE_RE.findall(recent)
+            sz_kb   = int(szl[-1]) if szl else 0
+            sz_str  = f"{sz_kb/1024:.1f} MB" if sz_kb >= 1024 else f"{sz_kb} KB"
+            eta_str = _fmt_eta((total_sec - cur_sec) / spd_x) if (total_sec > 0 and spd_x > 0) else "calculating..."
+            try: await on_progress(pct, eta_str, spd_str, sz_str)
+            except Exception: pass
+            last_upd = now
 
     if on_progress:
-        total_sec = 0.0
-        last_upd  = 0.0
-        all_text  = ""
-        deadline  = time.time() + timeout
-        done_flag = False
+        await asyncio.gather(_read(), _upd())
+    else:
+        await asyncio.gather(_read())
 
-        async def _read_stderr():
-            nonlocal all_text, total_sec, done_flag
-            buf = b""
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(proc2.stderr.read(512), timeout=10.0)
-                except asyncio.TimeoutError:
-                    if time.time() > deadline:
-                        break
-                    continue
-                if not chunk:
-                    break
-                buf += chunk
-                norm = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-                parts = norm.split(b"\n")
-                buf = parts[-1]
-                for part in parts[:-1]:
-                    line = part.decode(errors="ignore").strip()
-                    if not line:
-                        continue
-                    all_text += line + "\n"
-                    if total_sec == 0:
-                        dm = _DUR_RE.search(line)
-                        if dm:
-                            total_sec = _hms_to_sec(*dm.groups())
-            done_flag = True
-
-        async def _send_progress():
-            nonlocal last_upd
-            while not done_flag:
-                await asyncio.sleep(1.0)
-                if time.time() > deadline:
-                    try: proc1.kill()
-                    except Exception: pass
-                    try: proc2.kill()
-                    except Exception: pass
-                    return
-                now = time.time()
-                if now - last_upd < update_interval or not all_text:
-                    continue
-                recent   = all_text[-3000:]
-                tm       = _TS_RE.findall(recent)
-                if not tm:
-                    continue
-                cur_sec  = _hms_to_sec(*tm[-1])
-                pct      = min((cur_sec / total_sec * 100) if total_sec > 0 else 0, 99.9)
-                sm       = _SPEED_RE.search(recent)
-                spd_x    = float(sm.group(1)) if sm else 0.0
-                spd_str  = f"{spd_x:.1f}x" if spd_x else "calculating..."
-                sz_list  = _SIZE_RE.findall(recent)
-                sz_kb    = int(sz_list[-1]) if sz_list else 0
-                sz_str   = f"{sz_kb/1024:.1f} MB" if sz_kb >= 1024 else f"{sz_kb} KB"
-                eta_str  = _fmt_eta((total_sec - cur_sec) / spd_x) if (total_sec > 0 and spd_x > 0) else "calculating..."
-                try:
-                    await on_progress(pct, eta_str, spd_str, sz_str)
-                except Exception:
-                    pass
-                last_upd = now
-
-        await asyncio.gather(_read_stderr(), _send_progress())
-
-    # Wait for both processes to finish
     for p in (proc1, proc2):
         if p.returncode is None:
-            try:
-                await asyncio.wait_for(p.wait(), timeout=30.0)
+            try: await asyncio.wait_for(p.wait(), timeout=30.0)
             except Exception:
                 try: p.kill()
                 except Exception: pass
 
     if proc2.returncode not in (0, None):
-        err_tail = all_text[-600:] if on_progress else ""
-        raise FFmpegError(f"Pipe encode failed (code {proc2.returncode}). {err_tail}")
+        raise FFmpegError(f"Pipe encode failed (code {proc2.returncode}).\n{all_text[-600:]}")
 
 
-async def _probe_video(input_path: str):
-    """Return (width, height, fps) of the first video stream."""
+async def _probe_video(input_path):
+    """Return (width, height, fps) of first video stream."""
     proc = await asyncio.create_subprocess_exec(
         "ffprobe", "-v", "quiet", "-select_streams", "v:0",
         "-show_entries", "stream=width,height,r_frame_rate",
         "-of", "csv=p=0", input_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
     out, _ = await proc.communicate()
-    line = (out.decode().strip().splitlines() or [""])[0]
+    line  = (out.decode().strip().splitlines() or [""])[0]
     parts = line.split(",")
-    try:
-        w = int(parts[0])
-        h = int(parts[1])
-    except Exception:
-        w, h = 1920, 1080
-    try:
-        fn, fd = parts[2].split("/")
-        fps = round(int(fn) / int(fd), 2)
-    except Exception:
-        fps = 30.0
+    try:    w, h = int(parts[0]), int(parts[1])
+    except: w, h = 1920, 1080
+    try:    fn, fd = parts[2].split("/"); fps = round(int(fn)/int(fd), 2)
+    except: fps = 30.0
     return w, h, fps
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PUBLIC API  — 3 clean functions the bot calls
-# ─────────────────────────────────────────────────────────────────────────────
-
-async def compress_only(
-    input_path: str,
-    output_path: str,
-    crf: int = 28,
-    on_progress=None,
-    update_interval: float = 5.0,
-):
-    """
-    MODE 1 — Compress only (no resize).
-    Keeps original resolution, reduces bitrate with CRF.
-    Fast because: fps capped at 30 + ultrafast preset.
-    """
+async def compress_only(input_path, output_path, crf=28, on_progress=None, update_interval=5.0):
+    """Mode 1 — compress (keep resolution, reduce bitrate). Single-process."""
     cmd = [
         "ffmpeg", "-y", "-threads", "0",
         "-i", input_path,
         "-vf", "fps=fps=30",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-crf", str(crf),
-        "-threads", "0",
-        "-movflags", "+faststart",
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-crf", str(crf), "-threads", "0", "-movflags", "+faststart",
         "-c:a", "aac", "-b:a", "96k", "-ac", "2",
         output_path,
     ]
     if on_progress:
-        await run_ffmpeg_with_progress(cmd, on_progress=on_progress,
-                                       update_interval=update_interval, timeout=7200)
+        await run_ffmpeg_with_progress(cmd, on_progress=on_progress, update_interval=update_interval, timeout=7200)
     else:
         await run_ffmpeg(cmd, timeout=7200)
 
 
-async def resize_only(
-    input_path: str,
-    output_path: str,
-    target_height: int,
-    on_progress=None,
-    update_interval: float = 5.0,
-):
-    """
-    MODE 2 — Resize only (stream copy not possible with scale, so re-encode).
-    Uses PIPE method for maximum speed: ~5-9x faster than single-process.
-    Audio is copied without re-encoding.
-    """
+async def resize_only(input_path, output_path, target_height, on_progress=None, update_interval=5.0):
+    """Mode 2 — resize only (fastest: pipe method, CRF 23 = high quality)."""
     w, h, fps = await _probe_video(input_path)
     cap_fps = min(fps, 30.0)
     scale   = target_height / h
     out_w   = int(w * scale)
-    out_h   = target_height
-    await _pipe_encode(input_path, output_path, out_w, out_h, cap_fps,
-                       crf=23,           # high quality since purpose is only resize
-                       on_progress=on_progress,
-                       update_interval=update_interval)
+    await _pipe_encode(input_path, output_path, out_w, target_height, cap_fps,
+                       crf=23, on_progress=on_progress, update_interval=update_interval)
 
 
-async def compress_and_resize(
-    input_path: str,
-    output_path: str,
-    target_height: int,
-    crf: int = 28,
-    on_progress=None,
-    update_interval: float = 5.0,
-):
-    """
-    MODE 3 — Compress + Resize combined.
-    Uses PIPE method: scale process + encode process run in parallel.
-    Fastest for reducing both size and resolution.
-    """
+async def compress_and_resize(input_path, output_path, target_height, crf=28, on_progress=None, update_interval=5.0):
+    """Mode 3 — compress + resize (pipe method, smallest output)."""
     w, h, fps = await _probe_video(input_path)
     cap_fps   = min(fps, 30.0)
     scale     = target_height / h
     out_w     = int(w * scale)
-    out_h     = target_height
-    await _pipe_encode(input_path, output_path, out_w, out_h, cap_fps,
-                       crf=crf,
-                       on_progress=on_progress,
-                       update_interval=update_interval)
+    await _pipe_encode(input_path, output_path, out_w, target_height, cap_fps,
+                       crf=crf, on_progress=on_progress, update_interval=update_interval)
 
 
-# Keep old name as alias so nothing else breaks
-async def resize_only(
-    input_path: str,
-    output_path: str,
-    resolution=None,
-    on_progress=None,
-    update_interval: float = 5.0,
-):
-    """
-    Resize (scale) video WITHOUT re-encoding the video stream.
-
-    HOW IT WORKS — why it's the FASTEST method:
-      - Decode input → scale frames → write to intermediate raw file
-      - Then mux raw scaled video + original audio into output MP4
-      - No libx264 encoding at all → 5-10x faster than compress_video
-
-    NOTE: File size depends on the original codec/bitrate at the new resolution.
-    For maximum compression use compress_video instead.
-    """
-    res_str = str(resolution) if resolution else ""
-    timeout = 7200
-
-    if not res_str or res_str in ("orig", "None", "none", ""):
-        # Nothing to resize — just copy
-        cmd = [
-            "ffmpeg", "-y", "-i", input_path,
-            "-c", "copy",
-            "-movflags", "+faststart",
-            output_path,
-        ]
-        if on_progress:
-            await run_ffmpeg_with_progress(cmd, on_progress=on_progress,
-                                           update_interval=update_interval, timeout=timeout)
-        else:
-            await run_ffmpeg(cmd, timeout=timeout)
-        return
-
-    # Get source dimensions for pipe sizing
-    probe = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "quiet", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height,r_frame_rate",
-        "-of", "csv=p=0", input_path,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    probe_out, _ = await probe.communicate()
-    probe_line = (probe_out.decode().strip().splitlines() or [""])[0]
-    parts = probe_line.split(",")
-    in_w = int(parts[0]) if len(parts) > 0 and parts[0].strip().isdigit() else 1920
-    in_h = int(parts[1]) if len(parts) > 1 and parts[1].strip().isdigit() else 1080
-    fps_raw = parts[2].strip() if len(parts) > 2 else "30/1"
-    try:
-        fps_n, fps_d = fps_raw.split("/")
-        in_fps = min(float(int(fps_n) / max(int(fps_d), 1)), 60.0)
-    except Exception:
-        in_fps = 30.0
-    cap_fps = min(in_fps, 30.0)
-
-    out_h = int(res_str)
-    scale_ratio = out_h / in_h
-    out_w = int(in_w * scale_ratio)
-    if out_w % 2 != 0:
-        out_w += 1
-
-    # Two-process pipe: scale → encode with libx264 fast
-    # (pure stream copy after scale is not possible in ffmpeg;
-    #  we use very high quality CRF 18 so it's visually lossless but fast)
-    scale_cmd = [
-        "ffmpeg", "-y", "-threads", "0",
-        "-i", input_path,
-        "-vf", f"scale={out_w}:{out_h}:flags=fast_bilinear,fps=fps={cap_fps:.0f}",
-        "-f", "rawvideo", "-pix_fmt", "yuv420p",
-        "-an", "pipe:1",
-    ]
-    encode_cmd = [
-        "ffmpeg", "-y", "-threads", "0",
-        "-f", "rawvideo", "-pix_fmt", "yuv420p",
-        "-s", f"{out_w}x{out_h}", "-r", str(cap_fps),
-        "-i", "pipe:0",
-        "-i", input_path,
-        "-map", "0:v:0", "-map", "1:a:0?",
-        "-c:v", "libx264", "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-crf", "18",            # near-lossless quality (visually identical to original)
-        "-movflags", "+faststart",
-        "-c:a", "aac", "-b:a", "96k", "-ac", "2",
-        output_path,
-    ]
-
-    if on_progress:
-        proc1 = await asyncio.create_subprocess_exec(
-            *scale_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        proc2 = await asyncio.create_subprocess_exec(
-            *encode_cmd,
-            stdin=proc1.stdout,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        total_sec = 0.0
-        last_update = 0.0
-        all_text = ""
-        start_time = time.time()
-        deadline = start_time + timeout
-        _done = False
-
-        async def _reader():
-            nonlocal all_text, total_sec, _done
-            buf = b""
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(proc2.stderr.read(512), timeout=10.0)
-                except asyncio.TimeoutError:
-                    if time.time() > deadline:
-                        break
-                    continue
-                if not chunk:
-                    break
-                buf += chunk
-                normalized = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-                parts2 = normalized.split(b"\n")
-                buf = parts2[-1]
-                for part in parts2[:-1]:
-                    line = part.decode(errors="ignore").strip()
-                    if not line:
-                        continue
-                    all_text += line + "\n"
-                    if total_sec == 0:
-                        dm = _DUR_RE.search(line)
-                        if dm:
-                            total_sec = _hms_to_sec(*dm.groups())
-            _done = True
-
-        async def _updater():
-            nonlocal last_update
-            while not _done:
-                await asyncio.sleep(1.0)
-                if time.time() > deadline:
-                    try: proc2.kill()
-                    except Exception: pass
-                    try: proc1.kill()
-                    except Exception: pass
-                    return
-                now = time.time()
-                if now - last_update < update_interval:
-                    continue
-                if not all_text:
-                    continue
-                recent = all_text[-3000:]
-                tm = _TS_RE.findall(recent)
-                if not tm:
-                    continue
-                h, m, s, cs = tm[-1]
-                cur_sec = _hms_to_sec(h, m, s, cs)
-                pct = min((cur_sec / total_sec * 100) if total_sec > 0 else 0, 99.9)
-                speed_m = _SPEED_RE.search(recent)
-                speed_x = float(speed_m.group(1)) if speed_m else 0.0
-                speed_str = f"{speed_x:.1f}x" if speed_x else "calculating..."
-                size_m = _SIZE_RE.findall(recent)
-                size_kb = int(size_m[-1]) if size_m else 0
-                size_str = f"{size_kb / 1024:.1f} MB" if size_kb >= 1024 else f"{size_kb} KB"
-                eta_str = _fmt_eta((total_sec - cur_sec) / speed_x) if total_sec > 0 and speed_x > 0 else "calculating..."
-                try:
-                    await on_progress(pct, eta_str, speed_str, size_str)
-                except Exception:
-                    pass
-                last_update = now
-
-        await asyncio.gather(_reader(), _updater())
-        for p in (proc1, proc2):
-            if p.returncode is None:
-                try:
-                    await asyncio.wait_for(p.wait(), timeout=30.0)
-                except Exception:
-                    try: p.kill()
-                    except Exception: pass
-        if proc2.returncode not in (0, None):
-            raise FFmpegError(f"Resize failed (code {proc2.returncode})")
-    else:
-        proc1 = await asyncio.create_subprocess_exec(
-            *scale_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        proc2 = await asyncio.create_subprocess_exec(
-            *encode_cmd,
-            stdin=proc1.stdout,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            await asyncio.wait_for(proc2.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            try: proc1.kill()
-            except Exception: pass
-            try: proc2.kill()
-            except Exception: pass
-            raise FFmpegError(f"Resize timed out after {timeout}s.")
-        if proc2.returncode != 0:
-            err = await proc2.stderr.read()
-            raise FFmpegError(err.decode(errors="ignore")[-800:])
-
-
-async def compress_video(
-    input_path, output_path, resolution=None, crf=28,
-    on_progress=None, update_interval=5.0, preset="ultrafast",
-):
-    """Backward-compat alias — routes to the correct new function."""
+async def compress_video(input_path, output_path, resolution=None, crf=28,
+                         on_progress=None, update_interval=5.0, preset="ultrafast"):
+    """Backward-compat alias."""
     res_str = str(resolution) if resolution else ""
     if res_str and res_str not in ("orig", "None", "none", ""):
-        await compress_and_resize(input_path, output_path,
-                                  target_height=int(res_str),
-                                  crf=crf,
-                                  on_progress=on_progress,
-                                  update_interval=update_interval)
+        await compress_and_resize(input_path, output_path, target_height=int(res_str),
+                                  crf=crf, on_progress=on_progress, update_interval=update_interval)
     else:
-        await compress_only(input_path, output_path,
-                            crf=crf,
-                            on_progress=on_progress,
-                            update_interval=update_interval)
+        await compress_only(input_path, output_path, crf=crf,
+                            on_progress=on_progress, update_interval=update_interval)
 
 
 async def add_watermark(
