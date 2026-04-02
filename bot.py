@@ -545,7 +545,7 @@ async def file_command_handler(client, message):
     elif cmd=="pdf": await _trigger_pdf_tools(client,message,r,fname)
     elif cmd=="compress":
         if not await check_rate_limit(uid,message): return
-        await _trigger_compress(client,message,r,cid,mid)
+        await _trigger_compress(client,message,r,cid,mid,uid=uid)
     elif cmd=="split": await _trigger_split(client,message,r,cid,mid,fname)
     elif cmd=="audio": await handle_extract_audio(client,None,r,reply_to_msg=message)
     elif cmd=="unzip":
@@ -669,6 +669,9 @@ async def on_file(client, message):
         await process_links_message(client,message,content); return
     if not media: return
     fsize_mb=(getattr(media,"file_size",0) or 0)/(1024*1024)
+    # Groups mein auto-respond nahi karo — sirf private chat mein action keyboard do
+    if message.chat.type != enums.ChatType.PRIVATE:
+        return
     try: await log_input(client,message,f"file: {fname}")
     except: pass
     await message.reply_text(
@@ -896,7 +899,7 @@ async def callbacks(client, cq: CallbackQuery):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
         except: await cq.answer("File not found.",show_alert=True); return
-        await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid)); return
+        await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid),uid=cq.from_user.id); return
     if data.startswith("comprq|"):
         parts=data.split("|",3); tid=parts[1]; res=parts[2]
         crf=int(parts[3]) if len(parts)>3 else 28
@@ -1290,11 +1293,12 @@ async def _handle_file_info(client, dest, orig):
 # ════════════════════════════════════════════════════════════════════════════
 # COMPRESS — No limits, multiple quality options
 # ════════════════════════════════════════════════════════════════════════════
-async def _trigger_compress(client, dest, orig, cid, mid):
+async def _trigger_compress(client, dest, orig, cid, mid, uid=None):
     media=orig.video or orig.document
     if not media or not is_video_file(media.file_name or ""): await dest.reply_text("This is not a video file."); return
-    # dest.from_user is None for channel/bot messages — use orig.from_user as fallback
-    uid=(dest.from_user.id if dest.from_user else None) or (orig.from_user.id if orig.from_user else 0)
+    # uid passed explicitly from callback; fallback chain for command usage
+    if not uid:
+        uid=(dest.from_user.id if dest.from_user else None) or (orig.from_user.id if orig.from_user else 0)
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
@@ -1312,9 +1316,10 @@ async def _trigger_compress(client, dest, orig, cid, mid):
 
 async def _do_compress(client, cq, tid, res, crf=28):
     info=COMPRESS_TASKS.get(tid)
-    if not info: await cq.message.reply_text("Task expired."); return
+    if not info: await cq.message.reply_text("❌ Task expired or not found."); return
     uid=cq.from_user.id
-    if uid!=info["user_id"]: return
+    if info["user_id"] != 0 and uid != info["user_id"]:
+        await cq.answer("This is not your task.", show_alert=True); return
     if not await check_rate_limit(uid,cq.message): return
     if not await _check_disk_space_ok(cq.message): return
     orig=await client.get_messages(info["chat_id"],info["msg_id"])
