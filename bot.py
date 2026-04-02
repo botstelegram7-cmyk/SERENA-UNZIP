@@ -34,6 +34,7 @@ from utils.m3u8_tools import download_m3u8_stream, get_m3u8_variants
 from utils.media_tools import (
     add_watermark, compress_video, extract_audio, extract_subtitles,
     generate_thumbnail, get_media_info, merge_videos, take_screenshot,
+    _fmt_eta,
 )
 from utils.password_list import COMMON_PASSWORDS
 from utils.pdf_tools import (
@@ -920,6 +921,14 @@ async def callbacks(client, cq: CallbackQuery):
         parts=data.split("|",3); tid=parts[1]; res=parts[2]
         crf=int(parts[3]) if len(parts)>3 else 28
         await cq.answer(); await _do_compress(client,cq,tid,res,crf); return
+    if data.startswith("comprup|"):
+        # comprup|tid|res|crf|method
+        parts=data.split("|",4)
+        tid=parts[1]; res=parts[2]; crf=int(parts[3]); method=parts[4]
+        if tid in COMPRESS_TASKS:
+            COMPRESS_TASKS[tid]["upload_method_chosen"] = method
+        await cq.answer()
+        await _do_compress(client,cq,tid,res,crf); return
     if data.startswith("split|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
@@ -1318,16 +1327,20 @@ async def _trigger_compress(client, dest, orig, cid, mid, uid=None):
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":media.file_name or "video.mp4"}
+    COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":media.file_name or "video.mp4","upload_method":"telegram"}
+    fsize_mb = (media.file_size or 0) / (1024*1024)
+    size_info = f" ({fsize_mb:.1f} MB)" if fsize_mb > 0 else ""
     await dest.reply_text(
-        f"📦 Compress: <code>{media.file_name or 'video'}</code>\n\nChoose quality/resolution:",
+        f"📦 Compress: <code>{media.file_name or 'video'}</code>{size_info}\n\n"
+        f"<b>Step 1:</b> Choose quality/resolution:\n"
+        f"<i>💡 Tip: 480p is fastest. Ultrafast preset used for max speed.</i>",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📱 360p",callback_data=f"comprq|{tid}|360|28"),
-             InlineKeyboardButton("📺 480p",callback_data=f"comprq|{tid}|480|28")],
-            [InlineKeyboardButton("💻 720p",callback_data=f"comprq|{tid}|720|28"),
-             InlineKeyboardButton("🖥 1080p",callback_data=f"comprq|{tid}|1080|28")],
-            [InlineKeyboardButton("🔥 Smart Compress (Original Size)",callback_data=f"comprq|{tid}|orig|26"),
-             InlineKeyboardButton("🗜 Max Compress",callback_data=f"comprq|{tid}|480|35")],
+            [InlineKeyboardButton("📱 360p  (Fastest)",callback_data=f"comprq|{tid}|360|28"),
+             InlineKeyboardButton("📺 480p  (Fast)",callback_data=f"comprq|{tid}|480|28")],
+            [InlineKeyboardButton("💻 720p  (Medium)",callback_data=f"comprq|{tid}|720|28"),
+             InlineKeyboardButton("🖥 1080p (Slow)",callback_data=f"comprq|{tid}|1080|28")],
+            [InlineKeyboardButton("🔥 Smart Compress (Original Size)",callback_data=f"comprq|{tid}|orig|26")],
+            [InlineKeyboardButton("🗜 Max Compress (480p, CRF 35)",callback_data=f"comprq|{tid}|480|35")],
             [InlineKeyboardButton("❌ Cancel",callback_data="noop")]]))
 
 async def _do_compress(client, cq, tid, res, crf=28):
@@ -1336,6 +1349,26 @@ async def _do_compress(client, cq, tid, res, crf=28):
     uid=cq.from_user.id
     if info["user_id"] != 0 and uid != info["user_id"]:
         await cq.answer("This is not your task.", show_alert=True); return
+
+    # ── Step 2: Ask upload method before starting heavy work ──────────────
+    upload_method = info.get("upload_method_chosen")
+    if not upload_method:
+        await cq.message.edit_text(
+            f"📦 Quality selected: <b>{res}p</b> (CRF {crf})\n\n"
+            f"<b>Step 2:</b> Choose upload method:\n\n"
+            f"📤 <b>Telegram</b> — Direct to Telegram (max 2 GB)\n"
+            f"☁️ <b>GoFile</b> — Cloud link, no Telegram bandwidth used\n"
+            f"🔗 <b>Catbox</b> — Cloud link, max 200 MB\n",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 Telegram Upload",callback_data=f"comprup|{tid}|{res}|{crf}|telegram")],
+                [InlineKeyboardButton("☁️ GoFile (Cloud Link)",callback_data=f"comprup|{tid}|{res}|{crf}|gofile")],
+                [InlineKeyboardButton("🔗 Catbox (Cloud Link)",callback_data=f"comprup|{tid}|{res}|{crf}|catbox")],
+                [InlineKeyboardButton("❌ Cancel",callback_data="noop")],
+            ])
+        )
+        return
+
+    # ── Actual compression starts here ────────────────────────────────────
     if not await check_rate_limit(uid,cq.message): return
     if not await _check_disk_space_ok(cq.message): return
     orig=await client.get_messages(info["chat_id"],info["msg_id"])
@@ -1343,6 +1376,7 @@ async def _do_compress(client, cq, tid, res, crf=28):
     if not media: return
     lock=get_lock(uid)
     if lock.locked(): await cq.message.reply_text("A task is already running."); return
+    chosen_upload = info.get("upload_method_chosen","telegram")
     async with lock:
         async with GLOBAL_SEMAPHORE:
             temp_root=Path(info["temp_root"])
@@ -1356,7 +1390,7 @@ async def _do_compress(client, cq, tid, res, crf=28):
             out=str(temp_root/out_name)
             import time as _time
             _compress_start = _time.time()
-            await status.edit_text(f"⚙️ Compressing [{label}]… Starting…")
+            await status.edit_text(f"⚙️ Compressing [{label}]… Starting…\n<i>Using ultrafast preset for speed</i>")
 
             async def _compress_progress(pct, eta, speed, size):
                 elapsed = _time.time() - _compress_start
@@ -1369,7 +1403,8 @@ async def _do_compress(client, cq, tid, res, crf=28):
                     f"◌ Progress 😉 : 〘 {pct:.1f}% 〙\n"
                     f"📦 Output Size : 〘 {size} 〙\n"
                     f"🚀 Speed       : 〘 {speed} 〙\n"
-                    f"⏳ ETA         : 〘 {eta} 〙"
+                    f"⏳ ETA         : 〘 {eta} 〙\n"
+                    f"⏱ Elapsed     : 〘 {_fmt_eta(elapsed)} 〙"
                 )
                 try:
                     await status.edit_text(text)
@@ -1378,12 +1413,14 @@ async def _do_compress(client, cq, tid, res, crf=28):
 
             try:
                 resolution=None if res in ("orig","None","none") else res
-                print(f"[COMPRESS] Starting: res={resolution} crf={crf} input={dl} output={out}")
-                await compress_video(dl,out,resolution=resolution,crf=crf,on_progress=_compress_progress,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                # Choose preset based on resolution: smaller res = can afford veryfast; large = ultrafast
+                preset = "ultrafast" if (resolution is None or int(resolution or 720) >= 720) else "veryfast"
+                print(f"[COMPRESS] Starting: res={resolution} crf={crf} preset={preset} input={dl} output={out}")
+                from utils.media_tools import compress_video as _cv
+                await _cv(dl,out,resolution=resolution,crf=crf,preset=preset,on_progress=_compress_progress,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
                 print(f"[COMPRESS] Done: {out}")
             except Exception as e:
                 err_msg = str(e)
-                # Show last 600 chars of ffmpeg error for debugging
                 if len(err_msg) > 600: err_msg = "…" + err_msg[-600:]
                 await status.edit_text(f"❌ Compression failed:\n<code>{err_msg}</code>")
                 _safe_cleanup(str(temp_root)); COMPRESS_TASKS.pop(tid,None); return
@@ -1391,16 +1428,47 @@ async def _do_compress(client, cq, tid, res, crf=28):
             _safe_cleanup(dl)
             thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,out_name)
             out_size=os.path.getsize(out) if os.path.exists(out) else 0
-            await status.edit_text("📤 Uploading compressed video…"); start_u=time.time()
-            try:
-                sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
-                    progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
-                    reply_to_message_id=cq.message.id)
-                try: await status.delete()
-                except: pass
-                _safe_cleanup(str(temp_root))
-                await log_output(client,cq.from_user,sent,f"compressed {label}")
-            except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+
+            # ── Upload based on chosen method ─────────────────────────────
+            if chosen_upload in ("gofile","catbox"):
+                await status.edit_text(f"☁️ Uploading to {'GoFile' if chosen_upload=='gofile' else 'Catbox'}…")
+                try:
+                    if chosen_upload=="gofile":
+                        url = await upload_to_gofile(out)
+                    else:
+                        url = await upload_to_catbox(out)
+                    out_mb = out_size / (1024*1024)
+                    await status.edit_text(
+                        f"✅ Compressed & Uploaded!\n\n"
+                        f"📦 File: <code>{out_name}</code>\n"
+                        f"📊 Size: {out_mb:.1f} MB\n"
+                        f"🔗 Link: {url}"
+                    )
+                    _safe_cleanup(str(temp_root))
+                except Exception as e:
+                    await status.edit_text(f"❌ Cloud upload failed:\n<code>{e}</code>\n\nTrying Telegram fallback…")
+                    try:
+                        sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
+                            progress=progress_for_pyrogram,progress_args=(status,time.time(),out_name,"to Telegram"),
+                            reply_to_message_id=cq.message.id)
+                        try: await status.delete()
+                        except: pass
+                        _safe_cleanup(str(temp_root))
+                        await log_output(client,cq.from_user,sent,f"compressed {label}")
+                    except Exception as e2:
+                        await status.edit_text(f"❌ All uploads failed:\n<code>{e2}</code>")
+            else:
+                # Default: Telegram upload
+                await status.edit_text("📤 Uploading compressed video…"); start_u=time.time()
+                try:
+                    sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
+                        progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
+                        reply_to_message_id=cq.message.id)
+                    try: await status.delete()
+                    except: pass
+                    _safe_cleanup(str(temp_root))
+                    await log_output(client,cq.from_user,sent,f"compressed {label}")
+                except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
             await update_user_stats(uid,out_size)
     COMPRESS_TASKS.pop(tid,None)
 
