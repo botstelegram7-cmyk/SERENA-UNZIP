@@ -32,7 +32,8 @@ from utils.http_downloader import download_file
 from utils.link_parser import classify_link, extract_links_from_folder, find_links_in_text
 from utils.m3u8_tools import download_m3u8_stream, get_m3u8_variants
 from utils.media_tools import (
-    add_watermark, compress_video, extract_audio, extract_subtitles,
+    add_watermark, compress_video, compress_only, resize_only, compress_and_resize,
+    extract_audio, extract_subtitles,
     generate_thumbnail, get_media_info, merge_videos, take_screenshot,
 )
 from utils.password_list import COMMON_PASSWORDS
