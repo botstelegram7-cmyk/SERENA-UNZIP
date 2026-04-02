@@ -1378,9 +1378,14 @@ async def _do_compress(client, cq, tid, res, crf=28):
 
             try:
                 resolution=None if res in ("orig","None","none") else res
+                print(f"[COMPRESS] Starting: res={resolution} crf={crf} input={dl} output={out}")
                 await compress_video(dl,out,resolution=resolution,crf=crf,on_progress=_compress_progress,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                print(f"[COMPRESS] Done: {out}")
             except Exception as e:
-                await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>")
+                err_msg = str(e)
+                # Show last 600 chars of ffmpeg error for debugging
+                if len(err_msg) > 600: err_msg = "…" + err_msg[-600:]
+                await status.edit_text(f"❌ Compression failed:\n<code>{err_msg}</code>")
                 _safe_cleanup(str(temp_root)); COMPRESS_TASKS.pop(tid,None); return
             # Delete source immediately to free space
             _safe_cleanup(dl)
