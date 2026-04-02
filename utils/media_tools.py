@@ -194,26 +194,38 @@ async def compress_video(
     crf: int = 28,
     on_progress: Optional[Callable] = None,
     update_interval: float = 5.0,
+    preset: str = "ultrafast",
 ):
     """
     Re-encode video with libx264.
     resolution: '360','480','720','1080' or None/'orig' for smart compress.
     on_progress: async callable(percent, eta, speed, size) — optional.
     scale uses trunc to ensure even width (libx264 requirement).
+    preset: ultrafast (default, fastest) → superfast → veryfast → faster → fast → medium
     """
+    import os as _os
+    # Use all available CPU threads for faster encoding
+    cpu_count = _os.cpu_count() or 2
+    threads = min(cpu_count, 4)  # Cap at 4 to avoid memory spikes
+
     if resolution and str(resolution) not in ("orig", "None", "none", ""):
         vf_args = ["-vf", f"scale=trunc(iw/2)*2:{resolution}"]
     else:
         vf_args = []
 
     cmd = [
-        "ffmpeg", "-y", "-i", input_path,
+        "ffmpeg", "-y",
+        "-threads", str(threads),
+        "-i", input_path,
         *vf_args,
         "-c:v",    "libx264",
         "-crf",    str(crf),
-        "-preset", "fast",
+        "-preset", preset,          # ultrafast = max speed, slightly larger file
+        "-tune",   "fastdecode",    # optimise for playback speed
+        "-movflags", "+faststart",  # web-friendly: moov atom at front
         "-c:a",    "aac",
-        "-b:a",    "128k",
+        "-b:a",    "96k",           # 96k is fine for compressed output (saves bandwidth)
+        "-threads", str(threads),
         output_path,
     ]
 
