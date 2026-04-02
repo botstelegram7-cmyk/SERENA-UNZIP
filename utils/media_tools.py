@@ -1,4 +1,4 @@
-# utils/media_tools.py
+# utils/media_tools.py — Fixed: resolution=None for smart compress, safe fps eval, timeout
 import asyncio
 import json
 import os
@@ -9,19 +9,26 @@ class FFmpegError(RuntimeError):
     pass
 
 
-async def run_ffmpeg(cmd: list):
+async def run_ffmpeg(cmd: list, timeout: int = 1800):
+    """Run ffmpeg with a configurable timeout (default 30 min)."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate()
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise FFmpegError("FFmpeg timed out.")
     if proc.returncode != 0:
         raise FFmpegError(err.decode(errors="ignore"))
 
 
 async def extract_audio(video_path: str, output_path: str):
-    """Extract audio stream (copy codec → fast, lossless)."""
     await run_ffmpeg([
         "ffmpeg", "-y", "-i", video_path,
         "-vn", "-acodec", "copy", output_path,
@@ -29,7 +36,6 @@ async def extract_audio(video_path: str, output_path: str):
 
 
 async def merge_videos(video_paths: List[str], output_path: str):
-    """Concatenate videos using ffmpeg concat demuxer."""
     list_file = output_path + ".txt"
     with open(list_file, "w", encoding="utf-8") as f:
         for p in video_paths:
@@ -45,7 +51,6 @@ async def merge_videos(video_paths: List[str], output_path: str):
 
 
 async def split_video(video_path: str, start: str, duration: str, output_path: str):
-    """Cut a portion of a video (stream copy – no re-encode)."""
     await run_ffmpeg([
         "ffmpeg", "-y", "-i", video_path,
         "-ss", start, "-t", duration, "-c", "copy", output_path,
@@ -55,21 +60,27 @@ async def split_video(video_path: str, start: str, duration: str, output_path: s
 async def compress_video(
     input_path: str,
     output_path: str,
-    resolution: str = "720",
+    resolution=None,
     crf: int = 28,
 ):
     """
-    Re-encode video to target resolution with libx264.
-    resolution: '360','480','720','1080' (height).
+    Re-encode video with libx264.
+    resolution: '360','480','720','1080' (height) or None for smart compress
+                (keeps original resolution, just reduces bitrate via CRF).
     """
+    if resolution and str(resolution) not in ("orig", "None", "none", ""):
+        vf_args = ["-vf", f"scale=-2:{resolution}"]
+    else:
+        vf_args = []
+
     await run_ffmpeg([
         "ffmpeg", "-y", "-i", input_path,
-        "-vf",    f"scale=-2:{resolution}",
-        "-c:v",   "libx264",
-        "-crf",   str(crf),
-        "-preset","fast",
-        "-c:a",   "aac",
-        "-b:a",   "128k",
+        *vf_args,
+        "-c:v",    "libx264",
+        "-crf",    str(crf),
+        "-preset", "fast",
+        "-c:a",    "aac",
+        "-b:a",    "128k",
         output_path,
     ])
 
@@ -81,7 +92,6 @@ async def add_watermark(
     position: str = "bottomright",
     opacity: float = 0.6,
 ):
-    """Overlay text watermark on a video."""
     pos_map = {
         "topleft":     "x=10:y=10",
         "topright":    "x=w-tw-10:y=10",
@@ -90,7 +100,6 @@ async def add_watermark(
         "center":      "x=(w-tw)/2:y=(h-th)/2",
     }
     pos = pos_map.get(position, pos_map["bottomright"])
-    # Escape special characters in text
     safe_text = text.replace("'", "\\'").replace(":", "\\:")
     vf = (
         f"drawtext=text='{safe_text}'"
@@ -110,7 +119,6 @@ async def generate_thumbnail(
     thumb_path: str,
     time_pos: str = "00:00:02",
 ):
-    """Extract a single frame as JPEG thumbnail."""
     await run_ffmpeg([
         "ffmpeg", "-y",
         "-ss", time_pos,
@@ -127,8 +135,6 @@ async def take_screenshot(
     output_path: str,
     time_str: str,
 ):
-    """Take a screenshot at exact time. time_str = '01:23:45' or '83:25'."""
-    # normalise MM:SS → HH:MM:SS if needed
     parts = time_str.strip().split(":")
     if len(parts) == 2:
         time_str = f"00:{parts[0].zfill(2)}:{parts[1].zfill(2)}"
@@ -138,20 +144,13 @@ async def take_screenshot(
 
 
 async def extract_subtitles(video_path: str, output_dir: str) -> List[dict]:
-    """
-    Extract all subtitle streams from an MKV/MP4.
-    Returns list of dicts: {index, language, codec, output_path}
-    """
     os.makedirs(output_dir, exist_ok=True)
-
-    # Get stream info via ffprobe
     proc = await asyncio.create_subprocess_exec(
         "ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", video_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     out, _ = await proc.communicate()
-
     try:
         streams_data = json.loads(out.decode())
         streams = streams_data.get("streams", [])
@@ -160,13 +159,11 @@ async def extract_subtitles(video_path: str, output_dir: str) -> List[dict]:
 
     sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
     extracted = []
-
     for i, s in enumerate(sub_streams):
-        lang    = s.get("tags", {}).get("language", "und")
-        codec   = s.get("codec_name", "unknown")
-        ext     = "ass" if codec in ("ass", "ssa") else "srt"
+        lang     = s.get("tags", {}).get("language", "und")
+        codec    = s.get("codec_name", "unknown")
+        ext      = "ass" if codec in ("ass", "ssa") else "srt"
         out_file = os.path.join(output_dir, f"sub_{i}_{lang}.{ext}")
-
         try:
             await run_ffmpeg([
                 "ffmpeg", "-y", "-i", video_path,
@@ -175,23 +172,18 @@ async def extract_subtitles(video_path: str, output_dir: str) -> List[dict]:
             ])
             extracted.append({
                 "stream_index": i,
-                "language": lang,
-                "codec": codec,
-                "ext": ext,
-                "output_path": out_file,
-                "label": f"{lang.upper()} ({ext.upper()})",
+                "language":     lang,
+                "codec":        codec,
+                "ext":          ext,
+                "output_path":  out_file,
+                "label":        f"{lang.upper()} ({ext.upper()})",
             })
         except FFmpegError:
             pass
-
     return extracted
 
 
 async def get_media_info(file_path: str) -> Optional[dict]:
-    """
-    Return media metadata via ffprobe.
-    Returns dict with duration, resolution, video_codec, audio_codec, etc.
-    """
     proc = await asyncio.create_subprocess_exec(
         "ffprobe",
         "-v", "quiet",
@@ -210,11 +202,9 @@ async def get_media_info(file_path: str) -> Optional[dict]:
 
     fmt     = data.get("format", {})
     streams = data.get("streams", [])
-
     video_s = next((s for s in streams if s.get("codec_type") == "video"), None)
     audio_s = next((s for s in streams if s.get("codec_type") == "audio"), None)
     sub_cnt = sum(1 for s in streams if s.get("codec_type") == "subtitle")
-
     duration = float(fmt.get("duration") or 0)
 
     info = {
@@ -226,17 +216,23 @@ async def get_media_info(file_path: str) -> Optional[dict]:
     if video_s:
         w = video_s.get("width", 0)
         h = video_s.get("height", 0)
-        info["resolution"]   = f"{w}×{h}" if w and h else "N/A"
-        info["video_codec"]  = video_s.get("codec_name", "Unknown")
+        info["resolution"]    = f"{w}×{h}" if w and h else "N/A"
+        info["video_codec"]   = video_s.get("codec_name", "Unknown")
         info["video_bitrate"] = video_s.get("bit_rate", "N/A")
-        info["fps"] = eval(video_s["avg_frame_rate"]) if video_s.get("avg_frame_rate", "0/0") != "0/0" else 0
+        # Safe fps — no eval()
+        afr = video_s.get("avg_frame_rate", "0/0")
+        try:
+            num, den = afr.split("/")
+            info["fps"] = round(int(num) / int(den), 2) if int(den) else 0
+        except Exception:
+            info["fps"] = 0
 
     if audio_s:
         lang = audio_s.get("tags", {}).get("language", "")
-        info["audio_codec"]   = audio_s.get("codec_name", "Unknown")
+        info["audio_codec"]    = audio_s.get("codec_name", "Unknown")
         info["audio_channels"] = audio_s.get("channels", 0)
-        info["audio_bitrate"] = audio_s.get("bit_rate", "N/A")
-        info["audio_lang"]    = lang
+        info["audio_bitrate"]  = audio_s.get("bit_rate", "N/A")
+        info["audio_lang"]     = lang
 
     info["subtitle_count"] = sub_cnt
     return info
