@@ -84,7 +84,7 @@ async def run_ffmpeg_with_progress(
 
         # Read one line with a short timeout so we can keep updating
         try:
-            line_b = await asyncio.wait_for(proc.stderr.readline(), timeout=2.0)
+            line_b = await asyncio.wait_for(proc.stderr.readline(), timeout=30.0)
         except asyncio.TimeoutError:
             # No new output — process might still be running, just slow
             # Still try to send a progress update with last known data
@@ -140,10 +140,12 @@ async def run_ffmpeg_with_progress(
                     pass
                 last_update = now
 
-        # If readline returned empty bytes and process is done → break
+        # If readline returned empty bytes, check if process actually finished
         if not line_b:
-            ret = await asyncio.wait_for(proc.wait(), timeout=5.0) if proc.returncode is None else proc.returncode
-            break
+            if proc.returncode is not None:
+                break  # process done
+            # Process still running but no output — continue waiting
+            continue
 
     # Drain remaining stderr
     try:
@@ -208,7 +210,7 @@ async def compress_video(
     on_progress: async callable(percent, eta_str, speed_str, size_str) or None.
     """
     if resolution and str(resolution) not in ("orig", "None", "none", ""):
-        vf_args = ["-vf", f"scale=-2:{resolution}"]
+        vf_args = ["-vf", f"scale=trunc(iw/2)*2:{resolution}"]
     else:
         vf_args = []
 
