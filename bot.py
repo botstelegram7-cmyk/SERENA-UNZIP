@@ -404,13 +404,69 @@ async def settings_cmd(client, message):
     await message.reply_text(text, reply_markup=settings_keyboard())
 
 
+# ── Per-user running FFmpeg process registry (for /cancel to kill them) ────
+USER_FFMPEG_PROCS: Dict[int, list] = {}  # uid -> list of asyncio.subprocess.Process
+
+def _register_proc(uid: int, proc) -> None:
+    if uid not in USER_FFMPEG_PROCS:
+        USER_FFMPEG_PROCS[uid] = []
+    USER_FFMPEG_PROCS[uid].append(proc)
+
+def _unregister_proc(uid: int, proc) -> None:
+    procs = USER_FFMPEG_PROCS.get(uid, [])
+    try:
+        procs.remove(proc)
+    except ValueError:
+        pass
+
+def _kill_user_procs(uid: int) -> int:
+    """Kill all running FFmpeg processes for this user. Returns count killed."""
+    procs = USER_FFMPEG_PROCS.pop(uid, [])
+    killed = 0
+    for proc in procs:
+        try:
+            proc.kill()
+            killed += 1
+        except Exception:
+            pass
+    return killed
+
+
 @app.on_message(filters.command("cancel") & (filters.private|filters.group))
 async def cancel_cmd(client, message):
     if not message.from_user: return
-    uid=message.from_user.id
-    user_cancelled[uid]=True; zip_sessions.pop(uid,None); merge_sessions.pop(uid,None)
-    pending_state.pop(uid,None); pending_password.pop(uid,None)
-    await message.reply_text("❌ Current task cancelled!")
+    uid = message.from_user.id
+    user_cancelled[uid] = True
+
+    # Kill any running FFmpeg processes for this user
+    killed = _kill_user_procs(uid)
+
+    # Clean up all task dicts for this user
+    zip_sessions.pop(uid, None)
+    merge_sessions.pop(uid, None)
+    pending_state.pop(uid, None)
+    pending_password.pop(uid, None)
+
+    # Remove compress/split/pdf tasks belonging to this user
+    for task_dict in (COMPRESS_TASKS, SPLIT_TASKS, SUB_TASKS, PDF_TASKS,
+                      M3U8_TASKS, YTDL_TASKS, BIG_FILE_TASKS):
+        dead = [k for k, v in task_dict.items() if v.get("user_id") == uid]
+        for k in dead:
+            task_dict.pop(k, None)
+
+    # Release the user lock so next task can start
+    lock = user_locks.get(uid)
+    if lock and lock.locked():
+        try:
+            lock.release()
+        except RuntimeError:
+            pass
+
+    proc_msg = f" (Stopped {killed} running process(es))" if killed else ""
+    reply_text = "🛑 <b>All tasks cancelled!" + proc_msg + "</b>\n\n"\
+        "✅ Compress, download, extract — everything stopped.\n"\
+        "You can start a new task now."
+    await message.reply_text(reply_text, parse_mode=enums.ParseMode.HTML)
 
 
 @app.on_message(filters.command("mystats") & (filters.private|filters.group))
