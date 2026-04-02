@@ -1,16 +1,19 @@
-# utils/media_tools.py — Fixed: resolution=None for smart compress, safe fps eval, timeout
+# utils/media_tools.py — v4: FFmpeg real-time progress via stderr parsing
 import asyncio
 import json
 import os
-from typing import List, Optional
+import re
+import time
+from typing import Callable, List, Optional
 
 
 class FFmpegError(RuntimeError):
     pass
 
 
+# ── Low-level runner (no progress) ──────────────────────────────────────────
 async def run_ffmpeg(cmd: list, timeout: int = 1800):
-    """Run ffmpeg with a configurable timeout (default 30 min)."""
+    """Run ffmpeg, wait for completion. Raises FFmpegError on failure."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -28,6 +31,135 @@ async def run_ffmpeg(cmd: list, timeout: int = 1800):
         raise FFmpegError(err.decode(errors="ignore"))
 
 
+# ── Progress-aware runner ────────────────────────────────────────────────────
+_TS_RE    = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
+_DUR_RE   = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)\.(\d+)")
+_SPEED_RE = re.compile(r"speed=\s*([\d.]+)x")
+_SIZE_RE  = re.compile(r"size=\s*(\d+)kB")
+
+
+def _hms_to_sec(h, m, s, cs) -> float:
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(cs) / 100
+
+
+def _fmt_eta(sec: float) -> str:
+    sec = max(0, int(sec))
+    m, s = divmod(sec, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}h {m}m {s}s"
+    if m:
+        return f"{m}m {s}s"
+    return f"{s}s"
+
+
+async def run_ffmpeg_with_progress(
+    cmd: list,
+    on_progress: Callable,   # async callable(percent, eta_str, speed_str, size_str)
+    update_interval: float = 5.0,
+    timeout: int = 1800,
+):
+    """
+    Run ffmpeg and periodically call on_progress with live stats.
+    FFmpeg writes progress to stderr — we parse it line-by-line.
+    """
+    # -progress pipe:1 gives machine-readable output on stdout
+    # but simplest reliable approach: parse stderr lines
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    total_sec: float = 0.0
+    last_update: float = 0.0
+    stderr_buf: list = []
+    start_time = time.time()
+
+    async def read_stderr():
+        nonlocal total_sec
+        while True:
+            try:
+                line_b = await asyncio.wait_for(
+                    proc.stderr.readline(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                raise FFmpegError("FFmpeg timed out.")
+            if not line_b:
+                break
+            line = line_b.decode(errors="ignore")
+            stderr_buf.append(line)
+
+            # Parse total duration from first pass
+            if total_sec == 0:
+                dm = _DUR_RE.search(line)
+                if dm:
+                    total_sec = _hms_to_sec(*dm.groups())
+
+    async def send_updates():
+        nonlocal last_update
+        while proc.returncode is None:
+            await asyncio.sleep(0.5)
+            now = time.time()
+            if now - last_update < update_interval:
+                continue
+            # Search recent stderr for progress
+            recent = "".join(stderr_buf[-30:])
+            tm = _TS_RE.findall(recent)
+            if not tm:
+                continue
+            h, m, s, cs = tm[-1]
+            cur_sec = _hms_to_sec(h, m, s, cs)
+            pct = min((cur_sec / total_sec * 100) if total_sec > 0 else 0, 99.9)
+
+            speed_m = _SPEED_RE.search(recent)
+            speed_x = float(speed_m.group(1)) if speed_m else 0.0
+            speed_str = f"{speed_x:.1f}x" if speed_x else "…"
+
+            size_m = _SIZE_RE.findall(recent)
+            size_kb = int(size_m[-1]) if size_m else 0
+            size_str = f"{size_kb/1024:.1f} MB" if size_kb >= 1024 else f"{size_kb} KB"
+
+            if total_sec > 0 and speed_x > 0:
+                remaining_sec = (total_sec - cur_sec) / speed_x
+                eta_str = _fmt_eta(remaining_sec)
+            else:
+                elapsed = now - start_time
+                eta_str = "…"
+
+            try:
+                await on_progress(pct, eta_str, speed_str, size_str)
+            except Exception:
+                pass
+            last_update = now
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(read_stderr(), send_updates()),
+            timeout=timeout + 10,
+        )
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise FFmpegError("FFmpeg timed out.")
+    finally:
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+
+    if proc.returncode != 0:
+        err = "".join(stderr_buf[-30:])
+        raise FFmpegError(err)
+
+
+# ── Audio ────────────────────────────────────────────────────────────────────
 async def extract_audio(video_path: str, output_path: str):
     await run_ffmpeg([
         "ffmpeg", "-y", "-i", video_path,
@@ -35,6 +167,7 @@ async def extract_audio(video_path: str, output_path: str):
     ])
 
 
+# ── Merge ────────────────────────────────────────────────────────────────────
 async def merge_videos(video_paths: List[str], output_path: str):
     list_file = output_path + ".txt"
     with open(list_file, "w", encoding="utf-8") as f:
@@ -50,6 +183,7 @@ async def merge_videos(video_paths: List[str], output_path: str):
         pass
 
 
+# ── Split ────────────────────────────────────────────────────────────────────
 async def split_video(video_path: str, start: str, duration: str, output_path: str):
     await run_ffmpeg([
         "ffmpeg", "-y", "-i", video_path,
@@ -57,23 +191,26 @@ async def split_video(video_path: str, start: str, duration: str, output_path: s
     ])
 
 
+# ── Compress (with live progress) ────────────────────────────────────────────
 async def compress_video(
     input_path: str,
     output_path: str,
     resolution=None,
     crf: int = 28,
+    on_progress: Optional[Callable] = None,
+    update_interval: float = 5.0,
 ):
     """
     Re-encode video with libx264.
-    resolution: '360','480','720','1080' (height) or None for smart compress
-                (keeps original resolution, just reduces bitrate via CRF).
+    resolution: '360','480','720','1080' or None/'orig' for smart compress.
+    on_progress: async callable(percent, eta_str, speed_str, size_str) or None.
     """
     if resolution and str(resolution) not in ("orig", "None", "none", ""):
         vf_args = ["-vf", f"scale=-2:{resolution}"]
     else:
         vf_args = []
 
-    await run_ffmpeg([
+    cmd = [
         "ffmpeg", "-y", "-i", input_path,
         *vf_args,
         "-c:v",    "libx264",
@@ -82,9 +219,17 @@ async def compress_video(
         "-c:a",    "aac",
         "-b:a",    "128k",
         output_path,
-    ])
+    ]
+
+    if on_progress:
+        await run_ffmpeg_with_progress(
+            cmd, on_progress=on_progress, update_interval=update_interval
+        )
+    else:
+        await run_ffmpeg(cmd)
 
 
+# ── Watermark ────────────────────────────────────────────────────────────────
 async def add_watermark(
     input_path: str,
     output_path: str,
@@ -114,6 +259,7 @@ async def add_watermark(
     ])
 
 
+# ── Thumbnail ────────────────────────────────────────────────────────────────
 async def generate_thumbnail(
     video_path: str,
     thumb_path: str,
@@ -130,6 +276,7 @@ async def generate_thumbnail(
     return thumb_path
 
 
+# ── Screenshot ───────────────────────────────────────────────────────────────
 async def take_screenshot(
     video_path: str,
     output_path: str,
@@ -143,6 +290,7 @@ async def take_screenshot(
     await generate_thumbnail(video_path, output_path, time_pos=time_str)
 
 
+# ── Subtitles ────────────────────────────────────────────────────────────────
 async def extract_subtitles(video_path: str, output_dir: str) -> List[dict]:
     os.makedirs(output_dir, exist_ok=True)
     proc = await asyncio.create_subprocess_exec(
@@ -183,6 +331,7 @@ async def extract_subtitles(video_path: str, output_dir: str) -> List[dict]:
     return extracted
 
 
+# ── Media Info ───────────────────────────────────────────────────────────────
 async def get_media_info(file_path: str) -> Optional[dict]:
     proc = await asyncio.create_subprocess_exec(
         "ffprobe",
@@ -200,11 +349,11 @@ async def get_media_info(file_path: str) -> Optional[dict]:
     except Exception:
         return None
 
-    fmt     = data.get("format", {})
-    streams = data.get("streams", [])
-    video_s = next((s for s in streams if s.get("codec_type") == "video"), None)
-    audio_s = next((s for s in streams if s.get("codec_type") == "audio"), None)
-    sub_cnt = sum(1 for s in streams if s.get("codec_type") == "subtitle")
+    fmt      = data.get("format", {})
+    streams  = data.get("streams", [])
+    video_s  = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio_s  = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    sub_cnt  = sum(1 for s in streams if s.get("codec_type") == "subtitle")
     duration = float(fmt.get("duration") or 0)
 
     info = {
@@ -219,7 +368,6 @@ async def get_media_info(file_path: str) -> Optional[dict]:
         info["resolution"]    = f"{w}×{h}" if w and h else "N/A"
         info["video_codec"]   = video_s.get("codec_name", "Unknown")
         info["video_bitrate"] = video_s.get("bit_rate", "N/A")
-        # Safe fps — no eval()
         afr = video_s.get("avg_frame_rate", "0/0")
         try:
             num, den = afr.split("/")
