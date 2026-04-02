@@ -250,6 +250,7 @@ def main_keyboard():
          InlineKeyboardButton("📊 My Stats",callback_data="show_mystats")],
         [InlineKeyboardButton("💬 Help",callback_data="show_help"),
          InlineKeyboardButton("⭐ Premium",callback_data="premium_info")],
+        [InlineKeyboardButton("🚨 Report Bug",url="https://t.me/Technical_serenabot")],
         [_ob()],
     ])
 
@@ -1015,6 +1016,7 @@ async def callbacks(client, cq: CallbackQuery):
             await cq.message.reply_text("🧹 Cleanup running (background worker is active).")
         await cq.answer(); return
     if data=="noop": await cq.answer(); return
+    if data=="report_bug": await cq.answer("🚨 Report sent! Contact @Technical_serenabot",show_alert=True); return
     await cq.answer()
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1291,7 +1293,8 @@ async def _handle_file_info(client, dest, orig):
 async def _trigger_compress(client, dest, orig, cid, mid):
     media=orig.video or orig.document
     if not media or not is_video_file(media.file_name or ""): await dest.reply_text("This is not a video file."); return
-    uid=dest.from_user.id if dest.from_user else 0
+    # dest.from_user is None for channel/bot messages — use orig.from_user as fallback
+    uid=(dest.from_user.id if dest.from_user else None) or (orig.from_user.id if orig.from_user else 0)
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
@@ -1332,12 +1335,15 @@ async def _do_compress(client, cq, tid, res, crf=28):
             out=str(temp_root/out_name)
             await status.edit_text(f"⚙️ Compressing [{label}]… This may take a while.")
             try:
-                resolution=None if res=="orig" else res
+                resolution=None if res in ("orig","None","none") else res
                 await compress_video(dl,out,resolution=resolution,crf=crf)
-            except Exception as e: await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            except Exception as e:
+                await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>")
+                _safe_cleanup(str(temp_root)); COMPRESS_TASKS.pop(tid,None); return
             # Delete source immediately to free space
             _safe_cleanup(dl)
             thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,out_name)
+            out_size=os.path.getsize(out) if os.path.exists(out) else 0
             await status.edit_text("📤 Uploading compressed video…"); start_u=time.time()
             try:
                 sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
@@ -1348,7 +1354,7 @@ async def _do_compress(client, cq, tid, res, crf=28):
                 _safe_cleanup(str(temp_root))
                 await log_output(client,cq.from_user,sent,f"compressed {label}")
             except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-            await update_user_stats(uid,os.path.getsize(out) if os.path.exists(out) else 0)
+            await update_user_stats(uid,out_size)
     COMPRESS_TASKS.pop(tid,None)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1634,15 +1640,10 @@ async def _do_create_zip(client, cq, uid):
         for i,f in enumerate(sess["files"],1):
             try:
                 await status.edit_text(f"📥 Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
-                p=await client.download_file(f["file_id"],file_name=str(temp_root/f["file_name"]))
-                if p: dl_paths.append(str(temp_root/f["file_name"]))
-            except:
-                try:
-                    tmp=str(temp_root/f["file_name"])
-                    await client.download_media(f["file_id"],file_name=str(temp_root))
-                    dl_paths.append(tmp)
-                except: pass
-        if not dl_paths: await status.edit_text("❌ Files could not be downloaded."); zip_sessions.pop(uid,None); return
+                dest_path=str(temp_root/f["file_name"])
+                p=await client.download_media(f["file_id"],file_name=dest_path)
+                if p: dl_paths.append(p)
+            except: pass
         await status.edit_text("🗜 Creating archive…")
         try:
             arc=create_archive(dl_paths,str(temp_root),"serena_archive",password=sess.get("password"))
