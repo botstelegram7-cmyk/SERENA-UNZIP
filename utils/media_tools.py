@@ -55,16 +55,14 @@ def _fmt_eta(sec: float) -> str:
 
 async def run_ffmpeg_with_progress(
     cmd: list,
-    on_progress: Callable,   # async callable(percent, eta_str, speed_str, size_str)
+    on_progress: Callable,
     update_interval: float = 5.0,
     timeout: int = 1800,
 ):
     """
-    Run ffmpeg and periodically call on_progress with live stats.
-    FFmpeg writes progress to stderr — we parse it line-by-line.
+    Run ffmpeg, parse stderr line-by-line, fire on_progress every update_interval secs.
+    on_progress: async callable(percent: float, eta: str, speed: str, size: str)
     """
-    # -progress pipe:1 gives machine-readable output on stdout
-    # but simplest reliable approach: parse stderr lines
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
@@ -73,89 +71,93 @@ async def run_ffmpeg_with_progress(
 
     total_sec: float = 0.0
     last_update: float = 0.0
-    stderr_buf: list = []
+    stderr_lines: list = []
     start_time = time.time()
+    deadline = start_time + timeout
 
-    async def read_stderr():
-        nonlocal total_sec
-        while True:
-            try:
-                line_b = await asyncio.wait_for(
-                    proc.stderr.readline(), timeout=timeout
-                )
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                raise FFmpegError("FFmpeg timed out.")
-            if not line_b:
-                break
+    while True:
+        # Check timeout
+        if time.time() > deadline:
+            try: proc.kill()
+            except Exception: pass
+            raise FFmpegError("FFmpeg timed out.")
+
+        # Read one line with a short timeout so we can keep updating
+        try:
+            line_b = await asyncio.wait_for(proc.stderr.readline(), timeout=2.0)
+        except asyncio.TimeoutError:
+            # No new output — process might still be running, just slow
+            # Still try to send a progress update with last known data
+            line_b = b""
+
+        if line_b:
             line = line_b.decode(errors="ignore")
-            stderr_buf.append(line)
+            stderr_lines.append(line)
 
-            # Parse total duration from first pass
+            # Parse total duration once
             if total_sec == 0:
                 dm = _DUR_RE.search(line)
                 if dm:
                     total_sec = _hms_to_sec(*dm.groups())
 
-    async def send_updates():
-        nonlocal last_update
-        while proc.returncode is None:
-            await asyncio.sleep(0.5)
-            now = time.time()
-            if now - last_update < update_interval:
-                continue
-            # Search recent stderr for progress
-            recent = "".join(stderr_buf[-30:])
-            tm = _TS_RE.findall(recent)
-            if not tm:
-                continue
-            h, m, s, cs = tm[-1]
-            cur_sec = _hms_to_sec(h, m, s, cs)
-            pct = min((cur_sec / total_sec * 100) if total_sec > 0 else 0, 99.9)
-
-            speed_m = _SPEED_RE.search(recent)
-            speed_x = float(speed_m.group(1)) if speed_m else 0.0
-            speed_str = f"{speed_x:.1f}x" if speed_x else "…"
-
-            size_m = _SIZE_RE.findall(recent)
-            size_kb = int(size_m[-1]) if size_m else 0
-            size_str = f"{size_kb/1024:.1f} MB" if size_kb >= 1024 else f"{size_kb} KB"
-
-            if total_sec > 0 and speed_x > 0:
-                remaining_sec = (total_sec - cur_sec) / speed_x
-                eta_str = _fmt_eta(remaining_sec)
-            else:
-                elapsed = now - start_time
-                eta_str = "…"
-
+        # Check if process finished
+        if proc.returncode is not None:
+            break
+        ret = proc.returncode  # might have changed
+        # Also poll explicitly
+        if proc.returncode is None:
             try:
-                await on_progress(pct, eta_str, speed_str, size_str)
+                proc_ret = proc.returncode
             except Exception:
-                pass
-            last_update = now
+                proc_ret = None
 
+        # Send progress update if interval passed
+        now = time.time()
+        if now - last_update >= update_interval and stderr_lines:
+            recent = "".join(stderr_lines[-40:])
+            tm = _TS_RE.findall(recent)
+            if tm:
+                h, m, s, cs = tm[-1]
+                cur_sec = _hms_to_sec(h, m, s, cs)
+                pct = min((cur_sec / total_sec * 100) if total_sec > 0 else 0, 99.9)
+
+                speed_m = _SPEED_RE.search(recent)
+                speed_x = float(speed_m.group(1)) if speed_m else 0.0
+                speed_str = f"{speed_x:.1f}x" if speed_x else "calculating…"
+
+                size_m = _SIZE_RE.findall(recent)
+                size_kb = int(size_m[-1]) if size_m else 0
+                size_str = f"{size_kb/1024:.1f} MB" if size_kb >= 1024 else f"{size_kb} KB"
+
+                if total_sec > 0 and speed_x > 0:
+                    eta_str = _fmt_eta((total_sec - cur_sec) / speed_x)
+                else:
+                    eta_str = "calculating…"
+
+                try:
+                    await on_progress(pct, eta_str, speed_str, size_str)
+                except Exception:
+                    pass
+                last_update = now
+
+        # If readline returned empty bytes and process is done → break
+        if not line_b:
+            ret = await asyncio.wait_for(proc.wait(), timeout=5.0) if proc.returncode is None else proc.returncode
+            break
+
+    # Drain remaining stderr
     try:
-        await asyncio.wait_for(
-            asyncio.gather(read_stderr(), send_updates()),
-            timeout=timeout + 10,
-        )
-    except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        raise FFmpegError("FFmpeg timed out.")
-    finally:
-        try:
-            await proc.wait()
-        except Exception:
-            pass
+        remaining = await asyncio.wait_for(proc.stderr.read(), timeout=5.0)
+        if remaining:
+            stderr_lines.append(remaining.decode(errors="ignore"))
+    except Exception:
+        pass
+
+    if proc.returncode is None:
+        await proc.wait()
 
     if proc.returncode != 0:
-        err = "".join(stderr_buf[-30:])
+        err = "".join(stderr_lines[-30:])
         raise FFmpegError(err)
 
 
