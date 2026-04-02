@@ -1,4 +1,4 @@
-# bot.py — Serena Unzip Bot v2 (Complete)
+# bot.py — Serena Unzip Bot v3 (Upgraded: English · Bandwidth-Safe · Semaphore)
 import asyncio
 import datetime
 import os
@@ -60,6 +60,10 @@ ARCHIVE_EXTS  = (".zip",".rar",".7z",".tar",".gz",".tgz",".tar.gz",
                  ".tar.bz2",".tbz2",".bz2",".xz",".tar.xz")
 EMOJI_LIST    = ["🚀","📦","🎬","🧩","📄","🔗","🧪","⚡","💾","🧰"]
 
+# ── Bandwidth / Resource Guards ──────────────────────────────────────────────
+# Max 3 concurrent heavy I/O operations — prevents RAM overflow on 512MB Render
+GLOBAL_SEMAPHORE = asyncio.Semaphore(3)
+
 # ── State dicts ─────────────────────────────────────────────────────────────
 user_locks:     Dict[int,asyncio.Lock]    = {}
 tasks:          Dict[str,Dict[str,Any]]   = {}
@@ -111,6 +115,33 @@ def _ht(s):
     h,r=divmod(s,3600); m,s=divmod(r,60)
     return f"{h}h {m}m" if h else f"{m}m {s}s"
 
+def _safe_cleanup(*paths):
+    """Immediately delete files/dirs after use to free disk & RAM."""
+    for p in paths:
+        if not p: continue
+        try:
+            if os.path.isdir(str(p)):
+                shutil.rmtree(str(p), ignore_errors=True)
+            elif os.path.isfile(str(p)):
+                os.remove(str(p))
+        except Exception:
+            pass
+
+def _disk_free_mb() -> float:
+    return shutil.disk_usage("/").free / (1024 * 1024)
+
+async def _check_disk_space_ok(dest_msg, min_mb: int = 300) -> bool:
+    """Return False and send message if disk space is critically low."""
+    free = _disk_free_mb()
+    if free < min_mb:
+        await dest_msg.reply_text(
+            f"⚠️ <b>Server disk space is low!</b>\n"
+            f"💾 Free: <b>{free:.0f} MB</b> (minimum needed: {min_mb} MB)\n\n"
+            f"Please try again in a few minutes or contact the owner."
+        )
+        return False
+    return True
+
 async def is_premium_user(uid):
     t=await get_premium_until(uid)
     if not t: return False
@@ -133,7 +164,11 @@ async def check_rate_limit(uid, msg):
     if last:
         elapsed=(datetime.datetime.utcnow()-last).total_seconds() if isinstance(last,datetime.datetime) else time.time()-float(last)
         if elapsed<Config.FREE_MIN_WAIT_SEC:
-            await msg.reply_text(f"⏳ Cooldown: <b>{int(Config.FREE_MIN_WAIT_SEC-elapsed)}s</b> baaki. Premium = 10s wait!"); return False
+            await msg.reply_text(
+                f"⏳ Please wait <b>{int(Config.FREE_MIN_WAIT_SEC-elapsed)}s</b> before next task.\n"
+                f"⭐ Premium users only wait 10s!"
+            )
+            return False
     return True
 
 async def _get_thumb_mode(uid):
@@ -253,7 +288,6 @@ def file_action_keyboard(msg, fname, fsize_mb=0):
                      InlineKeyboardButton("ℹ️ File Info",callback_data=f"finfo|{cid}|{mid}")])
         rows.append([InlineKeyboardButton("✏️ Rename",callback_data=f"rename|{cid}|{mid}")])
     else:
-        # BUG FIX #1 — unsupported file
         rows.append([InlineKeyboardButton("📤 Send As-Is",callback_data=f"sendas|{cid}|{mid}"),
                      InlineKeyboardButton("✏️ Rename",callback_data=f"rename|{cid}|{mid}")])
         rows.append([InlineKeyboardButton("🗜 Add to ZIP",callback_data=f"addtozip|{cid}|{mid}")])
@@ -273,8 +307,10 @@ async def check_force_sub(client, message):
         return True
     except:
         try:
-            await message.reply_text("Pehle channel join karo 😎",reply_markup=InlineKeyboardMarkup([
-                [_cb()],[InlineKeyboardButton("✅ Try Again",callback_data="retry_force_sub")]]))
+            await message.reply_text(
+                "⚠️ You must join our channel before using this bot!",
+                reply_markup=InlineKeyboardMarkup([
+                    [_cb()],[InlineKeyboardButton("✅ I Joined — Try Again",callback_data="retry_force_sub")]]))
         except: pass
         return False
 
@@ -297,7 +333,7 @@ async def start_cmd(client, message):
                 rc=await get_referral_count(rid)
                 if rc>=Config.REFERRAL_REQUIRED:
                     await set_premium(rid,time.time()+Config.REFERRAL_REWARD_DAYS*86400)
-                    try: await client.send_message(rid,f"🎉 {Config.REFERRAL_REQUIRED} referrals! <b>{Config.REFERRAL_REWARD_DAYS} days Premium</b> free mila!")
+                    try: await client.send_message(rid,f"🎉 {Config.REFERRAL_REQUIRED} referrals complete! You got <b>{Config.REFERRAL_REWARD_DAYS} days Premium</b> for FREE!")
                     except: pass
         except: pass
     name=message.from_user.first_name or "there"
@@ -305,7 +341,7 @@ async def start_cmd(client, message):
     cap=(f"Hey <b>{name}</b>! 👋\n\nWelcome to <b>{Config.BOT_NAME}</b> [{prem}]\n\n"
          f"{random_emoji()} Unzip 20+ formats (ZIP/RAR/7Z/TAR + passwords)\n"
          f"{random_emoji()} Instagram, Twitter, Facebook, TikTok downloader\n"
-         f"{random_emoji()} Video Compress, Merge, Split, Watermark\n"
+         f"{random_emoji()} Video Compress (no limits!), Merge, Split, Watermark\n"
          f"{random_emoji()} Extract Audio, Subtitles, Screenshots\n"
          f"{random_emoji()} ZIP Creator, File Renamer, PDF Tools\n"
          f"{random_emoji()} Auto-process TXT/M3U8/GDrive links\n\nUse /help for full guide.")
@@ -316,19 +352,19 @@ async def start_cmd(client, message):
 @app.on_message(filters.command("help") & (filters.private|filters.group))
 async def help_cmd(client, message):
     text=(
-        "✨ <b>Serena Unzip v2 — Help</b>\n\n"
+        "✨ <b>Serena Unzip Bot v3 — Help</b>\n\n"
         "📦 <b>Archives</b>\n"
         "• Send archive → Unzip / Password / Auto-Try\n"
         "• ZIP, RAR, 7Z, TAR, GZ, BZ2, XZ supported\n\n"
         "🎬 <b>Video Tools</b>\n"
-        "• Extract Audio  • Compress (360p–1080p)\n"
+        "• Extract Audio  • Compress (360p–1080p + Smart)\n"
         "• Split File  • Extract Subtitles\n"
         "• Screenshot  • Watermark  • Rename\n\n"
         "⬇️ <b>Downloaders</b>\n"
         "• <code>/ytdl &lt;link&gt;</code> — Instagram, Twitter, TikTok, Facebook, Vimeo…\n"
         "• TXT / links → auto-download (direct, m3u8, GDrive)\n\n"
-        "🗜 <b>ZIP Creator</b>: <code>/zip</code> → files bhejo → ✅ Done\n"
-        "🔗 <b>Merge Videos</b>: <code>/merge</code> → videos bhejo → ✅ Merge\n"
+        "🗜 <b>ZIP Creator</b>: <code>/zip</code> → send files → ✅ Done\n"
+        "🔗 <b>Merge Videos</b>: <code>/merge</code> → send videos → ✅ Merge\n"
         "✏️ <b>Rename</b>: Reply to file → <code>/rename</code>\n"
         "ℹ️ <b>Info</b>: Reply to file → <code>/info</code>\n"
         "📄 <b>PDF</b>: Tap PDF Tools button\n"
@@ -362,7 +398,7 @@ async def cancel_cmd(client, message):
     uid=message.from_user.id
     user_cancelled[uid]=True; zip_sessions.pop(uid,None); merge_sessions.pop(uid,None)
     pending_state.pop(uid,None); pending_password.pop(uid,None)
-    await message.reply_text("❌ Current task cancelled 💨")
+    await message.reply_text("❌ Current task cancelled!")
 
 
 @app.on_message(filters.command("mystats") & (filters.private|filters.group))
@@ -390,8 +426,8 @@ async def refer_cmd(client, message):
     link=f"https://t.me/{me.username}?start=ref_{uid}"
     rc=await get_referral_count(uid); need=max(0,Config.REFERRAL_REQUIRED-rc)
     await message.reply_text(
-        f"🎁 <b>Referral Program</b>\n\nYour link:\n<code>{link}</code>\n\n"
-        f"✅ Referred: <b>{rc}/{Config.REFERRAL_REQUIRED}</b>  |  Aur {need} chahiye\n"
+        f"🎁 <b>Referral Program</b>\n\nYour referral link:\n<code>{link}</code>\n\n"
+        f"✅ Referred: <b>{rc}/{Config.REFERRAL_REQUIRED}</b>  |  Need {need} more\n"
         f"🏆 Reward: <b>{Config.REFERRAL_REWARD_DAYS} days Premium FREE!</b>",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("📤 Share",url=f"https://t.me/share/url?url={link}&text=Join+Serena+Bot!")
@@ -410,10 +446,10 @@ async def ytdl_cmd(client, message):
         await message.reply_text(
             "📥 Usage: <code>/ytdl &lt;URL&gt;</code>\n\n"
             "Supported: Instagram, Twitter/X, Facebook, TikTok,\nVimeo, Dailymotion, Reddit + 1000 more\n\n"
-            "<i>Note: YouTube & paid education platforms supported nahi hain.</i>"); return
+            "<i>Note: YouTube & paid education platforms are not supported.</i>"); return
     url=args[0].strip()
     if not is_supported_url(url):
-        await message.reply_text("❌ Ye URL supported nahi hai."); return
+        await message.reply_text("❌ This URL is not supported."); return
     status=await message.reply_text("🔍 Fetching info…")
     try: formats=await get_formats(url)
     except Exception as e:
@@ -428,7 +464,7 @@ async def ytdl_cmd(client, message):
         sz=f" (~{human_bytes(f['size_approx'])})" if f.get("size_approx") else ""
         buttons.append([InlineKeyboardButton(f"{f['label']}{sz}",callback_data=f"ytdlq|{task_id}|{i}")])
     buttons.append([InlineKeyboardButton("❌ Cancel",callback_data=f"ytdlcancel|{task_id}")])
-    try: await status.edit_text(f"🎬 Quality choose karo:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
+    try: await status.edit_text(f"🎬 Choose quality:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
     except: pass
 
 
@@ -438,13 +474,13 @@ async def zip_cmd(client, message):
     uid=message.from_user.id
     if await is_banned(uid): return
     if uid in zip_sessions:
-        await message.reply_text("Ek ZIP session already chal raha hai. /cancel karo pehle."); return
+        await message.reply_text("A ZIP session is already active. Use /cancel first."); return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     zip_sessions[uid]={"files":[],"temp_root":str(temp_root),"chat_id":message.chat.id,"reply_to":message.id,"password":None}
     await message.reply_text(
-        "📦 <b>ZIP Creator Mode ON!</b>\n\nAb files bhejo ek ek karke.\nDone hone pe ✅ dabao.",
+        "📦 <b>ZIP Creator Mode ON!</b>\n\nSend files one by one.\nTap ✅ Done when finished.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Done — Create ZIP",callback_data=f"zipfile|done|{uid}"),
              InlineKeyboardButton("🔐 Add Password",callback_data=f"zipfile|askpass|{uid}")],
@@ -457,13 +493,13 @@ async def merge_cmd(client, message):
     uid=message.from_user.id
     if await is_banned(uid): return
     if uid in merge_sessions:
-        await message.reply_text("Ek merge session chal raha hai. /cancel karo."); return
+        await message.reply_text("A merge session is already active. Use /cancel."); return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     merge_sessions[uid]={"files":[],"temp_root":str(temp_root),"chat_id":message.chat.id,"reply_to":message.id}
     await message.reply_text(
-        "🔗 <b>Merge Mode ON!</b>\n\nVideos bhejo (same format). Order same rahega.",
+        "🔗 <b>Merge Mode ON!</b>\n\nSend videos (same format). Order will be preserved.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Merge Now",callback_data=f"mergefile|done|{uid}"),
              InlineKeyboardButton("❌ Cancel",callback_data=f"mergefile|cancel|{uid}")]]))
@@ -479,22 +515,24 @@ async def file_command_handler(client, message):
     media=None
     if r: media=r.document or r.video or r.audio
     if not r or not media:
-        hints={"rename":"Kisi file pe reply karke /rename use karo.",
-               "info":"Kisi file pe reply karke /info use karo.",
-               "subs":"Kisi MKV/MP4 pe reply karke /subs use karo.",
-               "screenshot":"Kisi video pe reply karke /screenshot HH:MM:SS use karo.",
-               "pdf":"Kisi PDF pe reply karke /pdf use karo.",
-               "compress":"Kisi video pe reply karke /compress use karo.",
-               "split":"Kisi file pe reply karke /split use karo.",
-               "audio":"Kisi video pe reply karke /audio use karo.",
-               "unzip":"Kisi archive pe reply karke /unzip use karo.",
-               "watermark":"Kisi video pe reply karke /watermark [text] use karo."}
-        await message.reply_text(hints.get(cmd,"Kisi file pe reply karke command use karo.")); return
+        hints={
+            "rename":"Reply to a file and use /rename.",
+            "info":"Reply to a file and use /info.",
+            "subs":"Reply to an MKV/MP4 and use /subs.",
+            "screenshot":"Reply to a video and use /screenshot HH:MM:SS.",
+            "pdf":"Reply to a PDF and use /pdf.",
+            "compress":"Reply to a video and use /compress.",
+            "split":"Reply to a file and use /split.",
+            "audio":"Reply to a video and use /audio.",
+            "unzip":"Reply to an archive and use /unzip.",
+            "watermark":"Reply to a video and use /watermark [text]."
+        }
+        await message.reply_text(hints.get(cmd,"Reply to a file and use the command.")); return
     cid,mid=r.chat.id,r.id
     fname=media.file_name or "file"
     if cmd=="rename":
         pending_state[uid]={"action":"rename","chat_id":cid,"msg_id":mid,"fname":fname}
-        await message.reply_text(f"✏️ <code>{fname}</code> ka naya naam bhejo:")
+        await message.reply_text(f"✏️ Send the new name for <code>{fname}</code>:")
     elif cmd=="info": await _handle_file_info(client,message,r)
     elif cmd=="subs": await _trigger_subs(client,message,r)
     elif cmd=="screenshot":
@@ -502,7 +540,7 @@ async def file_command_handler(client, message):
         if args: await _handle_screenshot_with_time(client,message,r,args[0])
         else:
             pending_state[uid]={"action":"screenshot","chat_id":cid,"msg_id":mid}
-            await message.reply_text("📸 Time bhejo: <code>MM:SS</code> ya <code>HH:MM:SS</code>")
+            await message.reply_text("📸 Send timestamp: <code>MM:SS</code> or <code>HH:MM:SS</code>")
     elif cmd=="pdf": await _trigger_pdf_tools(client,message,r,fname)
     elif cmd=="compress":
         if not await check_rate_limit(uid,message): return
@@ -510,7 +548,7 @@ async def file_command_handler(client, message):
     elif cmd=="split": await _trigger_split(client,message,r,cid,mid,fname)
     elif cmd=="audio": await handle_extract_audio(client,None,r,reply_to_msg=message)
     elif cmd=="unzip":
-        if not is_archive_file(fname): await message.reply_text("Ye archive nahi hai."); return
+        if not is_archive_file(fname): await message.reply_text("This is not a supported archive."); return
         if not await check_rate_limit(uid,message): return
         await run_unzip_task(client,r,password=None,reply_msg=message)
     elif cmd=="watermark":
@@ -518,7 +556,7 @@ async def file_command_handler(client, message):
         if args_list: await _handle_watermark(client,message,r," ".join(args_list))
         else:
             pending_state[uid]={"action":"watermark","chat_id":cid,"msg_id":mid}
-            await message.reply_text("💧 Watermark text bhejo:")
+            await message.reply_text("💧 Send the watermark text:")
 
 
 @app.on_message(filters.command(["status","users"]) & filters.private)
@@ -561,10 +599,10 @@ async def premium_cmd(client, message):
     parts=(message.text or "").split()
     if len(parts)<2: await message.reply_text("Usage: /premium <id> [days]"); return
     try: target=int(parts[1])
-    except: await message.reply_text("ID must be integer."); return
+    except: await message.reply_text("ID must be an integer."); return
     days=int(parts[2]) if len(parts)>=3 else 30
     await set_premium(target,time.time()+days*86400)
-    await message.reply_text(f"⭐ User {target} = Premium for {days} days.")
+    await message.reply_text(f"⭐ User {target} granted Premium for {days} days.")
 
 
 @app.on_message(filters.command(["ban","unban"]) & filters.private)
@@ -575,7 +613,7 @@ async def ban_cmd(client, message):
     elif len(message.command)>1:
         try: target=int(message.command[1])
         except: pass
-    if not target: await message.reply_text("User id ya reply use karo."); return
+    if not target: await message.reply_text("Provide a user ID or reply to user."); return
     await set_ban(target,cmd=="ban")
     await message.reply_text(f"User {target} {'banned' if cmd=='ban' else 'unbanned'}.")
 
@@ -598,7 +636,7 @@ async def on_file(client, message):
         sess=zip_sessions[uid]
         sess["files"].append({"file_id":media.file_id,"file_name":fname,"size":getattr(media,"file_size",0) or 0})
         cnt=len(sess["files"])
-        await message.reply_text(f"📎 File {cnt}: <code>{fname}</code>\nAur bhejo ya ✅ Done.",
+        await message.reply_text(f"📎 File {cnt}: <code>{fname}</code>\nSend more or tap ✅ Done.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Done",callback_data=f"zipfile|done|{uid}"),
                  InlineKeyboardButton("🔐 Password",callback_data=f"zipfile|askpass|{uid}")],
@@ -619,13 +657,14 @@ async def on_file(client, message):
         temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
         temp_root.mkdir(parents=True,exist_ok=True)
         await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-        st=await message.reply_text("📥 TXT downloading…")
+        st=await message.reply_text("📥 Reading TXT file…")
         try:
             p=await client.download_media(message.document,file_name=str(temp_root))
             content=Path(p).read_text(encoding="utf-8",errors="ignore")
         except Exception as e: await st.edit_text(f"❌ TXT download failed:\n<code>{e}</code>"); return
         try: await st.delete()
         except: pass
+        _safe_cleanup(str(temp_root))
         await process_links_message(client,message,content); return
     if not media: return
     fsize_mb=(getattr(media,"file_size",0) or 0)/(1024*1024)
@@ -669,7 +708,7 @@ async def on_text(client, message):
     if uid in pending_state:
         state=pending_state.pop(uid); action=state.get("action")
         if action=="settings_caption":
-            if not txt: await message.reply_text("Caption empty nahi ho sakta."); return
+            if not txt: await message.reply_text("Caption cannot be empty."); return
             cfg=await get_user_settings(uid) or {}
             cfg["caption_base"]=txt; cfg["caption_counter"]=0
             await save_user_settings(uid,cfg)
@@ -694,7 +733,7 @@ async def on_text(client, message):
             sess=zip_sessions.get(uid)
             if sess:
                 sess["password"]=txt
-                await message.reply_text(f"🔐 Password set: <code>{txt}</code>. ✅ Done dabao.",
+                await message.reply_text(f"🔐 Password set: <code>{txt}</code>. Tap ✅ Done.",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("✅ Done",callback_data=f"zipfile|done|{uid}"),
                         InlineKeyboardButton("❌ Cancel",callback_data=f"zipfile|cancel|{uid}")]]))
@@ -790,7 +829,7 @@ async def callbacks(client, cq: CallbackQuery):
         await cq.answer()
         await cq.message.reply_text(
             "⭐ <b>Premium</b>\n\n<b>Free:</b> 30 tasks/day, 4GB/day, 5min cooldown\n"
-            f"<b>Premium:</b> Unlimited, no limits, 10s cooldown\n\n"
+            f"<b>Premium:</b> Unlimited tasks, no limits, 10s cooldown\n\n"
             f"Buy: @{Config.OWNER_USERNAME}\nEarn free: /refer"); return
     if data.startswith("settings:"):
         uid=cq.from_user.id; action=data.split(":",1)[1]
@@ -801,19 +840,19 @@ async def callbacks(client, cq: CallbackQuery):
             await cq.answer("Reset!"); return
         if action=="caption":
             pending_state[uid]={"action":"settings_caption"}
-            await cq.message.reply_text("📝 Base caption bhejo:\nExample: <code>My Pack</code>")
+            await cq.message.reply_text("📝 Send your base caption:\nExample: <code>My Pack</code>")
             await cq.answer(); return
         if action=="replace":
             pending_state[uid]={"action":"settings_replace"}
-            await cq.message.reply_text("🔤 Replace rule:\n<code>old -> new</code>")
+            await cq.message.reply_text("🔤 Send replace rule:\n<code>old -> new</code>")
             await cq.answer(); return
         if action.startswith("thumb:"):
             mode=action.split(":",1)[1]; cfg=await get_user_settings(uid) or {}
             cfg["thumb_mode"]=mode; await save_user_settings(uid,cfg)
-            await cq.message.reply_text(f"✅ Thumb mode: <b>{mode}</b>"); await cq.answer(); return
+            await cq.message.reply_text(f"✅ Thumbnail mode set to: <b>{mode}</b>"); await cq.answer(); return
     if data.startswith("unzip|"):
         try: _,cid,mid,mode=data.split("|",3); orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await handle_unzip_button(client,cq,orig,mode); return
     if data.startswith("ucancel|"):
         _,tid=data.split("|",1); tasks.pop(tid,None)
@@ -822,7 +861,7 @@ async def callbacks(client, cq: CallbackQuery):
         await cq.answer(); return
     if data.startswith("audio|"):
         try: _,cid,mid=data.split("|",2); orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("Video nahi mila.",show_alert=True); return
+        except: await cq.answer("Video not found.",show_alert=True); return
         await handle_extract_audio(client,cq,orig); return
     if data.startswith("sendall|"):
         _,tid=data.split("|",1); await handle_send_all(client,cq,tid); return
@@ -831,7 +870,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("sendas|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         try:
             if orig.document: await client.send_document(cq.message.chat.id,orig.document.file_id,reply_to_message_id=cq.message.id)
@@ -841,28 +880,30 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("rename|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         media=orig.document or orig.video or orig.audio
         fname=(media.file_name if media else None) or "file"
         pending_state[cq.from_user.id]={"action":"rename","chat_id":int(cid),"msg_id":int(mid),"fname":fname}
-        await cq.message.reply_text(f"✏️ Naya naam bhejo (current: <code>{fname}</code>):")
+        await cq.message.reply_text(f"✏️ Send new name (current: <code>{fname}</code>):")
         await cq.answer(); return
     if data.startswith("finfo|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _handle_file_info(client,cq.message,orig); return
     if data.startswith("compress|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid)); return
     if data.startswith("comprq|"):
-        _,tid,res=data.split("|",2); await cq.answer(); await _do_compress(client,cq,tid,res); return
+        parts=data.split("|",3); tid=parts[1]; res=parts[2]
+        crf=int(parts[3]) if len(parts)>3 else 28
+        await cq.answer(); await _do_compress(client,cq,tid,res,crf); return
     if data.startswith("split|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         media=orig.document or orig.video; fname=(media.file_name if media else None) or "file"
         await _trigger_split(client,cq.message,orig,int(cid),int(mid),fname); return
@@ -871,7 +912,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("subs|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _trigger_subs(client,cq.message,orig); return
     if data.startswith("subsq|"):
         _,tid,sidx=data.split("|",2); await cq.answer()
@@ -880,16 +921,16 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("screenshot|"):
         _,cid,mid=data.split("|",2)
         pending_state[cq.from_user.id]={"action":"screenshot","chat_id":int(cid),"msg_id":int(mid)}
-        await cq.message.reply_text("📸 Time bhejo: <code>MM:SS</code> ya <code>HH:MM:SS</code>")
+        await cq.message.reply_text("📸 Send timestamp: <code>MM:SS</code> or <code>HH:MM:SS</code>")
         await cq.answer(); return
     if data.startswith("watermark|"):
         _,cid,mid=data.split("|",2)
         pending_state[cq.from_user.id]={"action":"watermark","chat_id":int(cid),"msg_id":int(mid)}
-        await cq.message.reply_text("💧 Watermark text bhejo:"); await cq.answer(); return
+        await cq.message.reply_text("💧 Send the watermark text:"); await cq.answer(); return
     if data.startswith("pdf|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         media=orig.document; fname=(media.file_name if media else None) or "file.pdf"
         await _trigger_pdf_tools(client,cq.message,orig,fname); return
@@ -897,7 +938,7 @@ async def callbacks(client, cq: CallbackQuery):
         _,tid,action=data.split("|",2); await cq.answer(); await _do_pdf_action(client,cq,tid,action); return
     if data.startswith("zipfile|"):
         _,action,uid_str=data.split("|",2); uid=int(uid_str)
-        if cq.from_user.id!=uid: await cq.answer("Ye tumhara session nahi.",show_alert=True); return
+        if cq.from_user.id!=uid: await cq.answer("This is not your session.",show_alert=True); return
         await cq.answer()
         if action=="cancel":
             zip_sessions.pop(uid,None)
@@ -905,12 +946,12 @@ async def callbacks(client, cq: CallbackQuery):
             except: pass
         elif action=="askpass":
             pending_state[uid]={"action":"zip_password"}
-            await cq.message.reply_text("🔐 Password bhejo (ya /cancel):")
+            await cq.message.reply_text("🔐 Send password (or /cancel):")
         elif action=="done": await _do_create_zip(client,cq,uid)
         return
     if data.startswith("mergefile|"):
         _,action,uid_str=data.split("|",2); uid=int(uid_str)
-        if cq.from_user.id!=uid: await cq.answer("Ye tumhara session nahi.",show_alert=True); return
+        if cq.from_user.id!=uid: await cq.answer("This is not your session.",show_alert=True); return
         await cq.answer()
         if action=="cancel":
             merge_sessions.pop(uid,None)
@@ -934,7 +975,7 @@ async def callbacks(client, cq: CallbackQuery):
         if len(parts)<4: await cq.answer(); return
         _,action,cid,mid=parts
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("Message nahi mila.",show_alert=True); return
+        except: await cq.answer("Message not found.",show_alert=True); return
         key=(orig.chat.id,orig.id); sess=LINK_SESSIONS.get(key)
         content=sess["content"] if sess else (orig.text or orig.caption or "")
         links=sess["links"] if sess else find_links_in_text(content)
@@ -949,7 +990,7 @@ async def callbacks(client, cq: CallbackQuery):
         return
     if data.startswith("cloudopt|"):
         _,cid,mid=data.split("|",2); await cq.answer()
-        await cq.message.reply_text("☁️ Cloud platform choose karo:",
+        await cq.message.reply_text("☁️ Choose cloud platform:",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🌐 GoFile (No limit)",callback_data=f"cloudgo|{cid}|{mid}"),
                  InlineKeyboardButton("📦 Catbox (≤200MB)",callback_data=f"cloudcat|{cid}|{mid}")],
@@ -958,7 +999,7 @@ async def callbacks(client, cq: CallbackQuery):
         platform="gofile" if data.startswith("cloudgo|") else "catbox"
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _do_cloud_upload(client,cq,orig,platform); return
     if data.startswith("admin:"):
         if not is_owner(cq.from_user.id): await cq.answer("Owner only.",show_alert=True); return
@@ -969,9 +1010,9 @@ async def callbacks(client, cq: CallbackQuery):
                 f"📊 Users: {total}  Premium: {premium}  Banned: {banned}\n"
                 f"💾 Free: {human_bytes(disk.free)}")
         elif action=="broadcast":
-            await cq.message.reply_text("📢 Kisi message ko reply karke /broadcast bhejo.")
+            await cq.message.reply_text("📢 Reply to a message then use /broadcast.")
         elif action=="clean":
-            await cq.message.reply_text("🧹 Cleanup triggered (background worker chal raha hai).")
+            await cq.message.reply_text("🧹 Cleanup running (background worker is active).")
         await cq.answer(); return
     if data=="noop": await cq.answer(); return
     await cq.answer()
@@ -985,13 +1026,13 @@ async def handle_unzip_button(client, cq, orig, mode):
     if await is_banned(uid): await cq.answer("Banned.",show_alert=True); return
     if not await check_force_sub(client,orig): await cq.answer(); return
     doc=orig.document
-    if not doc: await cq.answer("No document.",show_alert=True); return
+    if not doc: await cq.answer("No document found.",show_alert=True); return
     fname=doc.file_name or "archive"
-    if not is_archive_file(fname): await cq.answer("Archive nahi hai.",show_alert=True); return
+    if not is_archive_file(fname): await cq.answer("Not a supported archive.",show_alert=True); return
     if not await check_rate_limit(uid,cq.message): await cq.answer(); return
     if mode=="askpass":
         pending_password[uid]={"chat_id":orig.chat.id,"msg_id":orig.id,"file_name":fname}
-        await cq.message.reply_text(f"🔐 Password bhejo for <code>{fname}</code>:")
+        await cq.message.reply_text(f"🔐 Send password for <code>{fname}</code>:")
         await cq.answer(); return
     if mode=="autopass":
         await cq.answer(); await _auto_try_passwords(client,cq.message,orig); return
@@ -1002,85 +1043,93 @@ async def _auto_try_passwords(client, reply_msg, orig):
     uid=orig.from_user.id
     status=await reply_msg.reply_text("🔑 Auto-trying common passwords…")
     doc=orig.document
-    if not doc: await status.edit_text("No document."); return
+    if not doc: await status.edit_text("No document found."); return
+    if not await _check_disk_space_ok(status): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    try: dl=await client.download_media(doc,file_name=str(temp_root))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    found=None
-    for pw in COMMON_PASSWORDS:
-        try:
-            td=str(temp_root/"test_pw")
-            extract_archive(dl,td,password=pw)
-            found=pw; shutil.rmtree(td,ignore_errors=True); break
-        except: shutil.rmtree(str(temp_root/"test_pw"),ignore_errors=True)
+    async with GLOBAL_SEMAPHORE:
+        try: dl=await client.download_media(doc,file_name=str(temp_root))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        found=None
+        for pw in COMMON_PASSWORDS:
+            try:
+                td=str(temp_root/"test_pw")
+                extract_archive(dl,td,password=pw)
+                found=pw; shutil.rmtree(td,ignore_errors=True); break
+            except: shutil.rmtree(str(temp_root/"test_pw"),ignore_errors=True)
     if found:
         await status.edit_text(f"✅ Password found: <code>{found}</code>\nExtracting…")
         await run_unzip_task(client,orig,password=found,reply_msg=reply_msg)
     else:
-        await status.edit_text("❌ Common passwords mein se koi kaam nahi aaya.\n🔐 Manually enter karo.")
+        _safe_cleanup(str(temp_root))
+        await status.edit_text("❌ None of the common passwords worked.\n🔐 Please enter the password manually.")
 
 async def handle_unzip_from_password(client, msg, info, password):
     orig=await client.get_messages(info["chat_id"],info["msg_id"])
-    await msg.reply_text("✅ Password mila, extracting…")
+    await msg.reply_text("✅ Password received, extracting…")
     await run_unzip_task(client,orig,password=password,reply_msg=msg)
 
 async def run_unzip_task(client, msg, password, reply_msg=None):
     if not msg.from_user: return
     uid=msg.from_user.id; lock=get_lock(uid); dest=reply_msg or msg
-    if lock.locked(): await dest.reply_text("⏳ Ek task chal raha hai."); return
+    if lock.locked(): await dest.reply_text("⏳ A task is already running. Please wait."); return
+    if not await _check_disk_space_ok(dest): return
     async with lock:
-        user_cancelled[uid]=False
-        doc=msg.document; fname=doc.file_name or "archive"
-        size_mb=(doc.file_size or 0)/(1024*1024)
-        await get_or_create_user(uid)
-        temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
-        temp_root.mkdir(parents=True,exist_ok=True)
-        await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-        status=await dest.reply_text("📥 Downloading archive…"); start=time.time()
-        try:
-            dl=await client.download_media(doc,file_name=str(temp_root),progress=progress_for_pyrogram,
-                progress_args=(status,start,fname,"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-        if not dl: await status.edit_text("❌ Download failed."); return
-        if user_cancelled.get(uid): await status.edit_text("❌ Cancelled."); return
-        if not password and detect_encrypted(dl):
-            await status.edit_text("🔐 Archive encrypted hai!\nUse <b>With Password</b> ya <b>Auto-Try</b>."); return
-        await status.edit_text("📦 Extracting…")
-        extract_dir=temp_root/"extracted"
-        try: result=extract_archive(dl,str(extract_dir),password=password)
-        except Exception as e: await status.edit_text(f"❌ Extract error:\n<code>{e}</code>"); return
-        if user_cancelled.get(uid): await status.edit_text("❌ Cancelled mid-way."); return
-        stats=result["stats"]; files=sorted(result["files"],key=lambda p:p.lower())
-        links_map=extract_links_from_folder(str(extract_dir))
-        tid=uuid.uuid4().hex
-        tasks[tid]={"type":"unzip","user_id":uid,"base_dir":str(extract_dir),"files":files,"archive_name":os.path.basename(dl)}
-        summary=(f"✅ <b>Extraction Done!</b>\n\n📁 <code>{os.path.basename(dl)}</code>\n"
-                 f"📊 Files: <b>{stats['total_files']}</b>  Folders: <b>{stats['folders']}</b>\n"
-                 f"🎬 Videos: <b>{stats['videos']}</b>  📄 PDFs: <b>{stats['pdf']}</b>  "
-                 f"📱 APKs: <b>{stats['apk']}</b>\n"
-                 f"📝 TXT: <b>{stats['txt']}</b>  📺 M3U8: <b>{stats['m3u']}</b>  "
-                 f"Others: <b>{stats['others']}</b>\n")
-        tl=sum(len(v) for v in links_map.values())
-        if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
-        rows=[[InlineKeyboardButton("❌ Cancel",callback_data=f"ucancel|{tid}")],
-              [InlineKeyboardButton("🚀 Send ALL",callback_data=f"sendall|{tid}")]]
-        for idx,rel in enumerate(files[:25]):
-            short=rel if len(rel)<=42 else "…"+rel[-39:]
-            rows.append([InlineKeyboardButton(short,callback_data=f"sendone|{tid}|{idx}")])
-        if tl:
-            all_links=[l for v in links_map.values() for l in v]
-            LINK_SESSIONS[(status.chat.id,status.id)]={"links":all_links,"content":"\n".join(all_links)}
-            rows.append([InlineKeyboardButton(f"⬇️ Download {tl} links",callback_data=f"links|download_all|{status.chat.id}|{status.id}")])
-        await status.edit_text(summary,reply_markup=InlineKeyboardMarkup(rows))
-        await update_user_stats(uid,size_mb)
+        async with GLOBAL_SEMAPHORE:
+            user_cancelled[uid]=False
+            doc=msg.document; fname=doc.file_name or "archive"
+            size_mb=(doc.file_size or 0)/(1024*1024)
+            await get_or_create_user(uid)
+            temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
+            temp_root.mkdir(parents=True,exist_ok=True)
+            await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
+            status=await dest.reply_text("📥 Downloading archive…"); start=time.time()
+            try:
+                dl=await client.download_media(doc,file_name=str(temp_root),progress=progress_for_pyrogram,
+                    progress_args=(status,start,fname,"to server"))
+            except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            if not dl: await status.edit_text("❌ Download failed."); _safe_cleanup(str(temp_root)); return
+            if user_cancelled.get(uid): await status.edit_text("❌ Cancelled."); _safe_cleanup(str(temp_root)); return
+            if not password and detect_encrypted(dl):
+                await status.edit_text("🔐 Archive is encrypted!\nUse <b>With Password</b> or <b>Auto-Try</b>."); return
+            await status.edit_text("📦 Extracting…")
+            extract_dir=temp_root/"extracted"
+            try: result=extract_archive(dl,str(extract_dir),password=password)
+            except Exception as e: await status.edit_text(f"❌ Extraction error:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            # Delete the downloaded archive immediately to free disk space
+            try: os.remove(dl)
+            except: pass
+            if user_cancelled.get(uid): await status.edit_text("❌ Cancelled mid-extraction."); _safe_cleanup(str(temp_root)); return
+            stats=result["stats"]; files=sorted(result["files"],key=lambda p:p.lower())
+            links_map=extract_links_from_folder(str(extract_dir))
+            tid=uuid.uuid4().hex
+            tasks[tid]={"type":"unzip","user_id":uid,"base_dir":str(extract_dir),"files":files,"archive_name":fname}
+            summary=(f"✅ <b>Extraction Complete!</b>\n\n📁 <code>{fname}</code>\n"
+                     f"📊 Files: <b>{stats['total_files']}</b>  Folders: <b>{stats['folders']}</b>\n"
+                     f"🎬 Videos: <b>{stats['videos']}</b>  📄 PDFs: <b>{stats['pdf']}</b>  "
+                     f"📱 APKs: <b>{stats['apk']}</b>\n"
+                     f"📝 TXT: <b>{stats['txt']}</b>  📺 M3U8: <b>{stats['m3u']}</b>  "
+                     f"Others: <b>{stats['others']}</b>\n")
+            tl=sum(len(v) for v in links_map.values())
+            if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
+            rows=[[InlineKeyboardButton("❌ Cancel",callback_data=f"ucancel|{tid}")],
+                  [InlineKeyboardButton("🚀 Send ALL",callback_data=f"sendall|{tid}")]]
+            for idx,rel in enumerate(files[:25]):
+                short=rel if len(rel)<=42 else "…"+rel[-39:]
+                rows.append([InlineKeyboardButton(short,callback_data=f"sendone|{tid}|{idx}")])
+            if tl:
+                all_links=[l for v in links_map.values() for l in v]
+                LINK_SESSIONS[(status.chat.id,status.id)]={"links":all_links,"content":"\n".join(all_links)}
+                rows.append([InlineKeyboardButton(f"⬇️ Download {tl} links",callback_data=f"links|download_all|{status.chat.id}|{status.id}")])
+            await status.edit_text(summary,reply_markup=InlineKeyboardMarkup(rows))
+            await update_user_stats(uid,size_mb)
 
 async def handle_send_all(client, cq, tid):
     info=tasks.get(tid)
     if not info: await cq.answer("Task expired.",show_alert=True); return
     user=cq.from_user
-    if user.id!=info["user_id"]: await cq.answer("Ye tumhara task nahi.",show_alert=True); return
+    if user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
     await cq.answer(); await cq.message.edit_text("📤 Sending all files…")
     base=Path(info["base_dir"]); files=info["files"]
     chat_id=cq.message.chat.id; reply_to=cq.message.id
@@ -1088,10 +1137,53 @@ async def handle_send_all(client, cq, tid):
     if is_priv:
         try: await client.pin_chat_message(chat_id,reply_to); pinned=True
         except: pass
-    for rel in files:
-        if user_cancelled.get(user.id): break
-        full=base/rel
-        if not full.is_file(): continue
+    async with GLOBAL_SEMAPHORE:
+        for rel in files:
+            if user_cancelled.get(user.id): break
+            full=base/rel
+            if not full.is_file(): continue
+            try:
+                if is_video_path(rel):
+                    name=Path(rel).name; cap=await build_caption(user.id,name)
+                    thumb=await choose_thumbnail(user.id,str(full))
+                    st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to)
+                    start_u=time.time()
+                    sent=await client.send_video(chat_id,str(full),caption=cap,thumb=thumb,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),reply_to_message_id=reply_to)
+                    try: await st.delete()
+                    except: pass
+                    if thumb: _safe_cleanup(thumb)
+                else:
+                    st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to)
+                    start_u=time.time()
+                    sent=await client.send_document(chat_id,str(full),caption=rel,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),reply_to_message_id=reply_to)
+                    try: await st.delete()
+                    except: pass
+                # Immediately delete after sending to free disk
+                _safe_cleanup(str(full))
+                try: await log_output(client,user,sent,f"send_all {info.get('archive_name','?')}")
+                except: pass
+            except: pass
+            await asyncio.sleep(0.4)
+    if is_priv and pinned:
+        try: await client.unpin_chat_message(chat_id,reply_to)
+        except: pass
+    await client.send_message(chat_id,"✅ All files sent!",reply_to_message_id=reply_to)
+    tasks.pop(tid,None)
+
+async def handle_send_one(client, cq, tid, index):
+    info=tasks.get(tid)
+    if not info: await cq.answer("Task expired.",show_alert=True); return
+    user=cq.from_user
+    if user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
+    files=info["files"]
+    if index<0 or index>=len(files): await cq.answer("Invalid.",show_alert=True); return
+    await cq.answer()
+    base=Path(info["base_dir"]); rel=files[index]; full=base/rel
+    if not full.is_file(): await cq.message.reply_text("File is missing."); return
+    chat_id=cq.message.chat.id; reply_to=cq.message.id
+    async with GLOBAL_SEMAPHORE:
         try:
             if is_video_path(rel):
                 name=Path(rel).name; cap=await build_caption(user.id,name)
@@ -1102,6 +1194,7 @@ async def handle_send_all(client, cq, tid):
                     progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),reply_to_message_id=reply_to)
                 try: await st.delete()
                 except: pass
+                if thumb: _safe_cleanup(thumb)
             else:
                 st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to)
                 start_u=time.time()
@@ -1109,46 +1202,9 @@ async def handle_send_all(client, cq, tid):
                     progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),reply_to_message_id=reply_to)
                 try: await st.delete()
                 except: pass
-            try: await log_output(client,user,sent,f"send_all {info.get('archive_name','?')}")
+            try: await log_output(client,user,sent,f"send_one {info.get('archive_name','?')}")
             except: pass
         except: pass
-        await asyncio.sleep(0.4)
-    if is_priv and pinned:
-        try: await client.unpin_chat_message(chat_id,reply_to)
-        except: pass
-    await client.send_message(chat_id,"✅ All files sent!",reply_to_message_id=reply_to)
-
-async def handle_send_one(client, cq, tid, index):
-    info=tasks.get(tid)
-    if not info: await cq.answer("Task expired.",show_alert=True); return
-    user=cq.from_user
-    if user.id!=info["user_id"]: await cq.answer("Ye tumhara task nahi.",show_alert=True); return
-    files=info["files"]
-    if index<0 or index>=len(files): await cq.answer("Invalid.",show_alert=True); return
-    await cq.answer()
-    base=Path(info["base_dir"]); rel=files[index]; full=base/rel
-    if not full.is_file(): await cq.message.reply_text("File missing."); return
-    chat_id=cq.message.chat.id; reply_to=cq.message.id
-    try:
-        if is_video_path(rel):
-            name=Path(rel).name; cap=await build_caption(user.id,name)
-            thumb=await choose_thumbnail(user.id,str(full))
-            st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to)
-            start_u=time.time()
-            sent=await client.send_video(chat_id,str(full),caption=cap,thumb=thumb,
-                progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except: pass
-        else:
-            st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to)
-            start_u=time.time()
-            sent=await client.send_document(chat_id,str(full),caption=rel,
-                progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except: pass
-        try: await log_output(client,user,sent,f"send_one {info.get('archive_name','?')}")
-        except: pass
-    except: pass
 
 # ════════════════════════════════════════════════════════════════════════════
 # AUDIO EXTRACT
@@ -1161,56 +1217,61 @@ async def handle_extract_audio(client, cq, msg, reply_to_msg=None):
         if cq: await cq.answer("Banned.",show_alert=True); return
     video=msg.video
     if not video:
-        if cq: await cq.answer("Video nahi hai.",show_alert=True); return
+        if cq: await cq.answer("No video found.",show_alert=True); return
     lock=get_lock(uid)
     if lock.locked():
-        if cq: await cq.answer("Ek task chal raha hai.",show_alert=True); return
+        if cq: await cq.answer("A task is already running.",show_alert=True); return
     if cq: await cq.answer()
     dest_msg=(cq.message if cq else None) or reply_to_msg or msg
     if not await check_rate_limit(uid,dest_msg): return
+    if not await _check_disk_space_ok(dest_msg): return
     async with lock:
-        fname=video.file_name or "video.mp4"; base=os.path.splitext(fname)[0]
-        temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
-        temp_root.mkdir(parents=True,exist_ok=True)
-        await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-        status=await dest_msg.reply_text("📥 Downloading video for audio extract…"); start=time.time()
-        try:
-            dl=await client.download_media(video,file_name=str(temp_root),
-                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-        audio_path=str(temp_root/f"{base}.m4a")
-        try: await extract_audio(dl,audio_path)
-        except Exception as e: await status.edit_text(f"❌ ffmpeg error:\n<code>{e}</code>"); return
-        await status.edit_text("📤 Uploading audio…"); start_u=time.time()
-        try:
-            # BUG FIX #4 — send_audio not send_document
-            sent=await client.send_audio(dest_msg.chat.id,audio_path,
-                caption=f"🎵 Extracted from: <b>{fname}</b>",title=base,performer="Serena Bot",
-                progress=progress_for_pyrogram,progress_args=(status,start_u,f"{base}.m4a","to Telegram"),
-                reply_to_message_id=dest_msg.id)
-            try: await status.delete()
-            except: pass
-            try: await log_output(client,user,sent,"audio extracted")
-            except: pass
-        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+        async with GLOBAL_SEMAPHORE:
+            fname=video.file_name or "video.mp4"; base=os.path.splitext(fname)[0]
+            temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
+            temp_root.mkdir(parents=True,exist_ok=True)
+            await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
+            status=await dest_msg.reply_text("📥 Downloading video for audio extraction…"); start=time.time()
+            try:
+                dl=await client.download_media(video,file_name=str(temp_root),
+                    progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+            except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            audio_path=str(temp_root/f"{base}.m4a")
+            try: await extract_audio(dl,audio_path)
+            except Exception as e: await status.edit_text(f"❌ FFmpeg error:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            # Delete source video immediately to free space
+            _safe_cleanup(dl)
+            await status.edit_text("📤 Uploading audio…"); start_u=time.time()
+            try:
+                sent=await client.send_audio(dest_msg.chat.id,audio_path,
+                    caption=f"🎵 Extracted from: <b>{fname}</b>",title=base,performer="Serena Bot",
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,f"{base}.m4a","to Telegram"),
+                    reply_to_message_id=dest_msg.id)
+                try: await status.delete()
+                except: pass
+                _safe_cleanup(str(temp_root))
+                try: await log_output(client,user,sent,"audio extracted")
+                except: pass
+            except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
 
 # ════════════════════════════════════════════════════════════════════════════
-# NEW FEATURES
+# FILE INFO
 # ════════════════════════════════════════════════════════════════════════════
-
-# ── File Info ────────────────────────────────────────────────────────────────
 async def _handle_file_info(client, dest, orig):
     media=orig.document or orig.video or orig.audio
-    if not media: await dest.reply_text("Koi media nahi mili."); return
+    if not media: await dest.reply_text("No media found."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "file"; size=getattr(media,"file_size",0) or 0
     status=await dest.reply_text("ℹ️ Fetching info…")
+    if not await _check_disk_space_ok(status): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    try: dl=await client.download_media(media,file_name=str(temp_root))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    info=await get_media_info(dl)
+    async with GLOBAL_SEMAPHORE:
+        try: dl=await client.download_media(media,file_name=str(temp_root))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        info=await get_media_info(dl)
+    _safe_cleanup(str(temp_root))
     if not info:
         await status.edit_text(f"ℹ️ <b>File Info</b>\n\n📄 <code>{fname}</code>\n💾 {human_bytes(size)}"); return
     txt=f"ℹ️ <b>File Info</b>\n\n📄 <code>{fname}</code>\n💾 {human_bytes(info.get('size_bytes',size))}\n"
@@ -1221,70 +1282,90 @@ async def _handle_file_info(client, dest, orig):
         if info.get("fps"): txt+=f" @ {info['fps']:.1f}fps"
         txt+="\n"
     if info.get("audio_codec"): txt+=f"🔊 {info['audio_codec']} {info.get('audio_channels','')}ch {info.get('audio_lang','')}\n"
-    if info.get("subtitle_count"): txt+=f"🔤 {info['subtitle_count']} subtitle tracks\n"
+    if info.get("subtitle_count"): txt+=f"🔤 {info['subtitle_count']} subtitle track(s)\n"
     await status.edit_text(txt)
 
-# ── Compress ─────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# COMPRESS — No limits, multiple quality options
+# ════════════════════════════════════════════════════════════════════════════
 async def _trigger_compress(client, dest, orig, cid, mid):
     media=orig.video or orig.document
-    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video nahi hai."); return
+    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("This is not a video file."); return
     uid=dest.from_user.id if dest.from_user else 0
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":media.file_name or "video.mp4"}
-    await dest.reply_text(f"📦 Compress: <code>{media.file_name or 'video'}</code>\nResolution:",
+    await dest.reply_text(
+        f"📦 Compress: <code>{media.file_name or 'video'}</code>\n\nChoose quality/resolution:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📱 360p",callback_data=f"comprq|{tid}|360"),InlineKeyboardButton("📺 480p",callback_data=f"comprq|{tid}|480")],
-            [InlineKeyboardButton("💻 720p",callback_data=f"comprq|{tid}|720"),InlineKeyboardButton("🖥 1080p",callback_data=f"comprq|{tid}|1080")],
+            [InlineKeyboardButton("📱 360p",callback_data=f"comprq|{tid}|360|28"),
+             InlineKeyboardButton("📺 480p",callback_data=f"comprq|{tid}|480|28")],
+            [InlineKeyboardButton("💻 720p",callback_data=f"comprq|{tid}|720|28"),
+             InlineKeyboardButton("🖥 1080p",callback_data=f"comprq|{tid}|1080|28")],
+            [InlineKeyboardButton("🔥 Smart Compress (Original Size)",callback_data=f"comprq|{tid}|orig|26"),
+             InlineKeyboardButton("🗜 Max Compress",callback_data=f"comprq|{tid}|480|35")],
             [InlineKeyboardButton("❌ Cancel",callback_data="noop")]]))
 
-async def _do_compress(client, cq, tid, res):
+async def _do_compress(client, cq, tid, res, crf=28):
     info=COMPRESS_TASKS.get(tid)
     if not info: await cq.message.reply_text("Task expired."); return
     uid=cq.from_user.id
     if uid!=info["user_id"]: return
     if not await check_rate_limit(uid,cq.message): return
+    if not await _check_disk_space_ok(cq.message): return
     orig=await client.get_messages(info["chat_id"],info["msg_id"])
     media=orig.video or orig.document
     if not media: return
     lock=get_lock(uid)
-    if lock.locked(): await cq.message.reply_text("Ek task chal raha hai."); return
+    if lock.locked(): await cq.message.reply_text("A task is already running."); return
     async with lock:
-        temp_root=Path(info["temp_root"])
-        status=await cq.message.reply_text(f"📥 Downloading for {res}p compression…"); start=time.time()
-        try:
-            dl=await client.download_media(media,file_name=str(temp_root),
-                progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-        out=str(temp_root/f"compressed_{res}p.mp4")
-        await status.edit_text(f"⚙️ Compressing to {res}p…")
-        try: await compress_video(dl,out,resolution=res)
-        except Exception as e: await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>"); return
-        thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{Path(info['fname']).stem}_{res}p.mp4")
-        await status.edit_text("📤 Uploading…"); start_u=time.time()
-        try:
-            sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,f"compressed_{res}p.mp4","to Telegram"),
-                reply_to_message_id=cq.message.id)
-            try: await status.delete()
-            except: pass
-            await log_output(client,cq.from_user,sent,f"compressed {res}p")
-        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-        await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
+        async with GLOBAL_SEMAPHORE:
+            temp_root=Path(info["temp_root"])
+            label=f"{res}p" if res!="orig" else "Smart"
+            status=await cq.message.reply_text(f"📥 Downloading for {label} compression…"); start=time.time()
+            try:
+                dl=await client.download_media(media,file_name=str(temp_root),
+                    progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
+            except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            out_name=f"compressed_{label}_{Path(info['fname']).stem}.mp4"
+            out=str(temp_root/out_name)
+            await status.edit_text(f"⚙️ Compressing [{label}]… This may take a while.")
+            try:
+                resolution=None if res=="orig" else res
+                await compress_video(dl,out,resolution=resolution,crf=crf)
+            except Exception as e: await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            # Delete source immediately to free space
+            _safe_cleanup(dl)
+            thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,out_name)
+            await status.edit_text("📤 Uploading compressed video…"); start_u=time.time()
+            try:
+                sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
+                    reply_to_message_id=cq.message.id)
+                try: await status.delete()
+                except: pass
+                _safe_cleanup(str(temp_root))
+                await log_output(client,cq.from_user,sent,f"compressed {label}")
+            except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+            await update_user_stats(uid,os.path.getsize(out) if os.path.exists(out) else 0)
     COMPRESS_TASKS.pop(tid,None)
 
-# ── Split ────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# SPLIT
+# ════════════════════════════════════════════════════════════════════════════
 async def _trigger_split(client, dest, orig, cid, mid, fname):
     uid=dest.from_user.id if dest.from_user else 0
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     SPLIT_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":fname}
-    await dest.reply_text(f"✂️ Split: <code>{fname}</code>\nPart size:",
+    await dest.reply_text(f"✂️ Split: <code>{fname}</code>\nChoose part size:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📦 500 MB",callback_data=f"splitq|{tid}|500"),InlineKeyboardButton("📦 1 GB",callback_data=f"splitq|{tid}|1024")],
-            [InlineKeyboardButton("📦 1.5 GB",callback_data=f"splitq|{tid}|1536"),InlineKeyboardButton("📦 1.9 GB",callback_data=f"splitq|{tid}|1900")],
+            [InlineKeyboardButton("📦 500 MB",callback_data=f"splitq|{tid}|500"),
+             InlineKeyboardButton("📦 1 GB",callback_data=f"splitq|{tid}|1024")],
+            [InlineKeyboardButton("📦 1.5 GB",callback_data=f"splitq|{tid}|1536"),
+             InlineKeyboardButton("📦 1.9 GB",callback_data=f"splitq|{tid}|1900")],
             [InlineKeyboardButton("❌ Cancel",callback_data="noop")]]))
 
 async def _do_split(client, cq, tid, size_mb):
@@ -1293,58 +1374,69 @@ async def _do_split(client, cq, tid, size_mb):
     uid=cq.from_user.id
     if uid!=info["user_id"]: return
     if not await check_rate_limit(uid,cq.message): return
+    if not await _check_disk_space_ok(cq.message): return
     orig=await client.get_messages(info["chat_id"],info["msg_id"])
     media=orig.document or orig.video
     if not media: return
     lock=get_lock(uid)
-    if lock.locked(): await cq.message.reply_text("Ek task chal raha hai."); return
+    if lock.locked(): await cq.message.reply_text("A task is already running."); return
     async with lock:
-        temp_root=Path(info["temp_root"])
-        status=await cq.message.reply_text("📥 Downloading to split…"); start=time.time()
-        try:
-            dl=await client.download_media(media,file_name=str(temp_root),
-                progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-        await status.edit_text(f"✂️ Splitting into {size_mb}MB parts…")
-        try: parts=await split_file(dl,part_size_mb=size_mb)
-        except Exception as e: await status.edit_text(f"❌ Split failed:\n<code>{e}</code>"); return
-        await status.edit_text(f"📤 Sending {len(parts)} parts…")
-        for i,pp in enumerate(parts,1):
-            pname=os.path.basename(pp)
-            st=await client.send_message(cq.message.chat.id,f"📤 Part {i}/{len(parts)}",reply_to_message_id=cq.message.id)
-            start_u=time.time()
+        async with GLOBAL_SEMAPHORE:
+            temp_root=Path(info["temp_root"])
+            status=await cq.message.reply_text("📥 Downloading file to split…"); start=time.time()
             try:
-                await client.send_document(cq.message.chat.id,pp,caption=pname,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,pname,"to Telegram"),reply_to_message_id=cq.message.id)
-                try: await st.delete()
-                except: pass
-            except Exception as e: await st.edit_text(f"❌ Part {i} failed: <code>{e}</code>")
-        try: await status.delete()
-        except: pass
-        await cq.message.reply_text(f"✅ Split done! {len(parts)} parts sent.")
-        await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
+                dl=await client.download_media(media,file_name=str(temp_root),
+                    progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
+            except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            await status.edit_text(f"✂️ Splitting into {size_mb}MB parts…")
+            try: parts=await split_file(dl,part_size_mb=size_mb)
+            except Exception as e: await status.edit_text(f"❌ Split failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+            # Delete original to save space
+            _safe_cleanup(dl)
+            await status.edit_text(f"📤 Sending {len(parts)} parts…")
+            for i,pp in enumerate(parts,1):
+                pname=os.path.basename(pp)
+                st=await client.send_message(cq.message.chat.id,f"📤 Part {i}/{len(parts)}",reply_to_message_id=cq.message.id)
+                start_u=time.time()
+                try:
+                    await client.send_document(cq.message.chat.id,pp,caption=pname,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,pname,"to Telegram"),reply_to_message_id=cq.message.id)
+                    try: await st.delete()
+                    except: pass
+                    _safe_cleanup(pp)  # delete each part after sending
+                except Exception as e: await st.edit_text(f"❌ Part {i} failed: <code>{e}</code>")
+            try: await status.delete()
+            except: pass
+            await cq.message.reply_text(f"✅ Split complete! {len(parts)} parts sent.")
+            await update_user_stats(uid,os.path.getsize(dl) if os.path.exists(dl) else 0)
     SPLIT_TASKS.pop(tid,None)
+    _safe_cleanup(str(info["temp_root"]))
 
-# ── Subtitles ─────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# SUBTITLES
+# ════════════════════════════════════════════════════════════════════════════
 async def _trigger_subs(client, dest, orig):
     media=orig.video or orig.document
-    if not media: await dest.reply_text("Koi media nahi mili."); return
+    if not media: await dest.reply_text("No media found."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "video"; tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text("📥 Downloading for subs…"); start=time.time()
-    try:
-        dl=await client.download_media(media,file_name=str(temp_root),
-            progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    await status.edit_text("🔍 Finding subtitle tracks…")
-    subs=await extract_subtitles(dl,str(temp_root/"subs"))
-    if not subs: await status.edit_text("❌ Koi subtitle track nahi mila."); return
+    if not await _check_disk_space_ok(dest): return
+    status=await dest.reply_text("📥 Downloading for subtitle extraction…"); start=time.time()
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl=await client.download_media(media,file_name=str(temp_root),
+                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        await status.edit_text("🔍 Finding subtitle tracks…")
+        subs=await extract_subtitles(dl,str(temp_root/"subs"))
+        _safe_cleanup(dl)  # Delete video after extracting subs
+    if not subs: await status.edit_text("❌ No subtitle tracks found."); _safe_cleanup(str(temp_root)); return
     SUB_TASKS[tid]={"user_id":uid,"subs":subs,"chat_id":dest.chat.id,"reply_to":status.id}
     buttons=[[InlineKeyboardButton(s["label"],callback_data=f"subsq|{tid}|{s['stream_index']}")] for s in subs]
     buttons.append([InlineKeyboardButton("📥 Download ALL",callback_data=f"subsq|{tid}|all")])
-    await status.edit_text(f"🔤 <b>{len(subs)} subtitle tracks found!</b>",reply_markup=InlineKeyboardMarkup(buttons))
+    await status.edit_text(f"🔤 <b>{len(subs)} subtitle track(s) found!</b>",reply_markup=InlineKeyboardMarkup(buttons))
 
 async def _do_extract_sub(client, cq, tid, sidx):
     info=SUB_TASKS.get(tid)
@@ -1352,114 +1444,137 @@ async def _do_extract_sub(client, cq, tid, sidx):
     subs=info["subs"]; chat_id=cq.message.chat.id; reply_to=cq.message.id
     targets=subs if sidx=="all" else [s for s in subs if s["stream_index"]==sidx]
     for sub in targets:
-        try: await client.send_document(chat_id,sub["output_path"],caption=f"🔤 {sub['label']}",reply_to_message_id=reply_to)
+        try:
+            await client.send_document(chat_id,sub["output_path"],caption=f"🔤 {sub['label']}",reply_to_message_id=reply_to)
+            _safe_cleanup(sub["output_path"])
         except Exception as e: await cq.message.reply_text(f"❌ {sub['label']}: <code>{e}</code>")
     txt=f"✅ All {len(subs)} subs sent!" if sidx=="all" else f"✅ {targets[0]['label'] if targets else 'N/A'} sent!"
     try: await cq.message.edit_text(txt)
     except: pass
     SUB_TASKS.pop(tid,None)
 
-# ── Screenshot ───────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# SCREENSHOT
+# ════════════════════════════════════════════════════════════════════════════
 async def _handle_screenshot_with_time(client, dest, orig, time_str):
     media=orig.video or orig.document
-    if not media: await dest.reply_text("Koi video nahi mili."); return
+    if not media: await dest.reply_text("No video found."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "video.mp4"
+    if not await _check_disk_space_ok(dest): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     status=await dest.reply_text(f"📥 Downloading for screenshot at {time_str}…"); start=time.time()
-    try:
-        dl=await client.download_media(media,file_name=str(temp_root),
-            progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    ss=str(temp_root/"screenshot.jpg")
-    try: await take_screenshot(dl,ss,time_str)
-    except Exception as e: await status.edit_text(f"❌ Screenshot failed:\n<code>{e}</code>"); return
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl=await client.download_media(media,file_name=str(temp_root),
+                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        ss=str(temp_root/"screenshot.jpg")
+        try: await take_screenshot(dl,ss,time_str)
+        except Exception as e: await status.edit_text(f"❌ Screenshot failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        _safe_cleanup(dl)  # Delete video after taking screenshot
     try:
         await client.send_photo(dest.chat.id,ss,caption=f"📸 at <code>{time_str}</code> from <b>{fname}</b>",reply_to_message_id=dest.id)
         try: await status.delete()
         except: pass
     except Exception as e: await status.edit_text(f"❌ Send failed:\n<code>{e}</code>")
+    finally: _safe_cleanup(str(temp_root))
 
-# ── Watermark ─────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# WATERMARK
+# ════════════════════════════════════════════════════════════════════════════
 async def _handle_watermark(client, dest, orig, wtext):
     media=orig.video or orig.document
-    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video nahi hai."); return
+    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("This is not a video file."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "video.mp4"
     if not await check_rate_limit(uid,dest): return
+    if not await _check_disk_space_ok(dest): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     status=await dest.reply_text("📥 Downloading for watermark…"); start=time.time()
-    try:
-        dl=await client.download_media(media,file_name=str(temp_root),
-            progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    out=str(temp_root/f"wm_{Path(fname).stem}.mp4")
-    await status.edit_text("💧 Adding watermark…")
-    try: await add_watermark(dl,out,wtext)
-    except Exception as e: await status.edit_text(f"❌ Watermark failed:\n<code>{e}</code>"); return
-    thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"💧 {fname}")
-    await status.edit_text("📤 Uploading…"); start_u=time.time()
-    try:
-        sent=await client.send_video(dest.chat.id,out,caption=cap,thumb=thumb,
-            progress=progress_for_pyrogram,progress_args=(status,start_u,fname,"to Telegram"),reply_to_message_id=dest.id)
-        try: await status.delete()
-        except: pass
-        await log_output(client,dest.from_user,sent,"watermark added")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl=await client.download_media(media,file_name=str(temp_root),
+                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        out=str(temp_root/f"wm_{Path(fname).stem}.mp4")
+        await status.edit_text("💧 Adding watermark…")
+        try: await add_watermark(dl,out,wtext)
+        except Exception as e: await status.edit_text(f"❌ Watermark failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        _safe_cleanup(dl)  # Delete source after watermarking
+        thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"💧 {fname}")
+        await status.edit_text("📤 Uploading…"); start_u=time.time()
+        try:
+            sent=await client.send_video(dest.chat.id,out,caption=cap,thumb=thumb,
+                progress=progress_for_pyrogram,progress_args=(status,start_u,fname,"to Telegram"),reply_to_message_id=dest.id)
+            try: await status.delete()
+            except: pass
+            _safe_cleanup(str(temp_root))
+            await log_output(client,dest.from_user,sent,"watermark added")
+        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
 
-# ── Rename ────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# RENAME
+# ════════════════════════════════════════════════════════════════════════════
 async def _do_rename(client, dest, orig, new_name):
-    if not new_name: await dest.reply_text("Name empty nahi ho sakta."); return
+    if not new_name: await dest.reply_text("Name cannot be empty."); return
     uid=dest.from_user.id if dest.from_user else 0
     media=orig.document or orig.video or orig.audio
-    if not media: await dest.reply_text("Koi file nahi mili."); return
+    if not media: await dest.reply_text("No file found."); return
     fname=media.file_name or "file"
     if not Path(new_name).suffix: new_name+=Path(fname).suffix
+    if not await _check_disk_space_ok(dest): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text("📥 Downloading to rename…"); start=time.time()
-    try:
-        dl=await client.download_media(media,file_name=str(temp_root),
-            progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    new_path=str(temp_root/new_name)
-    try: os.rename(dl,new_path)
-    except Exception as e: await status.edit_text(f"❌ Rename failed:\n<code>{e}</code>"); return
-    await status.edit_text(f"📤 Uploading as <code>{new_name}</code>…"); start_u=time.time()
-    try:
-        if is_video_path(new_name):
-            thumb=await choose_thumbnail(uid,new_path); cap=await build_caption(uid,new_name)
-            sent=await client.send_video(dest.chat.id,new_path,caption=cap,thumb=thumb,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,new_name,"to Telegram"),reply_to_message_id=dest.id)
-        else:
-            sent=await client.send_document(dest.chat.id,new_path,caption=new_name,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,new_name,"to Telegram"),reply_to_message_id=dest.id)
-        try: await status.delete()
-        except: pass
-        await log_output(client,dest.from_user,sent,f"renamed {fname}→{new_name}")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+    status=await dest.reply_text("📥 Downloading for rename…"); start=time.time()
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl=await client.download_media(media,file_name=str(temp_root),
+                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        new_path=str(temp_root/new_name)
+        try: os.rename(dl,new_path)
+        except Exception as e: await status.edit_text(f"❌ Rename failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        await status.edit_text(f"📤 Uploading as <code>{new_name}</code>…"); start_u=time.time()
+        try:
+            if is_video_path(new_name):
+                thumb=await choose_thumbnail(uid,new_path); cap=await build_caption(uid,new_name)
+                sent=await client.send_video(dest.chat.id,new_path,caption=cap,thumb=thumb,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,new_name,"to Telegram"),reply_to_message_id=dest.id)
+            else:
+                sent=await client.send_document(dest.chat.id,new_path,caption=new_name,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,new_name,"to Telegram"),reply_to_message_id=dest.id)
+            try: await status.delete()
+            except: pass
+            _safe_cleanup(str(temp_root))
+            await log_output(client,dest.from_user,sent,f"renamed {fname}→{new_name}")
+        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
 
-# ── PDF Tools ────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# PDF TOOLS
+# ════════════════════════════════════════════════════════════════════════════
 async def _trigger_pdf_tools(client, dest, orig, fname):
-    if not is_pdf_file(fname): await dest.reply_text("Ye PDF nahi hai."); return
+    if not is_pdf_file(fname): await dest.reply_text("This is not a PDF."); return
     uid=dest.from_user.id if dest.from_user else 0
     media=orig.document
-    if not media: await dest.reply_text("Document nahi mila."); return
+    if not media: await dest.reply_text("Document not found."); return
+    if not await _check_disk_space_ok(dest): return
     tid=uuid.uuid4().hex; temp_root=Path(Config.TEMP_DIR)/str(uid)/tid
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     status=await dest.reply_text("📥 Downloading PDF…"); start=time.time()
-    try:
-        dl=await client.download_media(media,file_name=str(temp_root),
-            progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl=await client.download_media(media,file_name=str(temp_root),
+                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
     try: pi=get_pdf_info(dl)
     except: pi={"pages":"?","size_mb":0}
     PDF_TASKS[tid]={"user_id":uid,"pdf_path":dl,"temp_root":str(temp_root),"fname":fname,"total_pages":pi.get("pages",0),"chat_id":dest.chat.id,"reply_to":status.id}
     await status.edit_text(
-        f"📄 <b>{fname}</b>\nPages: <b>{pi['pages']}</b>  Size: <b>{pi['size_mb']} MB</b>\n\nWhat to do?",
+        f"📄 <b>{fname}</b>\nPages: <b>{pi['pages']}</b>  Size: <b>{pi['size_mb']} MB</b>\n\nChoose action:",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✂️ Split by Pages",callback_data=f"pdfq|{tid}|split"),
              InlineKeyboardButton("📝 Extract Text",callback_data=f"pdfq|{tid}|text")],
@@ -1476,6 +1591,7 @@ async def _do_pdf_action(client, cq, tid, action):
         try:
             extract_text_from_pdf(dl,out)
             await client.send_document(cq.message.chat.id,out,caption=f"📝 Text from: <b>{fname}</b>",reply_to_message_id=cq.message.id)
+            _safe_cleanup(out)
             try: await cq.message.edit_text("✅ Text extracted!")
             except: pass
         except Exception as e: await cq.message.reply_text(f"❌ <code>{e}</code>")
@@ -1483,8 +1599,8 @@ async def _do_pdf_action(client, cq, tid, action):
         total=info.get("total_pages",0)
         pending_state[uid]={"action":"pdf_split_range","task_id":tid}
         await cq.message.reply_text(
-            f"✂️ Page range bhejo (total: <b>{total}</b> pages)\n\n"
-            "Format: <code>1-5</code> ya <code>1-5,7,10-15</code>")
+            f"✂️ Send page range (total: <b>{total}</b> pages)\n\n"
+            "Format: <code>1-5</code> or <code>1-5,7,10-15</code>")
     PDF_TASKS.pop(tid,None)
 
 async def _do_pdf_split_range(client, dest, tid, ranges):
@@ -1496,146 +1612,171 @@ async def _do_pdf_split_range(client, dest, tid, ranges):
         parts=split_pdf_by_range(dl,str(temp_root/"split"),ranges)
         for p in parts:
             await client.send_document(dest.chat.id,p,caption=os.path.basename(p),reply_to_message_id=dest.id)
-        try: await status.edit_text(f"✅ {len(parts)} PDF parts sent!")
+            _safe_cleanup(p)
+        try: await status.edit_text(f"✅ {len(parts)} PDF part(s) sent!")
         except: pass
     except Exception as e: await status.edit_text(f"❌ PDF split failed:\n<code>{e}</code>")
-    PDF_TASKS.pop(tid,None)
+    finally:
+        _safe_cleanup(str(info["temp_root"]))
+        PDF_TASKS.pop(tid,None)
 
-# ── ZIP Creator ───────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# ZIP CREATOR
+# ════════════════════════════════════════════════════════════════════════════
 async def _do_create_zip(client, cq, uid):
     sess=zip_sessions.get(uid)
-    if not sess: await cq.message.reply_text("Session expired. /zip se dobara shuru karo."); return
-    if not sess["files"]: await cq.message.reply_text("Koi file nahi hai! Pehle files bhejo."); return
-    status=await cq.message.reply_text(f"📥 Downloading {len(sess['files'])} files…")
+    if not sess: await cq.message.reply_text("Session expired. Start again with /zip."); return
+    if not sess["files"]: await cq.message.reply_text("No files added! Send files first."); return
+    if not await _check_disk_space_ok(cq.message): return
+    status=await cq.message.reply_text(f"📥 Downloading {len(sess['files'])} file(s)…")
     temp_root=Path(sess["temp_root"]); dl_paths=[]
-    for i,f in enumerate(sess["files"],1):
-        try:
-            await status.edit_text(f"📥 Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
-            p=await client.download_file(f["file_id"],file_name=str(temp_root/f["file_name"]))
-            if p: dl_paths.append(str(temp_root/f["file_name"]))
-        except:
-            # fallback
+    async with GLOBAL_SEMAPHORE:
+        for i,f in enumerate(sess["files"],1):
             try:
-                import tempfile
-                tmp=str(temp_root/f["file_name"])
-                await client.download_media(f["file_id"],file_name=str(temp_root))
-                dl_paths.append(tmp)
+                await status.edit_text(f"📥 Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
+                p=await client.download_file(f["file_id"],file_name=str(temp_root/f["file_name"]))
+                if p: dl_paths.append(str(temp_root/f["file_name"]))
+            except:
+                try:
+                    tmp=str(temp_root/f["file_name"])
+                    await client.download_media(f["file_id"],file_name=str(temp_root))
+                    dl_paths.append(tmp)
+                except: pass
+        if not dl_paths: await status.edit_text("❌ Files could not be downloaded."); zip_sessions.pop(uid,None); return
+        await status.edit_text("🗜 Creating archive…")
+        try:
+            arc=create_archive(dl_paths,str(temp_root),"serena_archive",password=sess.get("password"))
+        except Exception as e: await status.edit_text(f"❌ Archive creation failed:\n<code>{e}</code>"); zip_sessions.pop(uid,None); _safe_cleanup(str(temp_root)); return
+        # Delete source files after archiving
+        for p in dl_paths: _safe_cleanup(p)
+        arc_name=os.path.basename(arc)
+        await status.edit_text("📤 Uploading archive…"); start_u=time.time()
+        try:
+            sent=await client.send_document(cq.message.chat.id,arc,caption=f"🗜 <code>{arc_name}</code>",
+                progress=progress_for_pyrogram,progress_args=(status,start_u,arc_name,"to Telegram"),reply_to_message_id=cq.message.id)
+            try: await status.delete()
             except: pass
-    if not dl_paths: await status.edit_text("❌ Files download nahi ho payi."); zip_sessions.pop(uid,None); return
-    await status.edit_text("🗜 Creating archive…")
-    try:
-        arc=create_archive(dl_paths,str(temp_root),"serena_archive",password=sess.get("password"))
-    except Exception as e: await status.edit_text(f"❌ Archive creation failed:\n<code>{e}</code>"); zip_sessions.pop(uid,None); return
-    arc_name=os.path.basename(arc)
-    await status.edit_text("📤 Uploading archive…"); start_u=time.time()
-    try:
-        sent=await client.send_document(cq.message.chat.id,arc,caption=f"🗜 <code>{arc_name}</code>",
-            progress=progress_for_pyrogram,progress_args=(status,start_u,arc_name,"to Telegram"),reply_to_message_id=cq.message.id)
-        try: await status.delete()
-        except: pass
-        if sess.get("password"): await cq.message.reply_text(f"🔐 Archive password: <code>{sess['password']}</code>")
-        await log_output(client,cq.from_user,sent,"zip created")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+            _safe_cleanup(str(temp_root))
+            if sess.get("password"): await cq.message.reply_text(f"🔐 Archive password: <code>{sess['password']}</code>")
+            await log_output(client,cq.from_user,sent,"zip created")
+        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
     zip_sessions.pop(uid,None)
 
-# ── Merge Videos ──────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# MERGE VIDEOS
+# ════════════════════════════════════════════════════════════════════════════
 async def _do_merge_videos(client, cq, uid):
     sess=merge_sessions.get(uid)
     if not sess: await cq.message.reply_text("Session expired."); return
-    if len(sess["files"])<2: await cq.message.reply_text("Kam se kam 2 videos chahiye."); return
+    if len(sess["files"])<2: await cq.message.reply_text("At least 2 videos are required."); return
     if not await check_rate_limit(uid,cq.message): return
+    if not await _check_disk_space_ok(cq.message): return
     status=await cq.message.reply_text(f"📥 Downloading {len(sess['files'])} videos…")
     temp_root=Path(sess["temp_root"]); paths=[]
-    for i,f in enumerate(sess["files"],1):
+    async with GLOBAL_SEMAPHORE:
+        for i,f in enumerate(sess["files"],1):
+            try:
+                await status.edit_text(f"📥 Video {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
+                dest_path=str(temp_root/f["file_name"])
+                await client.download_media(f["file_id"],file_name=str(temp_root))
+                paths.append(dest_path)
+            except: pass
+        if len(paths)<2: await status.edit_text("❌ Not enough videos could be downloaded."); merge_sessions.pop(uid,None); _safe_cleanup(str(temp_root)); return
+        out=str(temp_root/"merged_output.mp4")
+        await status.edit_text("🔗 Merging videos…")
+        try: await merge_videos(paths,out)
+        except Exception as e: await status.edit_text(f"❌ Merge failed:\n<code>{e}</code>"); merge_sessions.pop(uid,None); _safe_cleanup(str(temp_root)); return
+        # Delete source videos after merge
+        for p in paths: _safe_cleanup(p)
+        thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,"merged_output.mp4")
+        await status.edit_text("📤 Uploading merged video…"); start_u=time.time()
         try:
-            await status.edit_text(f"📥 Video {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
-            dest_path=str(temp_root/f["file_name"])
-            await client.download_media(f["file_id"],file_name=str(temp_root))
-            paths.append(dest_path)
-        except: pass
-    if len(paths)<2: await status.edit_text("❌ Videos download nahi ho payi."); merge_sessions.pop(uid,None); return
-    out=str(temp_root/"merged_output.mp4")
-    await status.edit_text("🔗 Merging videos…")
-    try: await merge_videos(paths,out)
-    except Exception as e: await status.edit_text(f"❌ Merge failed:\n<code>{e}</code>"); merge_sessions.pop(uid,None); return
-    thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,"merged_output.mp4")
-    await status.edit_text("📤 Uploading merged video…"); start_u=time.time()
-    try:
-        sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
-            progress=progress_for_pyrogram,progress_args=(status,start_u,"merged_output.mp4","to Telegram"),reply_to_message_id=cq.message.id)
-        try: await status.delete()
-        except: pass
-        await log_output(client,cq.from_user,sent,"videos merged")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+            sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,
+                progress=progress_for_pyrogram,progress_args=(status,start_u,"merged_output.mp4","to Telegram"),reply_to_message_id=cq.message.id)
+            try: await status.delete()
+            except: pass
+            _safe_cleanup(str(temp_root))
+            await log_output(client,cq.from_user,sent,"videos merged")
+        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+        await update_user_stats(uid,os.path.getsize(out) if os.path.exists(out) else 0)
     merge_sessions.pop(uid,None)
-    await update_user_stats(uid,os.path.getsize(out)/(1024*1024))
 
-# ── yt-dlp download ───────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# yt-dlp DOWNLOAD
+# ════════════════════════════════════════════════════════════════════════════
 async def _do_ytdl_download(client, cq, tid, idx):
     info=YTDL_TASKS.get(tid)
     if not info: await cq.message.reply_text("Task expired."); return
     uid=cq.from_user.id
     if uid!=info["user_id"]: return
     if not await check_rate_limit(uid,cq.message): return
+    if not await _check_disk_space_ok(cq.message): return
     formats=info["formats"]
     if idx<0 or idx>=len(formats): await cq.message.reply_text("Invalid choice."); return
     fmt=formats[idx]; url=info["url"]; temp_root=Path(info["temp_root"])
     try: await cq.message.edit_text(f"⬇️ Downloading <b>{fmt['label']}</b>…\n<code>{url}</code>")
     except: pass
-    try:
-        dl_path=await ytdl_download(url,str(temp_root),format_id=fmt["format_id"],height=fmt.get("height",0))
-    except Exception as e:
-        try: await cq.message.edit_text(f"❌ Download failed:\n<code>{e}</code>")
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl_path=await ytdl_download(url,str(temp_root),format_id=fmt["format_id"],height=fmt.get("height",0))
+        except Exception as e:
+            try: await cq.message.edit_text(f"❌ Download failed:\n<code>{e}</code>")
+            except: pass
+            YTDL_TASKS.pop(tid,None); _safe_cleanup(str(temp_root)); return
+        basename=os.path.basename(dl_path)
+        status=cq.message; start_u=time.time()
+        try: await status.edit_text(f"📤 Uploading: <code>{basename}</code>")
         except: pass
-        YTDL_TASKS.pop(tid,None); return
-    basename=os.path.basename(dl_path)
-    status=cq.message; start_u=time.time()
-    try: await status.edit_text(f"📤 Uploading: <code>{basename}</code>")
-    except: pass
-    try:
-        if is_video_path(dl_path):
-            thumb=await choose_thumbnail(uid,dl_path); cap=await build_caption(uid,basename)
-            sent=await client.send_video(info["chat_id"],dl_path,caption=cap,thumb=thumb,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,basename,"to Telegram"),
-                reply_to_message_id=info["reply_to"])
-        elif is_audio_file(dl_path):
-            sent=await client.send_audio(info["chat_id"],dl_path,caption=basename,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,basename,"to Telegram"),
-                reply_to_message_id=info["reply_to"])
-        else:
-            sent=await client.send_document(info["chat_id"],dl_path,caption=basename,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,basename,"to Telegram"),
-                reply_to_message_id=info["reply_to"])
-        try: await status.delete()
-        except: pass
-        await log_output(client,cq.from_user,sent,f"ytdl: {url}")
-        await update_user_stats(uid,os.path.getsize(dl_path)/(1024*1024))
-    except Exception as e:
-        try: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-        except: pass
+        try:
+            if is_video_path(dl_path):
+                thumb=await choose_thumbnail(uid,dl_path); cap=await build_caption(uid,basename)
+                sent=await client.send_video(info["chat_id"],dl_path,caption=cap,thumb=thumb,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,basename,"to Telegram"),
+                    reply_to_message_id=info["reply_to"])
+            elif is_audio_file(dl_path):
+                sent=await client.send_audio(info["chat_id"],dl_path,caption=basename,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,basename,"to Telegram"),
+                    reply_to_message_id=info["reply_to"])
+            else:
+                sent=await client.send_document(info["chat_id"],dl_path,caption=basename,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,basename,"to Telegram"),
+                    reply_to_message_id=info["reply_to"])
+            try: await status.delete()
+            except: pass
+            _safe_cleanup(str(temp_root))
+            await log_output(client,cq.from_user,sent,f"ytdl: {url}")
+            await update_user_stats(uid,os.path.getsize(dl_path) if os.path.exists(dl_path) else 0)
+        except Exception as e:
+            try: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+            except: pass
     YTDL_TASKS.pop(tid,None)
 
-# ── Cloud Upload ──────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# CLOUD UPLOAD
+# ════════════════════════════════════════════════════════════════════════════
 async def _do_cloud_upload(client, cq, orig, platform):
     media=orig.document or orig.video
-    if not media: await cq.message.reply_text("File nahi mili."); return
+    if not media: await cq.message.reply_text("File not found."); return
     uid=cq.from_user.id
+    if not await _check_disk_space_ok(cq.message): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     fname=media.file_name or "file"
     status=await cq.message.reply_text(f"📥 Downloading {fname}…"); start=time.time()
-    try:
-        dl=await client.download_media(media,file_name=str(temp_root),
-            progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    await status.edit_text(f"☁️ Uploading to {platform}…")
-    try:
-        if platform=="gofile": url=await upload_to_gofile(dl)
-        elif platform=="catbox": url=await upload_to_catbox(dl)
-        else: url=await smart_upload(dl)
-        await status.edit_text(
-            f"✅ <b>Uploaded to {platform}!</b>\n\n🔗 <a href='{url}'>Download Link</a>\n<code>{url}</code>")
-    except Exception as e: await status.edit_text(f"❌ Cloud upload failed:\n<code>{e}</code>")
+    async with GLOBAL_SEMAPHORE:
+        try:
+            dl=await client.download_media(media,file_name=str(temp_root),
+                progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
+        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+        await status.edit_text(f"☁️ Uploading to {platform}…")
+        try:
+            if platform=="gofile": url=await upload_to_gofile(dl)
+            elif platform=="catbox": url=await upload_to_catbox(dl)
+            else: url=await smart_upload(dl)
+            _safe_cleanup(str(temp_root))
+            await status.edit_text(
+                f"✅ <b>Uploaded to {platform}!</b>\n\n🔗 <a href='{url}'>Download Link</a>\n<code>{url}</code>")
+        except Exception as e: await status.edit_text(f"❌ Cloud upload failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root))
 
 # ════════════════════════════════════════════════════════════════════════════
 # M3U8 & LINKS
@@ -1651,13 +1792,13 @@ async def offer_m3u8_menu(client, cq, uid, url, temp_root):
     tid=uuid.uuid4().hex
     M3U8_TASKS[tid]={"user_id":uid,"url":url,"variants":variants,"temp_root":str(temp_root),"base_name":base}
     buttons=[[InlineKeyboardButton(v["name"],callback_data=f"m3q|{tid}|{i}")] for i,v in enumerate(variants)]
-    await client.send_message(chat_id,f"📺 m3u8:\n<code>{url}</code>\n\nQuality:",
+    await client.send_message(chat_id,f"📺 m3u8:\n<code>{url}</code>\n\nChoose quality:",
         reply_markup=InlineKeyboardMarkup(buttons),reply_to_message_id=reply_to)
 
 async def handle_m3u8_quality_choice(client, cq, tid, idx):
     info=M3U8_TASKS.get(tid)
     if not info: await cq.answer("Task expired.",show_alert=True); return
-    if not cq.from_user or cq.from_user.id!=info["user_id"]: await cq.answer("Ye tumhara task nahi.",show_alert=True); return
+    if not cq.from_user or cq.from_user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
     variants=info["variants"]
     if idx<0 or idx>=len(variants): await cq.answer("Invalid.",show_alert=True); return
     v=variants[idx]; url=v["url"]; name=v["name"]
@@ -1666,41 +1807,45 @@ async def handle_m3u8_quality_choice(client, cq, tid, idx):
     await cq.answer()
     try: await cq.message.edit_text(f"📥 Downloading {name} stream…")
     except: pass
+    if not await _check_disk_space_ok(cq.message): return
     dest=str(temp_root/f"{base}_{name}.mp4")
-    try: await download_m3u8_stream(url,dest)
-    except Exception as e:
-        try: await cq.message.edit_text(f"❌ m3u8 download failed:\n<code>{e}</code>")
+    async with GLOBAL_SEMAPHORE:
+        try: await download_m3u8_stream(url,dest)
+        except Exception as e:
+            try: await cq.message.edit_text(f"❌ m3u8 download failed:\n<code>{e}</code>")
+            except: pass
+            M3U8_TASKS.pop(tid,None); _safe_cleanup(str(temp_root)); return
+        cap=await build_caption(uid,f"{base} [{name}]"); thumb=await choose_thumbnail(uid,dest)
+        try: await cq.message.edit_text("📤 Uploading m3u8 video…")
         except: pass
-        M3U8_TASKS.pop(tid,None); return
-    cap=await build_caption(uid,f"{base} [{name}]"); thumb=await choose_thumbnail(uid,dest)
-    try: await cq.message.edit_text("📤 Uploading m3u8 video…")
-    except: pass
-    start_u=time.time()
-    try:
-        sent=await client.send_video(chat_id,dest,caption=cap,thumb=thumb,
-            progress=progress_for_pyrogram,progress_args=(cq.message,start_u,base,"to Telegram"),reply_to_message_id=reply_to)
-        try: await cq.message.delete()
-        except: pass
-        await log_output(client,cq.from_user,sent,f"m3u8: {url}")
-    except Exception as e:
-        try: await cq.message.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-        except: pass
+        start_u=time.time()
+        try:
+            sent=await client.send_video(chat_id,dest,caption=cap,thumb=thumb,
+                progress=progress_for_pyrogram,progress_args=(cq.message,start_u,base,"to Telegram"),reply_to_message_id=reply_to)
+            try: await cq.message.delete()
+            except: pass
+            _safe_cleanup(str(temp_root))
+            await log_output(client,cq.from_user,sent,f"m3u8: {url}")
+        except Exception as e:
+            try: await cq.message.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+            except: pass
     M3U8_TASKS.pop(tid,None)
 
 async def handle_links_download_all(client, cq, original_msg):
     key=(original_msg.chat.id,original_msg.id); sess=LINK_SESSIONS.get(key)
     content=sess["content"] if sess else (original_msg.text or original_msg.caption or "") or ""
     all_links=sess["links"] if sess else find_links_in_text(content)
-    if not all_links: await cq.message.edit_text("Koi URL nahi mila."); return
+    if not all_links: await cq.message.edit_text("No URLs found."); return
     cats: Dict[str,list]={"direct":[],"m3u8":[],"gdrive":[],"telegram":[],"unknown":[]}
     for u in all_links:
         k=classify_link(u); cats.setdefault(k,[]); cats[k].append(u)
     direct=cats.get("direct",[]); m3u8s=cats.get("m3u8",[]); gdrives=cats.get("gdrive",[]); unknowns=cats.get("unknown",[])
     candidates=direct+unknowns
     if not candidates and not m3u8s and not gdrives:
-        await cq.message.edit_text("Supported links (direct/m3u8/gdrive) nahi mile."); return
+        await cq.message.edit_text("No supported links (direct/m3u8/gdrive) found."); return
     if not cq.from_user: return
     user=cq.from_user; uid=user.id
+    if not await _check_disk_space_ok(cq.message): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
@@ -1711,58 +1856,62 @@ async def handle_links_download_all(client, cq, original_msg):
     if is_priv:
         try: await client.pin_chat_message(chat_id,reply_to); pinned=True
         except: pass
-    for url in candidates:
-        if user_cancelled.get(uid): break
-        base=url.split("?",1)[0].split("#",1)[0].rsplit("/",1)[-1] or f"file_{uuid.uuid4().hex[:8]}"
-        dest=str(temp_root/base)
-        try:
-            st=await client.send_message(chat_id,f"⬇️ {url[:60]}…",reply_to_message_id=reply_to)
-            fp=await download_file(url,dest,status_message=st,file_name=base,direction="to server")
-            bn=os.path.basename(fp); await st.edit_text(f"📤 Uploading: {bn}")
-            start_u=time.time()
-            if is_video_path(bn):
-                cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
-                sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
-            else:
-                sent=await client.send_document(chat_id,fp,caption=bn,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except: pass
-            ok+=1; await log_output(client,user,sent,f"direct link: {url}")
-        except: fail+=1
-        await asyncio.sleep(0.4)
-    for url in gdrives:
-        if user_cancelled.get(uid): break
-        du=get_gdrive_direct_link(url)
-        if not du: fail+=1; continue
-        base=f"gdrive_{uuid.uuid4().hex[:8]}"; dest=str(temp_root/base)
-        try:
-            st=await client.send_message(chat_id,f"☁️ GDrive: {url[:50]}…",reply_to_message_id=reply_to)
-            fp=await download_file(du,dest,status_message=st,file_name=base,direction="to server")
-            bn=os.path.basename(fp); await st.edit_text(f"📤 Uploading: {bn}")
-            start_u=time.time()
-            if is_video_path(bn):
-                cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
-                sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
-            else:
-                sent=await client.send_document(chat_id,fp,caption=bn,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except: pass
-            ok+=1; await log_output(client,user,sent,f"gdrive: {url}")
-        except: fail+=1
-        await asyncio.sleep(0.4)
+    async with GLOBAL_SEMAPHORE:
+        for url in candidates:
+            if user_cancelled.get(uid): break
+            base=url.split("?",1)[0].split("#",1)[0].rsplit("/",1)[-1] or f"file_{uuid.uuid4().hex[:8]}"
+            dest=str(temp_root/base)
+            try:
+                st=await client.send_message(chat_id,f"⬇️ {url[:60]}…",reply_to_message_id=reply_to)
+                fp=await download_file(url,dest,status_message=st,file_name=base,direction="to server")
+                bn=os.path.basename(fp); await st.edit_text(f"📤 Uploading: {bn}")
+                start_u=time.time()
+                if is_video_path(bn):
+                    cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
+                    sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
+                else:
+                    sent=await client.send_document(chat_id,fp,caption=bn,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
+                try: await st.delete()
+                except: pass
+                _safe_cleanup(fp)  # Delete immediately after sending
+                ok+=1; await log_output(client,user,sent,f"direct link: {url}")
+            except: fail+=1
+            await asyncio.sleep(0.4)
+        for url in gdrives:
+            if user_cancelled.get(uid): break
+            du=get_gdrive_direct_link(url)
+            if not du: fail+=1; continue
+            base=f"gdrive_{uuid.uuid4().hex[:8]}"; dest=str(temp_root/base)
+            try:
+                st=await client.send_message(chat_id,f"☁️ GDrive: {url[:50]}…",reply_to_message_id=reply_to)
+                fp=await download_file(du,dest,status_message=st,file_name=base,direction="to server")
+                bn=os.path.basename(fp); await st.edit_text(f"📤 Uploading: {bn}")
+                start_u=time.time()
+                if is_video_path(bn):
+                    cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
+                    sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
+                else:
+                    sent=await client.send_document(chat_id,fp,caption=bn,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
+                try: await st.delete()
+                except: pass
+                _safe_cleanup(fp)
+                ok+=1; await log_output(client,user,sent,f"gdrive: {url}")
+            except: fail+=1
+            await asyncio.sleep(0.4)
     for url in m3u8s:
         if user_cancelled.get(uid): break
         await offer_m3u8_menu(client,cq,uid,url,temp_root)
-    try: await cq.message.edit_text(f"✅ Direct/GDrive done.\nSuccess: {ok}  Failed: {fail}\nm3u8: {len(m3u8s)} (quality buttons above)")
+    try: await cq.message.edit_text(f"✅ Downloads complete.\nSuccess: {ok}  Failed: {fail}\nm3u8: {len(m3u8s)} (quality buttons above)")
     except: pass
     if is_priv and pinned:
         try: await client.unpin_chat_message(chat_id,reply_to)
         except: pass
         await client.send_message(chat_id,"✅ All link downloads finished!",reply_to_message_id=reply_to)
+    _safe_cleanup(str(temp_root))
 
 # ════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -1770,7 +1919,7 @@ async def handle_links_download_all(client, cq, original_msg):
 async def main():
     asyncio.create_task(cleanup_worker())
     await app.start()
-    print("✅ Serena Unzip Bot v2 started.")
+    print("✅ Serena Unzip Bot v3 started.")
     await idle()
     await app.stop()
 
