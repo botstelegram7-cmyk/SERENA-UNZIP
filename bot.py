@@ -1467,27 +1467,49 @@ async def _run_compress_task(client, cq, tid):
                 except Exception as e:
                     await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
                 import time as _t
-                _ps=_t.time(); mode_icon={"compress":"🗜","resize":"📐","both":"⚡"}.get(mode,"⚙️")
+                _ps=_t.time()
+                _in_size_mb = os.path.getsize(dl)/(1024*1024) if os.path.exists(dl) else 0
+                mode_icon={"compress":"🗜","resize":"📐","both":"⚡"}.get(mode,"⚙️")
                 async def _prog(pct,eta,speed,size):
-                    elapsed=_t.time()-_ps; filled=int(20*pct/100); bar="●"*filled+"○"*(20-filled)
+                    elapsed=_t.time()-_ps
+                    filled=int(20*pct/100)
+                    bar="█"*filled+"░"*(20-filled)
+                    # Estimated finish time
+                    try:
+                        eta_parts=eta.replace("h","").replace("m","").replace("s","").split()
+                        if len(eta_parts)==3: eta_secs=int(eta_parts[0])*3600+int(eta_parts[1])*60+int(eta_parts[2])
+                        elif len(eta_parts)==2: eta_secs=int(eta_parts[0])*60+int(eta_parts[1])
+                        elif len(eta_parts)==1: eta_secs=int(eta_parts[0])
+                        else: eta_secs=0
+                        import datetime as _dt
+                        finish_at=(_dt.datetime.now()+_dt.timedelta(seconds=eta_secs)).strftime("%H:%M:%S") if eta_secs>0 else "—"
+                    except Exception: finish_at="—"
                     try:
                         await status.edit_text(
                             "➵⋆🪐ᴛᴇᴄʜɴɪᴄᴀʟ_sᴇʀᴇɴᴀ𓂃\n\n"
-                            f"{mode_icon} <b>{label}</b>\n[{bar}]\n"
-                            f"◌ Progress  : 〘 {pct:.1f}% 〙\n"
-                            f"📦 Size     : 〘 {size} 〙\n"
+                            f"{mode_icon} <b>{label}</b>\n"
+                            f"[{bar}] <b>{pct:.1f}%</b>\n\n"
+                            f"📥 Input    : 〘 {_in_size_mb:.1f} MB 〙\n"
+                            f"📦 Output   : 〘 {size} 〙\n"
                             f"🚀 Speed    : 〘 {speed} 〙\n"
                             f"⏳ ETA      : 〘 {eta} 〙\n"
-                            f"⏱ Elapsed  : 〘 {_fmt_eta(elapsed)} 〙")
+                            f"🕐 Finish @ : 〘 {finish_at} 〙\n"
+                            f"⏱ Elapsed  : 〘 {_fmt_eta(elapsed)} 〙\n\n"
+                            f"<i>Use /cancel to stop</i>")
                     except Exception: pass
-                await status.edit_text(f"{mode_icon} <b>{label}</b> — Starting…")
+                # "Starting" message with input size so user knows something is happening
+                await status.edit_text(
+                    f"{mode_icon} <b>{label}</b> — Processing…\n\n"
+                    f"📥 Input size: <b>{_in_size_mb:.1f} MB</b>\n"
+                    f"⏳ Starting encoder, first update in ~5s…\n\n"
+                    f"<i>Use /cancel to stop</i>")
                 try:
                     if mode=="compress":
-                        await compress_only(dl,out_path,crf=crf,on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                        await compress_only(dl,out_path,crf=crf,on_progress=_prog,update_interval=3.0)
                     elif mode=="resize":
-                        await resize_only(dl,out_path,target_height=int(resolution),on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                        await resize_only(dl,out_path,target_height=int(resolution),on_progress=_prog,update_interval=3.0)
                     else:
-                        await compress_and_resize(dl,out_path,target_height=int(resolution),crf=crf,on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                        await compress_and_resize(dl,out_path,target_height=int(resolution),crf=crf,on_progress=_prog,update_interval=3.0)
                 except Exception as e:
                     msg=str(e); msg="…"+msg[-600:] if len(msg)>600 else msg
                     await status.edit_text(f"❌ Failed:\n<code>{msg}</code>")
