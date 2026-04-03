@@ -1,7 +1,8 @@
-# utils/media_tools.py — NO PIPE, NO STDERR PARSING, NO SEPARATOR ERRORS
+# utils/media_tools.py — v6: real stderr progress, file_size upload fix
 import asyncio
 import json
 import os
+import re
 import time
 from typing import Callable, List, Optional
 
@@ -56,6 +57,13 @@ async def run_ffmpeg(cmd: list, timeout: int = 1800):
         raise FFmpegError(err.decode(errors="ignore")[-600:])
 
 
+_TS_RE    = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
+_DUR_RE   = re.compile(r"Duration:\s*(\d+):(\d+):(\d+)\.(\d+)")
+_SPEED_RE = re.compile(r"speed=\s*([\d.]+)x")
+_SIZE_RE  = re.compile(r"size=\s*(\d+)kB")
+
+def _hms(h,m,s,cs): return int(h)*3600+int(m)*60+int(s)+int(cs)/100
+
 async def run_ffmpeg_with_progress(
     cmd: list,
     on_progress: Callable,
@@ -63,89 +71,99 @@ async def run_ffmpeg_with_progress(
     timeout: int = 7200,
 ):
     """
-    Run ffmpeg with progress by polling output file size.
-    NO stderr reading – completely safe, no separator errors.
+    Run ffmpeg and parse stderr line-by-line for real speed/ETA/progress.
+    Uses a subprocess pipe for stderr only — stdout is DEVNULL.
+    This is safe: no multipart/asyncio StreamReader conflicts.
     """
-    # Get total duration
-    total_sec = 0.0
-    for i, arg in enumerate(cmd):
-        if arg == "-i" and i + 1 < len(cmd):
-            total_sec = await _probe_duration(cmd[i + 1])
-            break
-
-    output_path = cmd[-1]
-    # Delete old output if exists
-    if os.path.exists(output_path):
-        os.remove(output_path)
-
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,   # Ignore stderr completely
+        stderr=asyncio.subprocess.PIPE,
     )
 
-    last_update = 0.0
+    total_sec  = 0.0
+    last_upd   = 0.0
     start_time = time.time()
-    last_size = 0
+    buf        = b""
+    all_lines  = ""
 
     try:
         while True:
-            await asyncio.sleep(update_interval)
-            now = time.time()
+            # Non-blocking read with short timeout
+            try:
+                chunk = await asyncio.wait_for(proc.stderr.read(1024), timeout=2.0)
+            except asyncio.TimeoutError:
+                chunk = b""
 
-            # Check if process finished
+            if chunk:
+                buf += chunk
+                # FFmpeg uses \r for progress lines — split on both
+                normalized = buf.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                parts = normalized.split(b"\n")
+                buf = parts[-1]
+                for part in parts[:-1]:
+                    line = part.decode(errors="ignore").strip()
+                    if not line:
+                        continue
+                    all_lines += line + "\n"
+                    if total_sec == 0:
+                        dm = _DUR_RE.search(line)
+                        if dm:
+                            total_sec = _hms(*dm.groups())
+
+            # Check process done
             if proc.returncode is not None:
                 break
+            ret = proc.returncode  # may still be None
 
-            # Timeout check
+            # Timeout
+            now = time.time()
             if now - start_time > timeout:
                 proc.kill()
                 raise FFmpegError("FFmpeg timed out.")
 
-            # Get current output file size
-            cur_size = 0
-            try:
-                cur_size = os.path.getsize(output_path)
-            except OSError:
-                pass
-
-            # Estimate progress
-            if total_sec > 0 and last_size > 0:
-                # Rough estimate: assume output size grows linearly with duration
-                # This is not precise but gives user some feedback.
-                # Better: we can also estimate bitrate from input and assume output bitrate.
-                # But for simplicity, use output size ratio.
-                # However output size is not proportional to duration because of CRF.
-                # We'll use a different approach: estimate from input size?
-                pass
-
-            # More accurate: assume output size ratio equals duration ratio?
-            # That's wrong for CRF. So we use a simpler approach:
-            # If we have total input duration, and we know current output size,
-            # we can't know duration. So we just show "Processing..."
-            # But the bot expects progress (pct, eta, speed, size).
-            # We'll send a generic progress with output size only.
-            pct = 50.0  # Placeholder
-            speed_str = "calculating..."
-            size_str = f"{cur_size / 1_048_576:.1f} MB" if cur_size >= 1_048_576 else f"{cur_size // 1024} KB"
-            eta_str = "calculating..."
-
-            # If we have total_sec and output size is growing, we can guess
-            # but it's inaccurate. For now, send what we have.
-            await on_progress(pct, eta_str, speed_str, size_str)
-            last_update = now
-            last_size = cur_size
-
-        # Wait for process to finish
-        await proc.wait()
+            # Send progress update on interval
+            if now - last_upd >= update_interval and all_lines:
+                recent   = all_lines[-3000:]
+                tm       = _TS_RE.findall(recent)
+                if tm and total_sec > 0:
+                    cur_sec  = _hms(*tm[-1])
+                    pct      = min(cur_sec / total_sec * 100, 99.9)
+                    sm       = _SPEED_RE.search(recent)
+                    spd_x    = float(sm.group(1)) if sm else 0.0
+                    spd_str  = f"{spd_x:.1f}x" if spd_x else "calculating..."
+                    szl      = _SIZE_RE.findall(recent)
+                    sz_kb    = int(szl[-1]) if szl else 0
+                    sz_str   = f"{sz_kb/1024:.1f} MB" if sz_kb >= 1024 else f"{sz_kb} KB"
+                    eta_sec  = (total_sec - cur_sec) / spd_x if spd_x > 0 else 0
+                    m,s      = divmod(int(eta_sec),60); h,m = divmod(m,60)
+                    eta_str  = (f"{h}h {m}m {s}s" if h else f"{m}m {s}s" if m else f"{s}s")
+                    try:
+                        await on_progress(pct, eta_str, spd_str, sz_str)
+                    except Exception:
+                        pass
+                    last_upd = now
 
     except asyncio.CancelledError:
-        proc.kill()
+        try: proc.kill()
+        except Exception: pass
         raise
 
+    # Drain remaining stderr
+    try:
+        remaining = await asyncio.wait_for(proc.stderr.read(), timeout=5.0)
+        if remaining:
+            all_lines += remaining.decode(errors="ignore")
+    except Exception:
+        pass
+
+    if proc.returncode is None:
+        try: await asyncio.wait_for(proc.wait(), timeout=30.0)
+        except Exception: pass
+
     if proc.returncode != 0:
-        # We ignored stderr, so we can't get error details. Use generic error.
-        raise FFmpegError(f"FFmpeg exited with code {proc.returncode}")
+        err_tail = all_lines[-800:] if all_lines else "no output"
+        raise FFmpegError(f"FFmpeg error (code {proc.returncode}):\n{err_tail}")
 
 
 # ---------- All other functions (unchanged from your original) ----------
