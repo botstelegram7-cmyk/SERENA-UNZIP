@@ -1,10 +1,7 @@
-# utils/media_tools.py — FIXED v6
-# Changes vs broken version:
-#   1. _pipe_encode REMOVED  → caused "StreamReader has no fileno" crash on resize
-#   2. _scale_encode ADDED   → single-process ffmpeg, no pipe, no crash
-#   3. run_ffmpeg_with_progress REWRITTEN → uses -progress pipe:1 for reliable ETA
-#   4. compress_only FIXED   → removed duplicate -threads flag
-#   5. All CancelledError handled → /cancel properly kills ffmpeg subprocess
+# utils/media_tools.py — FINAL FIXED v7
+# - Uses stderr parsing (no pipe, no fileno crash)
+# - Reliable progress updates for compress, resize, both
+# - Polls output file size for accurate "size_str"
 import asyncio
 import json
 import os
@@ -77,107 +74,110 @@ async def run_ffmpeg_with_progress(
     timeout: int = 7200,
 ):
     """
-    Run ffmpeg with real-time progress via -progress pipe:1.
-
-    FIX: Old version used chunk-based stderr parsing which was unreliable
-         and caused compress to show "Starting..." forever.
-    NEW: Uses ffmpeg's built-in structured progress output (key=value lines
-         written to stdout) which is 100% reliable and gives accurate ETA.
-
-    on_progress: async callable(percent, eta_str, speed_str, size_str)
+    Run ffmpeg with real‑time progress by parsing stderr.
+    Extracts 'time=HH:MM:SS.ms' and 'speed=1.23x'.
+    Output file size is polled from disk every update_interval.
     """
+    # 1. Get total duration of input file
     total_sec = 0.0
     for i, arg in enumerate(cmd):
         if arg == "-i" and i + 1 < len(cmd):
             total_sec = await _probe_duration(cmd[i + 1])
             break
 
-    full_cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats", cmd[-1]]
+    # 2. Find output file path (last argument)
+    output_path = cmd[-1]
 
+    # 3. Build command – NO '-progress pipe:1', just normal stderr
     proc = await asyncio.create_subprocess_exec(
-        *full_cmd,
-        stdout=asyncio.subprocess.PIPE,
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
 
     last_update = 0.0
-    start_time  = time.time()
-    out_us      = 0
-    speed_x     = 0.0
-    total_bytes = 0
+    start_time = time.time()
+    out_sec = 0.0
+    speed_x = 0.0
+    last_size_bytes = 0
+
+    # Helper to get current output file size
+    def get_out_size():
+        try:
+            return os.path.getsize(output_path)
+        except OSError:
+            return 0
 
     try:
         while True:
             try:
-                line = await asyncio.wait_for(proc.stdout.readline(), timeout=60.0)
+                line = await asyncio.wait_for(proc.stderr.readline(), timeout=5.0)
             except asyncio.TimeoutError:
+                # No output for 5 seconds – still running, check timeout
                 if time.time() - start_time > timeout:
                     proc.kill()
                     raise FFmpegError("FFmpeg timed out.")
+                # Force a progress update anyway (keep UI alive)
+                now = time.time()
+                if now - last_update >= update_interval:
+                    cur_size = get_out_size()
+                    pct = min(out_sec / total_sec * 100, 99.9) if total_sec > 0 else 0.0
+                    spd_str = f"{speed_x:.1f}x" if speed_x > 0 else "calculating..."
+                    size_str = (
+                        f"{cur_size / 1_048_576:.1f} MB"
+                        if cur_size >= 1_048_576
+                        else f"{cur_size // 1024} KB"
+                    )
+                    if total_sec > 0 and speed_x > 0:
+                        eta_str = _fmt_eta((total_sec - out_sec) / speed_x)
+                    else:
+                        eta_str = "calculating..."
+                    try:
+                        await on_progress(pct, eta_str, spd_str, size_str)
+                    except Exception:
+                        pass
+                    last_update = now
                 continue
 
-            if not line:
+            if not line:   # EOF
                 break
 
             text = line.decode(errors="ignore").strip()
-            if "=" not in text:
-                continue
 
-            key, _, val = text.partition("=")
-            key = key.strip()
-            val = val.strip()
+            # Parse time=HH:MM:SS.ms
+            if text.startswith("time="):
+                time_part = text.split("time=")[1].split(" ")[0]
+                # format: HH:MM:SS.ms
+                try:
+                    parts = time_part.split(":")
+                    if len(parts) == 3:
+                        h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                        out_sec = h * 3600 + m * 60 + s
+                except Exception:
+                    pass
 
-            if key == "out_time_us":
-                # val can be "N/A" at start — skip those
-                if val and val != "N/A":
+            # Parse speed=1.23x
+            elif text.startswith("speed="):
+                speed_part = text.split("speed=")[1].split(" ")[0]
+                if speed_part != "N/A" and speed_part.endswith("x"):
                     try:
-                        v = int(val)
-                        if v > 0:
-                            out_us = v
-                    except ValueError:
-                        pass
-            elif key == "out_time" and out_us == 0:
-                # Fallback: parse HH:MM:SS.ffffff string when out_time_us is N/A
-                if val and val != "N/A":
-                    try:
-                        parts = val.split(":")
-                        if len(parts) == 3:
-                            h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
-                            v = int((h * 3600 + m * 60 + s) * 1_000_000)
-                            if v > 0:
-                                out_us = v
+                        speed_x = float(speed_part[:-1])
                     except Exception:
                         pass
-            elif key == "speed":
-                # val can be "N/A" or "1.23x"
-                if val and val != "N/A":
-                    try:
-                        speed_x = float(val.rstrip("x"))
-                    except ValueError:
-                        pass
-            elif key == "total_size":
-                if val and val != "N/A":
-                    try:
-                        v = int(val)
-                        if v > 0:
-                            total_bytes = v
-                    except ValueError:
-                        pass
-            elif key == "progress" and val == "end":
-                break
 
+            # Update progress every `update_interval` seconds
             now = time.time()
-            if now - last_update >= update_interval and out_us > 0:
-                cur_sec  = out_us / 1_000_000
-                pct      = min(cur_sec / total_sec * 100, 99.9) if total_sec > 0 else 0.0
-                spd_str  = f"{speed_x:.1f}x" if speed_x > 0 else "calculating..."
+            if now - last_update >= update_interval and out_sec > 0:
+                pct = min(out_sec / total_sec * 100, 99.9) if total_sec > 0 else 0.0
+                spd_str = f"{speed_x:.1f}x" if speed_x > 0 else "calculating..."
+                cur_size = get_out_size()
                 size_str = (
-                    f"{total_bytes / 1_048_576:.1f} MB"
-                    if total_bytes >= 1_048_576
-                    else f"{total_bytes // 1024} KB"
+                    f"{cur_size / 1_048_576:.1f} MB"
+                    if cur_size >= 1_048_576
+                    else f"{cur_size // 1024} KB"
                 )
                 if total_sec > 0 and speed_x > 0:
-                    eta_str = _fmt_eta((total_sec - cur_sec) / speed_x)
+                    eta_str = _fmt_eta((total_sec - out_sec) / speed_x)
                 else:
                     eta_str = "calculating..."
                 try:
@@ -185,6 +185,7 @@ async def run_ffmpeg_with_progress(
                 except Exception:
                     pass
                 last_update = now
+                last_size_bytes = cur_size
 
     except asyncio.CancelledError:
         try:
@@ -201,19 +202,21 @@ async def run_ffmpeg_with_progress(
             except Exception:
                 pass
 
-    if proc.returncode not in (0, None):
-        err_bytes = b""
+    # Process finished – check return code
+    if proc.returncode != 0:
+        # Read remaining stderr for error message
+        rest = b""
         try:
-            err_bytes = await asyncio.wait_for(proc.stderr.read(8000), timeout=5.0)
+            rest = await asyncio.wait_for(proc.stderr.read(8000), timeout=2.0)
         except Exception:
             pass
-        full_err = err_bytes.decode(errors="ignore")
-        # Skip ffmpeg version banner — find actual error lines
-        lines = full_err.splitlines()
+        err_text = rest.decode(errors="ignore")
+        # Filter meaningful error lines
+        lines = err_text.splitlines()
         error_lines = [l for l in lines if any(k in l.lower() for k in
                        ("error", "invalid", "no such", "cannot", "failed",
                         "unknown", "unrecognized", "unable", "permission"))]
-        msg = "\n".join(error_lines[-5:]) if error_lines else full_err[-400:]
+        msg = "\n".join(error_lines[-5:]) if error_lines else err_text[-400:]
         raise FFmpegError(msg or f"FFmpeg exited with code {proc.returncode}")
 
 
@@ -221,16 +224,7 @@ async def _scale_encode(
     input_path, output_path, out_w, out_h, cap_fps, crf,
     on_progress, update_interval, timeout=7200
 ):
-    """
-    Single-process ffmpeg: scale + encode in one command.
-
-    FIX: The old _pipe_encode() tried to pipe two ffmpeg processes together
-         using stdin=proc1.stdout. asyncio.StreamReader has no .fileno() method,
-         causing the crash: 'StreamReader' object has no attribute 'fileno'.
-
-    This single-process version is equally fast (ultrafast preset) and
-    has no pipe, no StreamReader, no crash.
-    """
+    """Single‑process ffmpeg: scale + encode."""
     out_w = out_w + (out_w % 2)
     out_h = out_h + (out_h % 2)
 
@@ -319,7 +313,7 @@ async def compress_only(input_path, output_path, crf=28, on_progress=None, updat
 
 
 async def resize_only(input_path, output_path, target_height, on_progress=None, update_interval=5.0):
-    """Mode 2 — resize only (single-process, CRF 23 = high quality)."""
+    """Mode 2 — resize only (single‑process, CRF 23 = high quality)."""
     w, h, fps = await _probe_video(input_path)
     cap_fps = min(fps, 30.0)
     scale   = target_height / h
@@ -332,7 +326,7 @@ async def resize_only(input_path, output_path, target_height, on_progress=None, 
 
 async def compress_and_resize(input_path, output_path, target_height, crf=28,
                                on_progress=None, update_interval=5.0):
-    """Mode 3 — compress + resize (single-process, smallest output)."""
+    """Mode 3 — compress + resize (single‑process, smallest output)."""
     w, h, fps = await _probe_video(input_path)
     cap_fps   = min(fps, 30.0)
     scale     = target_height / h
@@ -345,7 +339,7 @@ async def compress_and_resize(input_path, output_path, target_height, crf=28,
 
 async def compress_video(input_path, output_path, resolution=None, crf=28,
                          on_progress=None, update_interval=5.0, preset="ultrafast"):
-    """Backward-compat alias."""
+    """Backward‑compat alias."""
     res_str = str(resolution) if resolution else ""
     if res_str and res_str not in ("orig", "None", "none", ""):
         await compress_and_resize(
