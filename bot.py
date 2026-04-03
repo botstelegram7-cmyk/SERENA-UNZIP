@@ -1,5 +1,4 @@
-# bot.py — Serena Unzip Bot v3 (Upgraded: English · Bandwidth-Safe · Semaphore)
-# bot.py — Serena Unzip Bot v3 (FIXED: added missing _fmt_eta import)
+# bot.py — Serena Unzip Bot v3 (FIXED: added _fmt_eta import)
 import asyncio
 import datetime
 import os
@@ -34,7 +33,7 @@ from utils.link_parser import classify_link, extract_links_from_folder, find_lin
 from utils.m3u8_tools import download_m3u8_stream, get_m3u8_variants
 from utils.media_tools import (
     add_watermark, compress_video, compress_only, resize_only, compress_and_resize,
-    extract_audio, extract_subtitles, _fmt_eta,   # <-- ADDED _fmt_eta
+    extract_audio, extract_subtitles, _fmt_eta,   # <--- ADDED _fmt_eta
     generate_thumbnail, get_media_info, merge_videos, take_screenshot,
 )
 from utils.password_list import COMMON_PASSWORDS
