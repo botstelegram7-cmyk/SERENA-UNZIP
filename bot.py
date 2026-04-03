@@ -24,7 +24,7 @@ from database import (
     set_premium, update_user_stats,
 )
 from utils.cleanup import cleanup_worker
-from utils.cloud_upload import smart_upload, upload_to_gofile, upload_to_catbox
+from utils.cloud_upload import upload_to_gofile
 from utils.extractors import detect_encrypted, extract_archive
 from utils.file_splitter import split_file, human_size
 from utils.gdrive import get_gdrive_direct_link
@@ -91,6 +91,8 @@ user_cancelled:   Dict[int,bool]          = {}
 zip_sessions:     Dict[int,Dict[str,Any]] = {}
 merge_sessions:   Dict[int,Dict[str,Any]] = {}
 LINK_SESSIONS: Dict[Tuple[int,int],Dict[str,Any]] = {}
+# Tracks the live asyncio Task for each user — used by /cancel to kill it instantly
+USER_TASKS: Dict[int, asyncio.Task] = {}
 log_chat_info: Optional[Chat] = None
 log_is_forum:  bool           = False
 user_log_topics: Dict[int,int] = {}
@@ -407,10 +409,36 @@ async def settings_cmd(client, message):
 @app.on_message(filters.command("cancel") & (filters.private|filters.group))
 async def cancel_cmd(client, message):
     if not message.from_user: return
-    uid=message.from_user.id
-    user_cancelled[uid]=True; zip_sessions.pop(uid,None); merge_sessions.pop(uid,None)
-    pending_state.pop(uid,None); pending_password.pop(uid,None)
-    await message.reply_text("❌ Current task cancelled!")
+    uid = message.from_user.id
+    user_cancelled[uid] = True
+
+    # ── Kill the running asyncio Task (compress / resize / download etc.) ──
+    task = USER_TASKS.pop(uid, None)
+    task_killed = False
+    if task and not task.done():
+        task.cancel()
+        task_killed = True
+
+    # ── Clear all session & pending state ──
+    zip_sessions.pop(uid, None)
+    merge_sessions.pop(uid, None)
+    pending_state.pop(uid, None)
+    pending_password.pop(uid, None)
+
+    # ── Remove all queued tasks for this user ──
+    for tdict in (COMPRESS_TASKS, SPLIT_TASKS, SUB_TASKS,
+                  PDF_TASKS, YTDL_TASKS, M3U8_TASKS, BIG_FILE_TASKS):
+        dead = [k for k, v in tdict.items() if v.get("user_id") == uid]
+        for k in dead:
+            tdict.pop(k, None)
+
+    await message.reply_text(
+        "🛑 <b>Everything Cancelled & Cleared!</b>\n\n"
+        f"{'✅ Running task killed' if task_killed else 'ℹ️ No active task was running'}\n"
+        "✅ All sessions cleared\n"
+        "✅ Queue emptied\n\n"
+        "You can start a new task now."
+    )
 
 
 @app.on_message(filters.command("mystats") & (filters.private|filters.group))
@@ -1033,15 +1061,13 @@ async def callbacks(client, cq: CallbackQuery):
         _,cid,mid=data.split("|",2); await cq.answer()
         await cq.message.reply_text("☁️ Choose cloud platform:",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🌐 GoFile (No limit)",callback_data=f"cloudgo|{cid}|{mid}"),
-                 InlineKeyboardButton("📦 Catbox (≤200MB)",callback_data=f"cloudcat|{cid}|{mid}")],
+                [InlineKeyboardButton("🌐 GoFile (No limit)",callback_data=f"cloudgo|{cid}|{mid}")],
                 [InlineKeyboardButton("❌ Cancel",callback_data="noop")]])); return
-    if data.startswith("cloudgo|") or data.startswith("cloudcat|"):
-        platform="gofile" if data.startswith("cloudgo|") else "catbox"
+    if data.startswith("cloudgo|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
         except: await cq.answer("File not found.",show_alert=True); return
-        await cq.answer(); await _do_cloud_upload(client,cq,orig,platform); return
+        await cq.answer(); await _do_cloud_upload(client,cq,orig,"gofile"); return
     if data.startswith("admin:"):
         if not is_owner(cq.from_user.id): await cq.answer("Owner only.",show_alert=True); return
         action=data.split(":",1)[1]
@@ -1399,18 +1425,16 @@ async def _show_upload_buttons(cq, tid, mode, resolution, crf):
     await cq.message.edit_text(
         "📤 <b>Choose upload method:</b>\n\n"
         "📲 <b>Telegram</b> — Send directly to chat\n"
-        "☁️ <b>GoFile</b>   — Cloud link (saves bandwidth)\n"
-        "🔗 <b>Catbox</b>   — Cloud link (max 200 MB)",
+        "☁️ <b>GoFile</b>   — Cloud link (no size limit, saves bandwidth)",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📲 Telegram",       callback_data=f"cm_up|{tid}|{mode}|{resolution}|{crf}|telegram")],
             [InlineKeyboardButton("☁️ GoFile (Cloud)", callback_data=f"cm_up|{tid}|{mode}|{resolution}|{crf}|gofile")],
-            [InlineKeyboardButton("🔗 Catbox (Cloud)", callback_data=f"cm_up|{tid}|{mode}|{resolution}|{crf}|catbox")],
             [InlineKeyboardButton("❌ Cancel",           callback_data="noop")],
         ]))
 
 
 async def _run_compress_task(client, cq, tid):
-    """Download → process → upload."""
+    """Download → process → upload. Supports /cancel via USER_TASKS."""
     info=COMPRESS_TASKS.get(tid)
     if not info: await cq.message.reply_text("❌ Task expired."); return
     uid=cq.from_user.id
@@ -1422,72 +1446,90 @@ async def _run_compress_task(client, cq, tid):
     media=orig.video or orig.document
     if not media: return
     lock=get_lock(uid)
-    if lock.locked(): await cq.message.reply_text("⏳ Task already running. Use /cancel to stop."); return
-    async with lock:
-        async with GLOBAL_SEMAPHORE:
-            temp_root=Path(info["temp_root"])
-            if mode=="compress":   label=f"Compress (CRF {crf})";            out_pfx=f"c_crf{crf}"
-            elif mode=="resize":   label=f"Resize → {resolution}p";          out_pfx=f"r_{resolution}p"
-            else:                  label=f"Compress+Resize → {resolution}p"; out_pfx=f"cr_{resolution}p_crf{crf}"
-            fname=info["fname"]; out_name=f"{out_pfx}_{Path(fname).stem}.mp4"; out_path=str(temp_root/out_name)
-            status=await cq.message.reply_text("📥 Downloading…"); start=time.time()
-            try:
-                dl=await client.download_media(media,file_name=str(temp_root),
-                    progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-            except Exception as e:
-                await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
-            import time as _t
-            _ps=_t.time(); mode_icon={"compress":"🗜","resize":"📐","both":"⚡"}.get(mode,"⚙️")
-            async def _prog(pct,eta,speed,size):
-                elapsed=_t.time()-_ps; filled=int(20*pct/100); bar="●"*filled+"○"*(20-filled)
+    if lock.locked(): await cq.message.reply_text("⏳ Task already running. Use /cancel to stop it first."); return
+
+    # ── Register this task so /cancel can kill it ──
+    USER_TASKS[uid] = asyncio.current_task()
+    status = None
+    temp_root = Path(info["temp_root"])
+
+    try:
+        async with lock:
+            async with GLOBAL_SEMAPHORE:
+                if mode=="compress":   label=f"Compress (CRF {crf})";            out_pfx=f"c_crf{crf}"
+                elif mode=="resize":   label=f"Resize → {resolution}p";          out_pfx=f"r_{resolution}p"
+                else:                  label=f"Compress+Resize → {resolution}p"; out_pfx=f"cr_{resolution}p_crf{crf}"
+                fname=info["fname"]; out_name=f"{out_pfx}_{Path(fname).stem}.mp4"; out_path=str(temp_root/out_name)
+                status=await cq.message.reply_text("📥 Downloading…"); start=time.time()
                 try:
-                    await status.edit_text(
-                        "➵⋆🪐ᴛᴇᴄʜɴɪᴄᴀʟ_sᴇʀᴇɴᴀ𓂃\n\n"
-                        f"{mode_icon} <b>{label}</b>\n[{bar}]\n"
-                        f"◌ Progress  : 〘 {pct:.1f}% 〙\n"
-                        f"📦 Size     : 〘 {size} 〙\n"
-                        f"🚀 Speed    : 〘 {speed} 〙\n"
-                        f"⏳ ETA      : 〘 {eta} 〙\n"
-                        f"⏱ Elapsed  : 〘 {_fmt_eta(elapsed)} 〙")
-                except Exception: pass
-            await status.edit_text(f"{mode_icon} <b>{label}</b> — Starting…")
-            try:
-                if mode=="compress":
-                    await compress_only(dl,out_path,crf=crf,on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
-                elif mode=="resize":
-                    await resize_only(dl,out_path,target_height=int(resolution),on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
-                else:
-                    await compress_and_resize(dl,out_path,target_height=int(resolution),crf=crf,on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
-            except Exception as e:
-                msg=str(e); msg="…"+msg[-600:] if len(msg)>600 else msg
-                await status.edit_text(f"❌ Failed:\n<code>{msg}</code>")
-                _safe_cleanup(str(temp_root)); COMPRESS_TASKS.pop(tid,None); return
-            _safe_cleanup(dl)
-            out_size=os.path.getsize(out_path) if os.path.exists(out_path) else 0
-            thumb=await choose_thumbnail(uid,out_path); cap=await build_caption(uid,out_name)
-            if upload_m in ("gofile","catbox"):
-                plat="GoFile" if upload_m=="gofile" else "Catbox"
-                await status.edit_text(f"☁️ Uploading to {plat}…")
-                try:
-                    url=await upload_to_gofile(out_path) if upload_m=="gofile" else await upload_to_catbox(out_path)
-                    await status.edit_text(f"✅ <b>Done!</b>\n\n📦 <code>{out_name}</code>\n📊 {out_size/(1024*1024):.1f} MB\n🔗 {url}")
-                    _safe_cleanup(str(temp_root))
+                    dl=await client.download_media(media,file_name=str(temp_root),
+                        progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
                 except Exception as e:
-                    await status.edit_text(f"❌ Cloud upload failed: <code>{e}</code>\n↩️ Falling back…")
-                    upload_m="telegram"
-            if upload_m=="telegram":
-                await status.edit_text("📤 Uploading to Telegram…"); start_u=time.time()
+                    await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
+                import time as _t
+                _ps=_t.time(); mode_icon={"compress":"🗜","resize":"📐","both":"⚡"}.get(mode,"⚙️")
+                async def _prog(pct,eta,speed,size):
+                    elapsed=_t.time()-_ps; filled=int(20*pct/100); bar="●"*filled+"○"*(20-filled)
+                    try:
+                        await status.edit_text(
+                            "➵⋆🪐ᴛᴇᴄʜɴɪᴄᴀʟ_sᴇʀᴇɴᴀ𓂃\n\n"
+                            f"{mode_icon} <b>{label}</b>\n[{bar}]\n"
+                            f"◌ Progress  : 〘 {pct:.1f}% 〙\n"
+                            f"📦 Size     : 〘 {size} 〙\n"
+                            f"🚀 Speed    : 〘 {speed} 〙\n"
+                            f"⏳ ETA      : 〘 {eta} 〙\n"
+                            f"⏱ Elapsed  : 〘 {_fmt_eta(elapsed)} 〙")
+                    except Exception: pass
+                await status.edit_text(f"{mode_icon} <b>{label}</b> — Starting…")
                 try:
-                    sent=await client.send_video(cq.message.chat.id,out_path,caption=cap,thumb=thumb,
-                        progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
-                        reply_to_message_id=cq.message.id)
-                    try: await status.delete()
-                    except: pass
-                    _safe_cleanup(str(temp_root))
-                    await log_output(client,cq.from_user,sent,label)
-                except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-            await update_user_stats(uid,out_size)
-    COMPRESS_TASKS.pop(tid,None)
+                    if mode=="compress":
+                        await compress_only(dl,out_path,crf=crf,on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                    elif mode=="resize":
+                        await resize_only(dl,out_path,target_height=int(resolution),on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                    else:
+                        await compress_and_resize(dl,out_path,target_height=int(resolution),crf=crf,on_progress=_prog,update_interval=float(Config.PROGRESS_UPDATE_INTERVAL))
+                except Exception as e:
+                    msg=str(e); msg="…"+msg[-600:] if len(msg)>600 else msg
+                    await status.edit_text(f"❌ Failed:\n<code>{msg}</code>")
+                    _safe_cleanup(str(temp_root)); return
+                _safe_cleanup(dl)
+                out_size=os.path.getsize(out_path) if os.path.exists(out_path) else 0
+                thumb=await choose_thumbnail(uid,out_path); cap=await build_caption(uid,out_name)
+                if upload_m=="gofile":
+                    await status.edit_text("☁️ Uploading to GoFile…")
+                    try:
+                        url=await upload_to_gofile(out_path)
+                        await status.edit_text(f"✅ <b>Done!</b>\n\n📦 <code>{out_name}</code>\n📊 {out_size/(1024*1024):.1f} MB\n🔗 {url}")
+                        _safe_cleanup(str(temp_root))
+                    except Exception as e:
+                        await status.edit_text(f"❌ Cloud upload failed: <code>{e}</code>\n↩️ Falling back to Telegram…")
+                        upload_m="telegram"
+                if upload_m=="telegram":
+                    await status.edit_text("📤 Uploading to Telegram…"); start_u=time.time()
+                    try:
+                        sent=await client.send_video(cq.message.chat.id,out_path,caption=cap,thumb=thumb,
+                            progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
+                            reply_to_message_id=cq.message.id)
+                        try: await status.delete()
+                        except: pass
+                        _safe_cleanup(str(temp_root))
+                        await log_output(client,cq.from_user,sent,label)
+                    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+                await update_user_stats(uid,out_size)
+
+    except asyncio.CancelledError:
+        # /cancel was pressed — clean up and notify
+        _safe_cleanup(str(temp_root))
+        if status:
+            try:
+                await asyncio.shield(status.edit_text("🛑 Task was cancelled by /cancel."))
+            except Exception:
+                pass
+        raise   # MUST re-raise — do not swallow CancelledError
+
+    finally:
+        USER_TASKS.pop(uid, None)
+        COMPRESS_TASKS.pop(tid, None)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1902,14 +1944,12 @@ async def _do_cloud_upload(client, cq, orig, platform):
             dl=await client.download_media(media,file_name=str(temp_root),
                 progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
         except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root)); return
-        await status.edit_text(f"☁️ Uploading to {platform}…")
+        await status.edit_text("☁️ Uploading to GoFile…")
         try:
-            if platform=="gofile": url=await upload_to_gofile(dl)
-            elif platform=="catbox": url=await upload_to_catbox(dl)
-            else: url=await smart_upload(dl)
+            url=await upload_to_gofile(dl)
             _safe_cleanup(str(temp_root))
             await status.edit_text(
-                f"✅ <b>Uploaded to {platform}!</b>\n\n🔗 <a href='{url}'>Download Link</a>\n<code>{url}</code>")
+                f"✅ <b>Uploaded to GoFile!</b>\n\n🔗 <a href='{url}'>Download Link</a>\n<code>{url}</code>")
         except Exception as e: await status.edit_text(f"❌ Cloud upload failed:\n<code>{e}</code>"); _safe_cleanup(str(temp_root))
 
 # ════════════════════════════════════════════════════════════════════════════
