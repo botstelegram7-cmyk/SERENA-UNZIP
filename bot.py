@@ -1530,14 +1530,39 @@ async def _run_compress_task(client, cq, tid):
                 if upload_m=="telegram":
                     await status.edit_text("📤 Uploading to Telegram…"); start_u=time.time()
                     try:
-                        sent=await client.send_video(cq.message.chat.id,out_path,caption=cap,thumb=thumb,
-                            progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
-                            reply_to_message_id=cq.message.id)
+                        # file_size MUST be passed — without it Pyrogram's multipart
+                        # boundary calculation breaks on files >10 MB giving
+                        # "Separator is not found, and chunk exceed the limit"
+                        sent=await client.send_video(
+                            cq.message.chat.id, out_path,
+                            caption=cap, thumb=thumb,
+                            file_size=out_size,
+                            progress=progress_for_pyrogram,
+                            progress_args=(status,start_u,out_name,"to Telegram"),
+                            reply_to_message_id=cq.message.id,
+                            supports_streaming=True,
+                        )
                         try: await status.delete()
                         except: pass
                         _safe_cleanup(str(temp_root))
                         await log_output(client,cq.from_user,sent,label)
-                    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+                    except Exception as e:
+                        # Fallback: try send_document if send_video fails
+                        try:
+                            sent=await client.send_document(
+                                cq.message.chat.id, out_path,
+                                caption=cap, thumb=thumb,
+                                file_size=out_size,
+                                progress=progress_for_pyrogram,
+                                progress_args=(status,start_u,out_name,"to Telegram"),
+                                reply_to_message_id=cq.message.id,
+                            )
+                            try: await status.delete()
+                            except: pass
+                            _safe_cleanup(str(temp_root))
+                            await log_output(client,cq.from_user,sent,label)
+                        except Exception as e2:
+                            await status.edit_text(f"❌ Upload failed:\n<code>{e2}</code>")
                 await update_user_stats(uid,out_size)
 
     except asyncio.CancelledError:
