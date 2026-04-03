@@ -1,7 +1,7 @@
-# utils/media_tools.py — FINAL FIXED v7
-# - Uses stderr parsing (no pipe, no fileno crash)
-# - Reliable progress updates for compress, resize, both
-# - Polls output file size for accurate "size_str"
+# utils/media_tools.py — COMPLETE FIXED v9
+# - No pipe splitting, no "Separator" errors
+# - Uses ffmpeg stderr parsing + periodic output size polling
+# - Reliable for compress, resize, compress+resize
 import asyncio
 import json
 import os
@@ -88,7 +88,7 @@ async def run_ffmpeg_with_progress(
     # 2. Find output file path (last argument)
     output_path = cmd[-1]
 
-    # 3. Build command – NO '-progress pipe:1', just normal stderr
+    # 3. Build command – normal stderr output
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
@@ -99,9 +99,7 @@ async def run_ffmpeg_with_progress(
     start_time = time.time()
     out_sec = 0.0
     speed_x = 0.0
-    last_size_bytes = 0
 
-    # Helper to get current output file size
     def get_out_size():
         try:
             return os.path.getsize(output_path)
@@ -113,11 +111,11 @@ async def run_ffmpeg_with_progress(
             try:
                 line = await asyncio.wait_for(proc.stderr.readline(), timeout=5.0)
             except asyncio.TimeoutError:
-                # No output for 5 seconds – still running, check timeout
+                # No stderr line for 5 seconds – still running, check timeout
                 if time.time() - start_time > timeout:
                     proc.kill()
                     raise FFmpegError("FFmpeg timed out.")
-                # Force a progress update anyway (keep UI alive)
+                # Force a progress update to keep UI alive
                 now = time.time()
                 if now - last_update >= update_interval:
                     cur_size = get_out_size()
@@ -147,7 +145,6 @@ async def run_ffmpeg_with_progress(
             # Parse time=HH:MM:SS.ms
             if text.startswith("time="):
                 time_part = text.split("time=")[1].split(" ")[0]
-                # format: HH:MM:SS.ms
                 try:
                     parts = time_part.split(":")
                     if len(parts) == 3:
@@ -185,7 +182,6 @@ async def run_ffmpeg_with_progress(
                 except Exception:
                     pass
                 last_update = now
-                last_size_bytes = cur_size
 
     except asyncio.CancelledError:
         try:
@@ -211,7 +207,6 @@ async def run_ffmpeg_with_progress(
         except Exception:
             pass
         err_text = rest.decode(errors="ignore")
-        # Filter meaningful error lines
         lines = err_text.splitlines()
         error_lines = [l for l in lines if any(k in l.lower() for k in
                        ("error", "invalid", "no such", "cannot", "failed",
