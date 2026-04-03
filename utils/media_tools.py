@@ -128,20 +128,41 @@ async def run_ffmpeg_with_progress(
             val = val.strip()
 
             if key == "out_time_us":
-                try:
-                    out_us = int(val)
-                except ValueError:
-                    pass
+                # val can be "N/A" at start — skip those
+                if val and val != "N/A":
+                    try:
+                        v = int(val)
+                        if v > 0:
+                            out_us = v
+                    except ValueError:
+                        pass
+            elif key == "out_time" and out_us == 0:
+                # Fallback: parse HH:MM:SS.ffffff string when out_time_us is N/A
+                if val and val != "N/A":
+                    try:
+                        parts = val.split(":")
+                        if len(parts) == 3:
+                            h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                            v = int((h * 3600 + m * 60 + s) * 1_000_000)
+                            if v > 0:
+                                out_us = v
+                    except Exception:
+                        pass
             elif key == "speed":
-                try:
-                    speed_x = float(val.rstrip("x"))
-                except ValueError:
-                    pass
+                # val can be "N/A" or "1.23x"
+                if val and val != "N/A":
+                    try:
+                        speed_x = float(val.rstrip("x"))
+                    except ValueError:
+                        pass
             elif key == "total_size":
-                try:
-                    total_bytes = int(val)
-                except ValueError:
-                    pass
+                if val and val != "N/A":
+                    try:
+                        v = int(val)
+                        if v > 0:
+                            total_bytes = v
+                    except ValueError:
+                        pass
             elif key == "progress" and val == "end":
                 break
 
@@ -183,10 +204,16 @@ async def run_ffmpeg_with_progress(
     if proc.returncode not in (0, None):
         err_bytes = b""
         try:
-            err_bytes = await asyncio.wait_for(proc.stderr.read(2000), timeout=5.0)
+            err_bytes = await asyncio.wait_for(proc.stderr.read(8000), timeout=5.0)
         except Exception:
             pass
-        msg = err_bytes.decode(errors="ignore")[-600:]
+        full_err = err_bytes.decode(errors="ignore")
+        # Skip ffmpeg version banner — find actual error lines
+        lines = full_err.splitlines()
+        error_lines = [l for l in lines if any(k in l.lower() for k in
+                       ("error", "invalid", "no such", "cannot", "failed",
+                        "unknown", "unrecognized", "unable", "permission"))]
+        msg = "\n".join(error_lines[-5:]) if error_lines else full_err[-400:]
         raise FFmpegError(msg or f"FFmpeg exited with code {proc.returncode}")
 
 
