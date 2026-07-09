@@ -84,6 +84,9 @@ async def get_formats(url: str) -> List[Dict]:
     try:
         info = await get_video_info(url)
     except Exception:
+        # For Instagram, if info fetch fails, return photo download option
+        if _is_instagram_url(url):
+            return _instagram_photo_formats()
         return _generic_formats()
 
     duration = float(info.get("duration") or 0)
@@ -111,8 +114,19 @@ async def get_formats(url: str) -> List[Dict]:
     formats.append({"label": "🎵 Audio Only", "format_id": "bestaudio", "height": 0, "ext": "m4a", "size_approx": 0})
 
     if not [f for f in formats if f["height"] > 0]:
+        # No video formats found
+        if _is_instagram_url(url):
+            # Likely a photo post — offer photo download instead
+            return _instagram_photo_formats()
         return _generic_formats()
     return formats
+
+
+def _instagram_photo_formats() -> List[Dict]:
+    """For Instagram photo posts/carousels — no quality selection needed."""
+    return [
+        {"label": "📸 Best Quality (Auto)", "format_id": "insta_photo", "height": 0, "ext": "jpg", "size_approx": 0},
+    ]
 
 
 def _generic_formats() -> List[Dict]:
@@ -131,30 +145,43 @@ def _is_instagram_url(url: str) -> bool:
 
 
 async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
-    """Download Instagram photo posts (single + carousel) via yt-dlp.
-    Returns list of downloaded file paths."""
+    """Download Instagram post — photos, carousel, reels, stories.
+    
+    FIXES:
+    - NO --format flag → avoids "No video formats found" crash on photo posts
+    - NO --write-thumbnail → avoids thumbnail confusion with actual photos  
+    - --yes-playlist → downloads ALL images in a carousel
+    - Retries: with cookies → without cookies → bare minimum
+    """
     os.makedirs(output_dir, exist_ok=True)
-    out_tmpl = os.path.join(output_dir, "%(post_id|%(id)s)s_%(autonumber)s.%(ext)s")
-    base_args = [
-        "--format", "best",
-        "--output", out_tmpl,
-        "--yes-playlist",           # get all images in carousel
-        "--write-thumbnail",
-        "--no-warnings", "--quiet",
-    ]
+    out_tmpl = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
+    # Strategy 1: with cookies (needed for stories/highlights)
+    base_args = ["--output", out_tmpl, "--yes-playlist", "--no-warnings", "--quiet"]
     cmd = _build_cmd(url, base_args, use_cookies=True, use_impersonation=True)
-    code, _, err = await _run(cmd, timeout=120)
-    if code != 0:
-        # Retry without cookies
+    ret, _, err1 = await _run(cmd, timeout=120)
+    if ret != 0:
+        # Strategy 2: no cookies (public posts)
         cmd = _build_cmd(url, base_args, use_cookies=False, use_impersonation=True)
-        code, _, err = await _run(cmd, timeout=120)
-    if code != 0:
-        raise RuntimeError(_clean_err(err) or "Instagram photo download failed")
-    # Return all media files (exclude .json, .part, thumbnail .jpg might clash)
+        ret, _, err1 = await _run(cmd, timeout=120)
+    if ret != 0:
+        # Strategy 3: bare yt-dlp (no extra headers)
+        bare = ["yt-dlp", "--output", out_tmpl, "--yes-playlist", "--quiet", url]
+        ret, _, err1 = await _run(bare, timeout=120)
+    if ret != 0:
+        err_msg = _clean_err(err1)
+        if "log in" in err_msg.lower() or "login" in err_msg.lower() or "cookies" in err_msg.lower():
+            raise RuntimeError(
+                "🔒 Login required for this content (Stories/Highlights).\n\n"
+                "Fix: INSTAGRAM_COOKIES variable set karo config mein.\n"
+                "Guide: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+            )
+        raise RuntimeError(err_msg or "Instagram download failed")
+    # Return all downloaded media files, sorted by creation time
+    media_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".mkv", ".m4v"}
     files = sorted(
         [str(p) for p in Path(output_dir).iterdir()
-         if p.is_file() and p.suffix.lower() in (".jpg",".jpeg",".png",".webp",".mp4",".mov")],
-        key=lambda p: os.path.getmtime(p)
+         if p.is_file() and p.suffix.lower() in media_exts],
+        key=os.path.getmtime
     )
     return files
 
@@ -163,8 +190,21 @@ async def download_video(url: str, output_dir: str, format_id: str = "best", hei
     os.makedirs(output_dir, exist_ok=True)
     out_tmpl = os.path.join(output_dir, "%(title).80s.%(ext)s")
 
+    is_insta = _is_instagram_url(url)
+
     if format_id == "bestaudio":
         fmt_str = "bestaudio/best"
+    elif is_insta:
+        # Instagram: use single-stream "best" to guarantee audio+video in one stream
+        # Avoid bestvideo+bestaudio as Instagram may not support stream merging
+        if height and height > 0:
+            fmt_str = (
+                f"best[height<={height}]"
+                f"/bestvideo[height<={height}]+bestaudio"
+                f"/best"
+            )
+        else:
+            fmt_str = "best/bestvideo+bestaudio"
     elif height and height > 0:
         fmt_str = (
             f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
