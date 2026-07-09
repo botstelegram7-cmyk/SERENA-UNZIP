@@ -16,6 +16,18 @@ from pyrogram.types import (
     CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message,
 )
 
+# ── Safe colored button helper (works with pyrofork; graceful fallback for plain pyrogram) ──
+def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButton:
+    """Create InlineKeyboardButton with optional color style.
+    style: 'success' (green) | 'danger' (red) | 'primary' (blue)
+    Falls back to plain button if pyrofork not installed."""
+    if style:
+        try:
+            return InlineKeyboardButton(text, callback_data=callback_data, style=style)
+        except TypeError:
+            pass
+    return InlineKeyboardButton(text, callback_data=callback_data)
+
 from config import Config
 from database import (
     count_users, get_all_users, get_or_create_user, get_premium_until,
@@ -461,7 +473,7 @@ async def ytdl_cmd(client, message):
     for i,f in enumerate(formats):
         sz=f" (~{human_bytes(f['size_approx'])})" if f.get("size_approx") else ""
         buttons.append([InlineKeyboardButton(f"{f['label']}{sz}",callback_data=f"ytdlq|{task_id}|{i}")])
-    buttons.append([InlineKeyboardButton("❌ Cancel",callback_data=f"ytdlcancel|{task_id}")])
+    buttons.append([_btn("❌ Cancel", f"ytdlcancel|{task_id}", "danger")])
     try: await status.edit_text(f"🎬 Quality choose karo:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
     except: pass
 
@@ -482,7 +494,7 @@ async def zip_cmd(client, message):
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Done — Create ZIP",callback_data=f"zipfile|done|{uid}"),
              InlineKeyboardButton("🔐 Add Password",callback_data=f"zipfile|askpass|{uid}")],
-            [InlineKeyboardButton("❌ Cancel",callback_data=f"zipfile|cancel|{uid}")]]))
+            [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
 
 
 @app.on_message(filters.command("merge") & (filters.private|filters.group))
@@ -499,8 +511,8 @@ async def merge_cmd(client, message):
     await message.reply_text(
         "🔗 <b>Merge Mode ON!</b>\n\nVideos bhejo (same format). Order same rahega.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Merge Now",callback_data=f"mergefile|done|{uid}"),
-             InlineKeyboardButton("❌ Cancel",callback_data=f"mergefile|cancel|{uid}")]]))
+            [_btn("✅ Merge Now", f"mergefile|done|{uid}", "success"),
+             _btn("❌ Cancel", f"mergefile|cancel|{uid}", "danger")]]))
 
 
 @app.on_message(filters.command(["rename","info","subs","screenshot","pdf","compress","split","audio","unzip","watermark"]) & (filters.private|filters.group|filters.channel))
@@ -632,8 +644,8 @@ async def zipqueue_cmd(client, message):
             f"⚠️ Queue already active! <b>{n}</b> ZIP(s) added.\n"
             "Aur ZIPs bhejo ya process karo.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"▶️ Process {n} ZIPs", callback_data=f"zq_start|{uid}")],
-                [InlineKeyboardButton("🗑 Clear Queue", callback_data=f"zq_cancel|{uid}")],
+                [_btn(f"▶️ Process {n} ZIPs", f"zq_start|{uid}", "success")],
+                [_btn("🗑 Clear Queue", f"zq_cancel|{uid}", "danger")],
             ])
         ); return
     ZIP_QUEUE_SESSIONS[uid] = {
@@ -649,7 +661,7 @@ async def zipqueue_cmd(client, message):
         "🗑 /cancelqueue → queue band karo",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("▶️ Process Queue (0 ZIPs)", callback_data=f"zq_start|{uid}")],
-            [InlineKeyboardButton("🗑 Cancel Queue", callback_data=f"zq_cancel|{uid}")],
+            [_btn("🗑 Cancel Queue", f"zq_cancel|{uid}", "danger")],
         ])
     )
 
@@ -696,7 +708,13 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
         item_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
         item_root.mkdir(parents=True, exist_ok=True)
         try:
-            dl = await client.download_media(finfo["file_id"], file_name=str(item_root))
+            start_dl = time.time()
+            await st.edit_text(f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…")
+            dl = await client.download_media(
+                finfo["file_id"], file_name=str(item_root),
+                progress=progress_for_pyrogram,
+                progress_args=(st, start_dl, fname, "Downloading")
+            )
             if not dl: raise RuntimeError("Download failed")
             if sess.get("cancelled"): break
             await st.edit_text(f"🔓 <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
@@ -718,8 +736,13 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                         dur = await _get_video_duration(str(full))
                         thumb = await choose_thumbnail(uid, str(full))
                         cap = await build_caption(uid, Path(rel).name)
+                        start_up = time.time()
+                        await st.edit_text(f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…")
                         await client.send_video(chat_id, str(full), caption=cap,
-                            thumb=thumb, duration=dur, reply_to_message_id=reply_to)
+                            thumb=thumb, duration=dur,
+                            progress=progress_for_pyrogram,
+                            progress_args=(st, start_up, Path(rel).name, "Uploading"),
+                            reply_to_message_id=reply_to)
                     elif is_image_file(rel):
                         await client.send_photo(chat_id, str(full),
                             caption=Path(rel).name, reply_to_message_id=reply_to)
@@ -727,8 +750,13 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                         await client.send_audio(chat_id, str(full),
                             caption=Path(rel).name, reply_to_message_id=reply_to)
                     else:
+                        start_up = time.time()
+                        await st.edit_text(f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…")
                         await client.send_document(chat_id, str(full),
-                            caption=rel, reply_to_message_id=reply_to)
+                            caption=rel,
+                            progress=progress_for_pyrogram,
+                            progress_args=(st, start_up, Path(rel).name, "Uploading"),
+                            reply_to_message_id=reply_to)
                     sent_n += 1
                 except Exception as e:
                     await client.send_message(chat_id,
@@ -790,9 +818,9 @@ async def on_file(client, message):
         cnt=len(sess["files"])
         await message.reply_text(f"📎 File {cnt}: <code>{fname}</code>\nAur bhejo ya ✅ Done.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Done",callback_data=f"zipfile|done|{uid}"),
+                [_btn("✅ Done", f"zipfile|done|{uid}", "success"),
                  InlineKeyboardButton("🔐 Password",callback_data=f"zipfile|askpass|{uid}")],
-                [InlineKeyboardButton("❌ Cancel",callback_data=f"zipfile|cancel|{uid}")]]))
+                [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
         return
     # Merge session collect
     if uid in merge_sessions and message.video:
@@ -801,8 +829,8 @@ async def on_file(client, message):
         cnt=len(sess["files"])
         await message.reply_text(f"🎬 Video {cnt}: <code>{message.video.file_name or 'video'}</code>",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Merge Now",callback_data=f"mergefile|done|{uid}"),
-                 InlineKeyboardButton("❌ Cancel",callback_data=f"mergefile|cancel|{uid}")]]))
+                [_btn("✅ Merge Now", f"mergefile|done|{uid}", "success"),
+                 _btn("❌ Cancel", f"mergefile|cancel|{uid}", "danger")]]))
         return
     # ── AUTO ZIP QUEUE: ZIPs add hoti rehti hai, ek saath process hoti hain ──
     if uid in ZIP_QUEUE_SESSIONS and media and is_archive_file(fname):
@@ -822,8 +850,8 @@ async def on_file(client, message):
                 f"📦 Queue: <b>{n} ZIPs</b> | 💾 {total_mb:.1f} MB\n\n"
                 f"Aur ZIPs bhejo, ya process karo ⬇️",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"▶️ Process Karo {n} ZIPs", callback_data=f"zq_start|{uid}")],
-                    [InlineKeyboardButton("🗑 Queue Cancel", callback_data=f"zq_cancel|{uid}")],
+                    [_btn(f"▶️ Process Karo {n} ZIPs", f"zq_start|{uid}", "success")],
+                    [_btn("🗑 Queue Cancel", f"zq_cancel|{uid}", "danger")],
                 ])
             )
             return
@@ -909,8 +937,8 @@ async def on_text(client, message):
                 sess["password"]=txt
                 await message.reply_text(f"🔐 Password set: <code>{txt}</code>. ✅ Done dabao.",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("✅ Done",callback_data=f"zipfile|done|{uid}"),
-                        InlineKeyboardButton("❌ Cancel",callback_data=f"zipfile|cancel|{uid}")]]))
+                        _btn("✅ Done", f"zipfile|done|{uid}", "success"),
+                        _btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
         elif action=="pdf_split_range":
             tid=state.get("task_id"); pi=PDF_TASKS.get(tid)
             if pi:
@@ -1166,7 +1194,7 @@ async def callbacks(client, cq: CallbackQuery):
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🌐 GoFile (No limit)",callback_data=f"cloudgo|{cid}|{mid}"),
                  InlineKeyboardButton("📦 Catbox (≤200MB)",callback_data=f"cloudcat|{cid}|{mid}")],
-                [InlineKeyboardButton("❌ Cancel",callback_data="noop")]])); return
+                [_btn("❌ Cancel", "noop", "danger")]])); return
     if data.startswith("cloudgo|") or data.startswith("cloudcat|"):
         platform="gofile" if data.startswith("cloudgo|") else "catbox"
         _,cid,mid=data.split("|",2)
@@ -1196,8 +1224,8 @@ async def callbacks(client, cq: CallbackQuery):
             "📦 <b>ZIP Queue Mode ON!</b>\n\nZIP files bhejo — sab queue mein add ho jaayenge!\n"
             "Phir ▶️ Process dabao.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("▶️ Process Queue", callback_data=f"zq_start|{cq.from_user.id}")],
-                [InlineKeyboardButton("🗑 Cancel Queue", callback_data=f"zq_cancel|{cq.from_user.id}")],
+                [_btn("▶️ Process Queue", f"zq_start|{cq.from_user.id}", "success")],
+                [_btn("🗑 Cancel Queue", f"zq_cancel|{cq.from_user.id}", "danger")],
             ]))
         except: pass
         return
@@ -1334,7 +1362,7 @@ async def run_unzip_task(client, msg, password, reply_msg=None):
                  f"Others: <b>{stats['others']}</b>\n")
         tl=sum(len(v) for v in links_map.values())
         if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
-        rows=[[InlineKeyboardButton("❌ Cancel",callback_data=f"ucancel|{tid}")],
+        rows=[[_btn("❌ Cancel", f"ucancel|{tid}", "danger")],
               [InlineKeyboardButton("🚀 Send ALL",callback_data=f"sendall|{tid}")]]
         for idx,rel in enumerate(files[:25]):
             short=rel if len(rel)<=42 else "…"+rel[-39:]
@@ -1509,7 +1537,7 @@ async def _trigger_compress(client, dest, orig, cid, mid):
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📱 360p",callback_data=f"comprq|{tid}|360"),InlineKeyboardButton("📺 480p",callback_data=f"comprq|{tid}|480")],
             [InlineKeyboardButton("💻 720p",callback_data=f"comprq|{tid}|720"),InlineKeyboardButton("🖥 1080p",callback_data=f"comprq|{tid}|1080")],
-            [InlineKeyboardButton("❌ Cancel",callback_data="noop")]]))
+            [_btn("❌ Cancel", "noop", "danger")]]))
 
 async def _do_compress(client, cq, tid, res):
     info=COMPRESS_TASKS.get(tid)
@@ -1558,7 +1586,7 @@ async def _trigger_split(client, dest, orig, cid, mid, fname):
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📦 500 MB",callback_data=f"splitq|{tid}|500"),InlineKeyboardButton("📦 1 GB",callback_data=f"splitq|{tid}|1024")],
             [InlineKeyboardButton("📦 1.5 GB",callback_data=f"splitq|{tid}|1536"),InlineKeyboardButton("📦 1.9 GB",callback_data=f"splitq|{tid}|1900")],
-            [InlineKeyboardButton("❌ Cancel",callback_data="noop")]]))
+            [_btn("❌ Cancel", "noop", "danger")]]))
 
 async def _do_split(client, cq, tid, size_mb):
     info=SPLIT_TASKS.get(tid)
@@ -1738,7 +1766,7 @@ async def _trigger_pdf_tools(client, dest, orig, fname):
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✂️ Split by Pages",callback_data=f"pdfq|{tid}|split"),
              InlineKeyboardButton("📝 Extract Text",callback_data=f"pdfq|{tid}|text")],
-            [InlineKeyboardButton("❌ Cancel",callback_data="noop")]]))
+            [_btn("❌ Cancel", "noop", "danger")]]))
 
 async def _do_pdf_action(client, cq, tid, action):
     info=PDF_TASKS.get(tid)
