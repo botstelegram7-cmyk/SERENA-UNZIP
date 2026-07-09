@@ -126,6 +126,39 @@ def _generic_formats() -> List[Dict]:
     ]
 
 
+def _is_instagram_url(url: str) -> bool:
+    return "instagram.com" in url.lower() or "instagr.am" in url.lower()
+
+
+async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
+    """Download Instagram photo posts (single + carousel) via yt-dlp.
+    Returns list of downloaded file paths."""
+    os.makedirs(output_dir, exist_ok=True)
+    out_tmpl = os.path.join(output_dir, "%(post_id|%(id)s)s_%(autonumber)s.%(ext)s")
+    base_args = [
+        "--format", "best",
+        "--output", out_tmpl,
+        "--yes-playlist",           # get all images in carousel
+        "--write-thumbnail",
+        "--no-warnings", "--quiet",
+    ]
+    cmd = _build_cmd(url, base_args, use_cookies=True, use_impersonation=True)
+    code, _, err = await _run(cmd, timeout=120)
+    if code != 0:
+        # Retry without cookies
+        cmd = _build_cmd(url, base_args, use_cookies=False, use_impersonation=True)
+        code, _, err = await _run(cmd, timeout=120)
+    if code != 0:
+        raise RuntimeError(_clean_err(err) or "Instagram photo download failed")
+    # Return all media files (exclude .json, .part, thumbnail .jpg might clash)
+    files = sorted(
+        [str(p) for p in Path(output_dir).iterdir()
+         if p.is_file() and p.suffix.lower() in (".jpg",".jpeg",".png",".webp",".mp4",".mov")],
+        key=lambda p: os.path.getmtime(p)
+    )
+    return files
+
+
 async def download_video(url: str, output_dir: str, format_id: str = "best", height: int = 0) -> str:
     os.makedirs(output_dir, exist_ok=True)
     out_tmpl = os.path.join(output_dir, "%(title).80s.%(ext)s")
