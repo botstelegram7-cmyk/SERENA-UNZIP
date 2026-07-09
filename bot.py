@@ -613,6 +613,162 @@ async def ban_cmd(client, message):
     await set_ban(target,cmd=="ban")
     await message.reply_text(f"User {target} {'banned' if cmd=='ban' else 'unbanned'}.")
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ZIP QUEUE — /zipqueue command + auto batch processing
+# ════════════════════════════════════════════════════════════════════════════
+@app.on_message(filters.command(["zipqueue","zqueue"]) & (filters.private|filters.group))
+async def zipqueue_cmd(client, message):
+    """Start ZIP queue: send multiple ZIPs then process all at once."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    if await is_banned(uid): return
+    if not await check_force_sub(client, message): return
+    await get_or_create_user(uid)
+    if uid in ZIP_QUEUE_SESSIONS and not ZIP_QUEUE_SESSIONS[uid].get("processing"):
+        n = len(ZIP_QUEUE_SESSIONS[uid]["files"])
+        await message.reply_text(
+            f"⚠️ Queue already active! <b>{n}</b> ZIP(s) added.\n"
+            "Aur ZIPs bhejo ya process karo.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"▶️ Process {n} ZIPs", callback_data=f"zq_start|{uid}")],
+                [InlineKeyboardButton("🗑 Clear Queue", callback_data=f"zq_cancel|{uid}")],
+            ])
+        ); return
+    ZIP_QUEUE_SESSIONS[uid] = {
+        "files": [], "chat_id": message.chat.id,
+        "reply_to": message.id, "cancelled": False, "processing": False,
+    }
+    await message.reply_text(
+        "📦 <b>ZIP Queue Mode ON!</b>\n\n"
+        "✅ Ab ek saath ya ek ek karke ZIP files bhejo\n"
+        "✅ Sab queue mein add hote jaayenge\n"
+        "✅ <b>▶️ Process</b> dabao — sab sequentially extract honge\n"
+        "✅ Har ZIP extract ke baad cache turant delete hoga\n\n"
+        "🗑 /cancelqueue → queue band karo",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ Process Queue (0 ZIPs)", callback_data=f"zq_start|{uid}")],
+            [InlineKeyboardButton("🗑 Cancel Queue", callback_data=f"zq_cancel|{uid}")],
+        ])
+    )
+
+
+@app.on_message(filters.command(["cancelqueue","qcancel"]) & (filters.private|filters.group))
+async def cancelqueue_cmd(client, message):
+    if not message.from_user: return
+    uid = message.from_user.id
+    sess = ZIP_QUEUE_SESSIONS.get(uid)
+    if sess: sess["cancelled"] = True
+    task = USER_TASKS.pop(uid, None)
+    if task and not task.done(): task.cancel()
+    ZIP_QUEUE_SESSIONS.pop(uid, None)
+    user_cancelled[uid] = True
+    await message.reply_text(
+        "🛑 <b>ZIP Queue cancel ho gaya!</b>\n"
+        "Saari pending ZIPs hata di gayi hain.",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📦 Naya Queue Start", callback_data="cmd_zipqueue")
+        ]])
+    )
+
+
+async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
+    """Process all queued ZIPs sequentially. Cache delete after each ZIP."""
+    sess = ZIP_QUEUE_SESSIONS.get(uid)
+    if not sess or not sess["files"]: return
+    USER_TASKS[uid] = asyncio.current_task()
+    total = len(sess["files"])
+    ok = fail = 0
+    header = await client.send_message(
+        chat_id,
+        f"🚀 <b>ZIP Queue Processing Start!</b>\n📦 Total: <b>{total}</b> ZIPs",
+        reply_to_message_id=reply_to
+    )
+    for i, finfo in enumerate(list(sess["files"]), 1):
+        if sess.get("cancelled"): break
+        fname = finfo["file_name"]
+        st = await client.send_message(
+            chat_id,
+            f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
+            reply_to_message_id=reply_to
+        )
+        item_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
+        item_root.mkdir(parents=True, exist_ok=True)
+        try:
+            dl = await client.download_media(finfo["file_id"], file_name=str(item_root))
+            if not dl: raise RuntimeError("Download failed")
+            if sess.get("cancelled"): break
+            await st.edit_text(f"🔓 <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
+            extract_dir = item_root / "extracted"
+            result = extract_archive(dl, str(extract_dir), password=finfo.get("password"))
+            rel_files = sorted(result["files"], key=str.lower)
+            if sess.get("cancelled"): break
+            await st.edit_text(
+                f"📤 <b>[{i}/{total}]</b> Sending <b>{len(rel_files)}</b> files…\n"
+                f"📄 from: <code>{fname}</code>"
+            )
+            sent_n = 0
+            for rel in rel_files:
+                if sess.get("cancelled"): break
+                full = extract_dir / rel
+                if not full.is_file(): continue
+                try:
+                    if is_video_path(rel):
+                        dur = await _get_video_duration(str(full))
+                        thumb = await choose_thumbnail(uid, str(full))
+                        cap = await build_caption(uid, Path(rel).name)
+                        await client.send_video(chat_id, str(full), caption=cap,
+                            thumb=thumb, duration=dur, reply_to_message_id=reply_to)
+                    elif is_image_file(rel):
+                        await client.send_photo(chat_id, str(full),
+                            caption=Path(rel).name, reply_to_message_id=reply_to)
+                    elif is_audio_file(rel):
+                        await client.send_audio(chat_id, str(full),
+                            caption=Path(rel).name, reply_to_message_id=reply_to)
+                    else:
+                        await client.send_document(chat_id, str(full),
+                            caption=rel, reply_to_message_id=reply_to)
+                    sent_n += 1
+                except Exception as e:
+                    await client.send_message(chat_id,
+                        f"⚠️ <code>{Path(rel).name}</code>: {str(e)[:150]}",
+                        reply_to_message_id=reply_to)
+                await asyncio.sleep(0.3)
+            try:
+                await st.edit_text(
+                    f"✅ <b>[{i}/{total}]</b> Done: <code>{fname}</code>\n"
+                    f"📁 {sent_n}/{len(rel_files)} files sent.")
+            except: pass
+            ok += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            try: await st.edit_text(
+                f"❌ <b>[{i}/{total}]</b> Failed: <code>{fname}</code>\n"
+                f"<code>{str(e)[:250]}</code>")
+            except: pass
+            fail += 1
+        finally:
+            # ✅ Cache delete immediately after each ZIP
+            import shutil as _sh
+            _sh.rmtree(str(item_root), ignore_errors=True)
+        await asyncio.sleep(0.5)
+    USER_TASKS.pop(uid, None)
+    cancelled = sess.get("cancelled", False)
+    ZIP_QUEUE_SESSIONS.pop(uid, None)
+    try:
+        if cancelled:
+            await header.edit_text(
+                f"🛑 <b>Queue Cancelled!</b>\n"
+                f"✅ Processed: {ok} | ❌ Failed: {fail} | ⏭ Skipped: {total-ok-fail}")
+        else:
+            await header.edit_text(
+                f"🎉 <b>Queue Complete!</b>\n\n"
+                f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>\n\n"
+                f"🗑 Cache cleared after each ZIP!")
+    except: pass
+
 # ════════════════════════════════════════════════════════════════════════════
 # FILE HANDLER
 # ════════════════════════════════════════════════════════════════════════════
@@ -648,7 +804,7 @@ async def on_file(client, message):
                 [InlineKeyboardButton("✅ Merge Now",callback_data=f"mergefile|done|{uid}"),
                  InlineKeyboardButton("❌ Cancel",callback_data=f"mergefile|cancel|{uid}")]]))
         return
-    # ZIP Queue collect — if user is in queue mode and sends a ZIP
+    # ── AUTO ZIP QUEUE: ZIPs add hoti rehti hai, ek saath process hoti hain ──
     if uid in ZIP_QUEUE_SESSIONS and media and is_archive_file(fname):
         sess = ZIP_QUEUE_SESSIONS[uid]
         if not sess.get("processing", False):
@@ -659,14 +815,18 @@ async def on_file(client, message):
                 "password": None,
             })
             n = len(sess["files"])
+            total_mb = sum(f["size"] for f in sess["files"]) / 1048576
             await message.reply_text(
-                f"📥 Added to queue ({n}): <code>{fname}</code>\n"
-                f"Queue size: <b>{n}</b> ZIP(s)\n\nAur bhejo ya process shuru karo 👇",
+                f"📥 <b>ZIP #{n} Queue mein add hua!</b>\n"
+                f"📄 <code>{fname}</code>\n"
+                f"📦 Queue: <b>{n} ZIPs</b> | 💾 {total_mb:.1f} MB\n\n"
+                f"Aur ZIPs bhejo, ya process karo ⬇️",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"▶️ Process {n} ZIP(s)", callback_data=f"zq_start|{uid}", style="success")],
-                    [InlineKeyboardButton("🗑 Cancel Queue", callback_data=f"zq_clear|{uid}", style="danger")],
+                    [InlineKeyboardButton(f"▶️ Process Karo {n} ZIPs", callback_data=f"zq_start|{uid}")],
+                    [InlineKeyboardButton("🗑 Queue Cancel", callback_data=f"zq_cancel|{uid}")],
                 ])
-            ); return
+            )
+            return
     # TXT link source
     if message.chat.type==enums.ChatType.PRIVATE and message.document and fname.lower().endswith(".txt"):
         temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
@@ -1026,175 +1186,65 @@ async def callbacks(client, cq: CallbackQuery):
         elif action=="clean":
             await cq.message.reply_text("🧹 Cleanup triggered (background worker chal raha hai).")
         await cq.answer(); return
+    if data=="cmd_zipqueue":
+        await cq.answer()
+        ZIP_QUEUE_SESSIONS[cq.from_user.id] = {
+            "files": [], "chat_id": cq.message.chat.id,
+            "reply_to": cq.message.id, "cancelled": False, "processing": False,
+        }
+        try: await cq.message.edit_text(
+            "📦 <b>ZIP Queue Mode ON!</b>\n\nZIP files bhejo — sab queue mein add ho jaayenge!\n"
+            "Phir ▶️ Process dabao.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ Process Queue", callback_data=f"zq_start|{cq.from_user.id}")],
+                [InlineKeyboardButton("🗑 Cancel Queue", callback_data=f"zq_cancel|{cq.from_user.id}")],
+            ]))
+        except: pass
+        return
     if data.startswith("zq_start|"):
-        _,uid_str=data.split("|",1); uid=int(uid_str)
-        if cq.from_user.id!=uid: await cq.answer("Ye tumhara queue nahi.",show_alert=True); return
-        sess=ZIP_QUEUE_SESSIONS.get(uid)
-        if not sess: await cq.answer("Queue expired. /zipqueue se dobara start karo.",show_alert=True); return
-        if not sess["files"]: await cq.answer("Queue empty! Pehle ZIPs bhejo.",show_alert=True); return
-        if sess.get("processing"): await cq.answer("Queue already processing!",show_alert=True); return
-        sess["processing"]=True
-        try: await cq.message.edit_text(f"▶️ Queue started — <b>{len(sess['files'])}</b> ZIP(s) processing…")
+        uid = int(data.split("|",1)[1])
+        if cq.from_user.id != uid:
+            await cq.answer("Ye tumhara queue nahi hai!", show_alert=True); return
+        sess = ZIP_QUEUE_SESSIONS.get(uid)
+        if not sess:
+            await cq.answer("Queue expire ho gayi! /zipqueue se dobara shuru karo.", show_alert=True); return
+        if not sess["files"]:
+            await cq.answer("Queue empty hai! Pehle ZIPs bhejo.", show_alert=True); return
+        if sess.get("processing"):
+            await cq.answer("Queue already chal rahi hai!", show_alert=True); return
+        sess["processing"] = True
+        try: await cq.message.edit_text(
+            f"▶️ <b>Queue Processing Shuru!</b> {len(sess['files'])} ZIP(s)…"
+        )
         except: pass
-        await cq.answer("Queue started!")
-        task=asyncio.create_task(_process_zip_queue(client,uid,cq.message.chat.id,cq.message.id))
-        USER_TASKS[uid]=task; return
-    if data.startswith("zq_clear|"):
-        _,uid_str=data.split("|",1); uid=int(uid_str)
-        if cq.from_user.id!=uid: await cq.answer("Ye tumhara queue nahi.",show_alert=True); return
-        sess=ZIP_QUEUE_SESSIONS.get(uid)
-        if sess: sess["cancelled"]=True
-        task=USER_TASKS.pop(uid,None)
+        await cq.answer("Queue start ho gayi!")
+        task = asyncio.create_task(
+            _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id)
+        )
+        USER_TASKS[uid] = task
+        return
+    if data.startswith("zq_cancel|"):
+        uid = int(data.split("|",1)[1])
+        if cq.from_user.id != uid:
+            await cq.answer("Ye tumhara queue nahi!", show_alert=True); return
+        sess = ZIP_QUEUE_SESSIONS.get(uid)
+        if sess: sess["cancelled"] = True
+        task = USER_TASKS.pop(uid, None)
         if task and not task.done(): task.cancel()
-        ZIP_QUEUE_SESSIONS.pop(uid,None)
-        try: await cq.message.edit_text("🗑 <b>Queue cleared!</b>")
+        ZIP_QUEUE_SESSIONS.pop(uid, None)
+        try: await cq.message.edit_text("🗑 <b>Queue Cancel ho gayi!</b>")
         except: pass
-        await cq.answer("Queue cancelled!"); return
+        await cq.answer("Queue cancel!")
+        return
     if data=="noop": await cq.answer(); return
     await cq.answer()
 
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# ZIP QUEUE FEATURE
-# ════════════════════════════════════════════════════════════════════════════
-@app.on_message(filters.command("zipqueue") & (filters.private|filters.group))
-async def zipqueue_cmd(client, message):
-    """Start ZIP queue mode — send multiple ZIPs, process all in sequence."""
-    if not message.from_user: return
-    uid = message.from_user.id
-    if await is_banned(uid): return
-    if not await check_force_sub(client, message): return
-    if uid in ZIP_QUEUE_SESSIONS:
-        sess = ZIP_QUEUE_SESSIONS[uid]
-        n = len(sess["files"])
-        await message.reply_text(
-            f"⚠️ Queue already active! <b>{n}</b> ZIP(s) queued.\n"
-            "Use buttons to start or cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"▶️ Process {n} ZIP(s)", callback_data=f"zq_start|{uid}", style="success")],
-                [InlineKeyboardButton("🗑 Clear Queue", callback_data=f"zq_clear|{uid}", style="danger")],
-            ])
-        ); return
-    temp_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
-    temp_root.mkdir(parents=True, exist_ok=True)
-    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
-    ZIP_QUEUE_SESSIONS[uid] = {
-        "files": [], "temp_root": str(temp_root),
-        "chat_id": message.chat.id, "reply_to": message.id,
-        "cancelled": False,
-    }
-    await message.reply_text(
-        "📦 <b>ZIP Queue Mode ON!</b>\n\n"
-        "Ab ZIPs bhejo ek ek karke — sab queue mein add hote jaayenge.\n"
-        "Sab bhejne ke baad <b>▶️ Process Queue</b> dabao.\n\n"
-        "🗑 /cancelqueue se queue clear hogi.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Process Queue", callback_data=f"zq_start|{uid}", style="success")],
-            [InlineKeyboardButton("🗑 Cancel Queue", callback_data=f"zq_clear|{uid}", style="danger")],
-        ])
-    )
-
-
-@app.on_message(filters.command("cancelqueue") & (filters.private|filters.group))
-async def cancelqueue_cmd(client, message):
-    if not message.from_user: return
-    uid = message.from_user.id
-    sess = ZIP_QUEUE_SESSIONS.get(uid)
-    if not sess:
-        await message.reply_text("❌ No active queue."); return
-    sess["cancelled"] = True
-    task = USER_TASKS.pop(uid, None)
-    if task and not task.done(): task.cancel()
-    ZIP_QUEUE_SESSIONS.pop(uid, None)
     await message.reply_text("🛑 <b>Queue cancelled!</b> All pending ZIPs removed.")
 
 
-async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
-    """Process all ZIPs in the queue one by one, delete cache after each."""
-    sess = ZIP_QUEUE_SESSIONS.get(uid)
-    if not sess or not sess["files"]: return
-    total = len(sess["files"])
-    USER_TASKS[uid] = asyncio.current_task()
-    overall = await client.send_message(chat_id,
-        f"🚀 <b>Starting Queue</b> — <b>{total}</b> ZIP(s) to process…",
-        reply_to_message_id=reply_to)
-    ok = fail = 0
-    for i, finfo in enumerate(list(sess["files"]), 1):
-        if sess.get("cancelled"): break
-        fname = finfo["file_name"]
-        status = await client.send_message(chat_id,
-            f"📦 [{i}/{total}] Downloading <code>{fname}</code>…",
-            reply_to_message_id=reply_to)
-        item_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
-        item_root.mkdir(parents=True, exist_ok=True)
-        try:
-            # Download
-            dl = await client.download_media(finfo["file_id"], file_name=str(item_root))
-            if not dl: raise RuntimeError("Download returned None")
-            if sess.get("cancelled"): break
-            # Extract
-            await status.edit_text(f"📦 [{i}/{total}] Extracting <code>{fname}</code>…")
-            extract_dir = item_root / "extracted"
-            result = extract_archive(dl, str(extract_dir), password=finfo.get("password"))
-            files = sorted(result["files"], key=lambda p: p.lower())
-            if sess.get("cancelled"): break
-            # Send files
-            await status.edit_text(
-                f"📤 [{i}/{total}] Sending <b>{len(files)}</b> files from <code>{fname}</code>…")
-            sent_count = 0
-            for rel in files:
-                if sess.get("cancelled"): break
-                full = extract_dir / rel
-                if not full.is_file(): continue
-                try:
-                    if is_video_path(rel):
-                        cap = await build_caption(uid, Path(rel).name)
-                        thumb = await choose_thumbnail(uid, str(full))
-                        dur = await _get_video_duration(str(full))
-                        await client.send_video(chat_id, str(full),
-                            caption=cap, thumb=thumb, duration=dur,
-                            reply_to_message_id=reply_to)
-                    elif is_image_file(rel):
-                        await client.send_photo(chat_id, str(full),
-                            caption=Path(rel).name, reply_to_message_id=reply_to)
-                    else:
-                        await client.send_document(chat_id, str(full),
-                            caption=rel, reply_to_message_id=reply_to)
-                    sent_count += 1
-                except Exception as e:
-                    await client.send_message(chat_id,
-                        f"⚠️ <code>{rel}</code>: <code>{str(e)[:200]}</code>",
-                        reply_to_message_id=reply_to)
-                await asyncio.sleep(0.3)
-            try:
-                await status.edit_text(
-                    f"✅ [{i}/{total}] <code>{fname}</code> done!\n"
-                    f"📁 {sent_count}/{len(files)} files sent.")
-            except: pass
-            ok += 1
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            try: await status.edit_text(f"❌ [{i}/{total}] <code>{fname}</code> failed:\n<code>{str(e)[:300]}</code>")
-            except: pass
-            fail += 1
-        finally:
-            # ✅ DELETE CACHE IMMEDIATELY after each ZIP
-            import shutil as _sh
-            _sh.rmtree(str(item_root), ignore_errors=True)
-        await asyncio.sleep(0.5)
-
-    USER_TASKS.pop(uid, None)
-    if sess.get("cancelled"):
-        try: await overall.edit_text(f"🛑 Queue cancelled! Processed {ok}/{total} before cancel.")
-        except: pass
-    else:
-        try: await overall.edit_text(
-            f"✅ <b>Queue Complete!</b>\n\n"
-            f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>")
-        except: pass
-    ZIP_QUEUE_SESSIONS.pop(uid, None)
 
 # ════════════════════════════════════════════════════════════════════════════
 # UNZIP
@@ -1808,43 +1858,42 @@ async def _do_ytdl_download(client, cq, tid, idx):
     fmt=formats[idx]; url=info["url"]; temp_root=Path(info["temp_root"])
     try: await cq.message.edit_text(f"⬇️ Downloading <b>{fmt['label']}</b>…\n<code>{url}</code>")
     except: pass
-    # Instagram photo/carousel special handling
-    is_insta_photo = _is_instagram_url(url) and fmt.get("format_id","") in ("bestaudio",) is False and fmt.get("height",1) == 0
+    # ── Instagram handling ──
+    # "insta_photo" format_id = photo/carousel post → use _download_instagram_photos
+    # Normal format_ids → use download_video (with audio-safe format strings)
     try:
-        if _is_instagram_url(url) and fmt.get("label","") not in ("🎵 Audio Only",):
-            # Try photo download first (handles carousels + photos + reels)
-            try:
-                photo_files = await _download_instagram_photos(url, str(temp_root))
-                if photo_files:
-                    status=cq.message; start_u=time.time()
-                    cap = await build_caption(uid, f"📸 Instagram")
-                    for i, fpath in enumerate(photo_files):
-                        ext_i = Path(fpath).suffix.lower()
-                        fname_i = Path(fpath).name
-                        try:
-                            if ext_i in IMAGE_EXT_SET:
-                                cap_i = cap if i==0 else fname_i
-                                await client.send_photo(info["chat_id"], fpath,
-                                    caption=cap_i, reply_to_message_id=info["reply_to"])
-                            elif is_video_path(fname_i):
-                                dur_i = await _get_video_duration(fpath)
-                                thumb_i = await choose_thumbnail(uid, fpath)
-                                await client.send_video(info["chat_id"], fpath,
-                                    caption=cap if i==0 else fname_i,
-                                    thumb=thumb_i, duration=dur_i,
-                                    reply_to_message_id=info["reply_to"])
-                        except Exception as ei:
-                            await client.send_message(info["chat_id"],
-                                f"⚠️ File {i+1}: <code>{ei}</code>",
+        if _is_instagram_url(url) and fmt.get("format_id") == "insta_photo":
+            # Direct photo/carousel download — no quality selection needed
+            try: await cq.message.edit_text("📸 Downloading Instagram post…")
+            except: pass
+            photo_files = await _download_instagram_photos(url, str(temp_root))
+            if photo_files:
+                cap = await build_caption(uid, "📸 Instagram")
+                for i, fpath in enumerate(photo_files):
+                    ext_i = Path(fpath).suffix.lower()
+                    fname_i = Path(fpath).name
+                    try:
+                        if ext_i in IMAGE_EXT_SET:
+                            await client.send_photo(info["chat_id"], fpath,
+                                caption=cap if i==0 else fname_i,
                                 reply_to_message_id=info["reply_to"])
-                        await asyncio.sleep(0.3)
-                    try: await status.delete()
-                    except: pass
-                    await update_user_stats(uid, sum(Path(f).stat().st_size for f in photo_files if Path(f).exists())/(1024*1024))
-                    YTDL_TASKS.pop(tid,None); return
-            except Exception:
-                pass  # fallback to normal yt-dlp download below
-        dl_path=await ytdl_download(url,str(temp_root),format_id=fmt["format_id"],height=fmt.get("height",0))
+                        elif is_video_path(fname_i):
+                            dur_i = await _get_video_duration(fpath)
+                            thumb_i = await choose_thumbnail(uid, fpath)
+                            await client.send_video(info["chat_id"], fpath,
+                                caption=cap if i==0 else fname_i,
+                                thumb=thumb_i, duration=dur_i,
+                                reply_to_message_id=info["reply_to"])
+                    except Exception as ei:
+                        await client.send_message(info["chat_id"],
+                            f"⚠️ File {i+1}: <code>{str(ei)[:150]}</code>",
+                            reply_to_message_id=info["reply_to"])
+                    await asyncio.sleep(0.3)
+                try: await cq.message.delete()
+                except: pass
+                await update_user_stats(uid, sum(Path(f).stat().st_size for f in photo_files if Path(f).exists())/1048576)
+            YTDL_TASKS.pop(tid,None); return
+        dl_path = await ytdl_download(url, str(temp_root), format_id=fmt["format_id"], height=fmt.get("height",0))
     except Exception as e:
         try: await cq.message.edit_text(f"❌ Download failed:\n<code>{e}</code>")
         except: pass
