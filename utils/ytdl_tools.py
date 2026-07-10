@@ -145,12 +145,40 @@ def _generic_formats() -> List[Dict]:
     ]
 
 
+
+def _normalize_instagram_url(url: str) -> str:
+    """Convert encoded/shared Instagram URLs to standard format.
+    
+    Example: https://www.instagram.com/s/aGlnaGxpZ2h0OjE3ODY1NTYwMDE4OTk4NzU3
+    Decodes to: highlight:17865560018998757
+    Returns:    https://www.instagram.com/stories/highlights/17865560018998757/
+    """
+    if "/s/" not in url:
+        return url
+    try:
+        import base64, re
+        m = re.search(r"/s/([A-Za-z0-9_\-]+)", url)
+        if not m:
+            return url
+        b64 = m.group(1).replace("-", "+").replace("_", "/")
+        # Add padding
+        b64 += "=" * (4 - len(b64) % 4)
+        decoded = base64.b64decode(b64).decode("utf-8", errors="ignore")
+        if decoded.startswith("highlight:"):
+            hid = decoded.split(":", 1)[1]
+            return f"https://www.instagram.com/stories/highlights/{hid}/"
+    except Exception:
+        pass
+    return url
+
 def _is_instagram_url(url: str) -> bool:
     return "instagram.com" in url.lower() or "instagr.am" in url.lower()
 
 
 async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
-    """Download Instagram post — photos, carousel, reels, stories.
+    """Download Instagram post — photos, carousel, reels, stories, highlights."""
+    url = _normalize_instagram_url(url)  # decode encoded highlight/story URLs
+    """Original docstring:
     
     Strategy (in order):
     1. yt-dlp --dump-json → extract image URLs from JSON → direct HTTP download
@@ -276,6 +304,7 @@ async def download_video(url: str, output_dir: str, format_id: str = "best", hei
     os.makedirs(output_dir, exist_ok=True)
     out_tmpl = os.path.join(output_dir, "%(title).80s.%(ext)s")
 
+    url = _normalize_instagram_url(url)  # handle encoded highlight URLs
     is_insta = _is_instagram_url(url)
 
     if format_id == "bestaudio":
