@@ -74,6 +74,14 @@ ARCHIVE_EXTS  = (".zip",".rar",".7z",".tar",".gz",".tgz",".tar.gz",
 EMOJI_LIST    = ["🚀","📦","🎬","🧩","📄","🔗","🧪","⚡","💾","🧰"]
 
 # ── State dicts ─────────────────────────────────────────────────────────────
+# Custom filter — non-command text (avoids TypeError from ~filters.command)
+_non_cmd = filters.create(
+    lambda _, __, m: not (
+        (m.text    and m.text.strip().startswith("/")) or
+        (m.caption and m.caption.strip().startswith("/"))
+    )
+)
+
 user_locks:     Dict[int,asyncio.Lock]    = {}
 tasks:          Dict[str,Dict[str,Any]]   = {}
 M3U8_TASKS:     Dict[str,Dict[str,Any]]   = {}
@@ -968,7 +976,7 @@ async def process_links_message(client, message, content):
              _btn("⏭ Skip", f"links|skip|{message.chat.id}|{message.id}", "primary")]]))
 
 
-@app.on_message((filters.text|filters.caption) & ~filters.command & (filters.private|filters.group))
+@app.on_message((filters.text|filters.caption) & _non_cmd & (filters.private|filters.group))
 async def on_text(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -1022,7 +1030,7 @@ async def on_text(client, message):
     await process_links_message(client,message,txt)
 
 
-@app.on_message((filters.text|filters.caption) & ~filters.command & (filters.group|filters.channel))
+@app.on_message((filters.text|filters.caption) & _non_cmd & (filters.group|filters.channel))
 async def group_text_handler(client, message):
     if not message.from_user: return
     txt=(message.text or message.caption or "") or ""
