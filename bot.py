@@ -847,6 +847,25 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                 f"🎉 <b>Queue Complete!</b>\n\n"
                 f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>\n\n"
                 f"🗑 Cache cleared after each ZIP!")
+            # ── End animation (QUEUE_END_GIF from Render env) ──
+            if Config.QUEUE_END_GIF:
+                try:
+                    gif_url = Config.QUEUE_END_GIF.strip()
+                    if gif_url.startswith("http"):
+                        # Giphy / web URL → send as animation
+                        await client.send_animation(
+                            chat_id,
+                            gif_url,
+                            reply_to_message_id=reply_to,
+                        )
+                    else:
+                        # Telegram file_id or sticker_id
+                        try:
+                            await client.send_sticker(chat_id, gif_url, reply_to_message_id=reply_to)
+                        except Exception:
+                            await client.send_animation(chat_id, gif_url, reply_to_message_id=reply_to)
+                except Exception:
+                    pass
     except: pass
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -949,7 +968,7 @@ async def process_links_message(client, message, content):
              _btn("⏭ Skip", f"links|skip|{message.chat.id}|{message.id}", "primary")]]))
 
 
-@app.on_message((filters.text|filters.caption) & (filters.private|filters.group))
+@app.on_message((filters.text|filters.caption) & ~filters.command & (filters.private|filters.group))
 async def on_text(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -1003,7 +1022,7 @@ async def on_text(client, message):
     await process_links_message(client,message,txt)
 
 
-@app.on_message((filters.text|filters.caption) & (filters.group|filters.channel))
+@app.on_message((filters.text|filters.caption) & ~filters.command & (filters.group|filters.channel))
 async def group_text_handler(client, message):
     if not message.from_user: return
     txt=(message.text or message.caption or "") or ""

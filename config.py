@@ -56,5 +56,11 @@ class Config:
     ENABLE_AUTO_PASSWORD = os.getenv("ENABLE_AUTO_PASSWORD", "1") == "1"
 
     # ── Referral ──────────────────────────────────────────────────
+    # ── ZIP Queue completion animation ─────────────────────────────
+    # Set QUEUE_END_GIF in Render env:
+    #   • Giphy MP4 URL  → sends as animation
+    #   • Telegram sticker file_id → sends as sticker
+    QUEUE_END_GIF = os.getenv("QUEUE_END_GIF", "")
+
     REFERRAL_REQUIRED    = int(os.getenv("REFERRAL_REQUIRED", "5"))
     REFERRAL_REWARD_DAYS = int(os.getenv("REFERRAL_REWARD_DAYS", "7"))

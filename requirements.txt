@@ -1,6 +1,9 @@
-# Pyrogram fork — supports button style (primary/success/danger colors, Pyrogram 2.1+)
-pyrofork>=2.1.0
-tgcrypto==1.2.5
+# ╔══════════════════════════════════════════════════════╗
+# ║  Pyrogram fork with button style support             ║
+# ║  InlineKeyboardButton(..., style="primary/success/danger") ║
+# ╚══════════════════════════════════════════════════════╝
+pyrofork
+tgcrypto
 
 motor==3.6.0
 pymongo==4.9.1
@@ -17,6 +20,6 @@ python-dotenv==1.0.1
 fastapi==0.115.0
 uvicorn==0.30.6
 
-yt-dlp>=2024.1.1
+yt-dlp
 Pillow>=10.0.0
 mutagen>=1.47.0
