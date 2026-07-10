@@ -369,7 +369,7 @@ async def start_cmd(client, message):
     else: await message.reply_text(cap,reply_markup=main_keyboard())
 
 
-@app.on_message(filters.command("help") & (filters.private|filters.group))
+@app.on_message(filters.command("help"))
 async def help_cmd(client, message):
     text=(
         "✨ <b>Serena Unzip v2 — Help</b>\n\n"
@@ -401,7 +401,7 @@ async def help_cmd(client, message):
     await message.reply_text(text)
 
 
-@app.on_message(filters.command("settings") & (filters.private|filters.group))
+@app.on_message(filters.command("settings"))
 async def settings_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id; cfg=await get_user_settings(uid) or {}
@@ -413,7 +413,7 @@ async def settings_cmd(client, message):
     await message.reply_text(text, reply_markup=settings_keyboard())
 
 
-@app.on_message(filters.command("cancel") & (filters.private|filters.group))
+@app.on_message(filters.command("cancel"))
 async def cancel_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -433,7 +433,7 @@ async def cancel_cmd(client, message):
     )
 
 
-@app.on_message(filters.command("mystats") & (filters.private|filters.group))
+@app.on_message(filters.command("mystats"))
 async def mystats_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id; user=await get_or_create_user(uid)
@@ -451,7 +451,7 @@ async def mystats_cmd(client, message):
         f"🖼 Thumb: <code>{cfg.get('thumb_mode','random')}</code>")
 
 
-@app.on_message(filters.command("refer") & (filters.private|filters.group))
+@app.on_message(filters.command("refer"))
 async def refer_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id; me=await client.get_me()
@@ -466,7 +466,7 @@ async def refer_cmd(client, message):
         ]]))
 
 
-@app.on_message(filters.command("ytdl") & (filters.private|filters.group))
+@app.on_message(filters.command("ytdl"))
 async def ytdl_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -500,7 +500,7 @@ async def ytdl_cmd(client, message):
     except: pass
 
 
-@app.on_message(filters.command("zip") & (filters.private|filters.group))
+@app.on_message(filters.command("zip"))
 async def zip_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -519,7 +519,7 @@ async def zip_cmd(client, message):
             [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
 
 
-@app.on_message(filters.command("merge") & (filters.private|filters.group))
+@app.on_message(filters.command("merge"))
 async def merge_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -537,7 +537,7 @@ async def merge_cmd(client, message):
              _btn("❌ Cancel", f"mergefile|cancel|{uid}", "danger")]]))
 
 
-@app.on_message(filters.command(["rename","info","subs","screenshot","pdf","compress","split","audio","unzip","watermark"]) & (filters.private|filters.group|filters.channel))
+@app.on_message(filters.command(["rename","info","subs","screenshot","pdf","compress","split","audio","unzip","watermark"]))
 async def file_command_handler(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -623,7 +623,7 @@ async def broadcast_cmd(client, message):
     await message.reply_text(f"📢 Done. Sent: {sent}  Failed: {failed}")
 
 
-@app.on_message(filters.command("premium") & (filters.private|filters.group))
+@app.on_message(filters.command("premium"))
 async def premium_cmd(client, message):
     if not message.from_user or not is_owner(message.from_user.id): return
     parts=(message.text or "").split()
@@ -652,7 +652,7 @@ async def ban_cmd(client, message):
 # ════════════════════════════════════════════════════════════════════════════
 # ZIP QUEUE — /zipqueue command + auto batch processing
 # ════════════════════════════════════════════════════════════════════════════
-@app.on_message(filters.command(["zipqueue","zqueue","zq"]) & (filters.private|filters.group|filters.channel))
+@app.on_message(filters.command(["zipqueue","zqueue","zq"]))
 async def zipqueue_cmd(client, message):
     """Advanced ZIP Queue: batch extract multiple archives with full ETA, progress & stats."""
     if not message.from_user: return
@@ -710,7 +710,7 @@ async def zipqueue_cmd(client, message):
     )
 
 
-@app.on_message(filters.command(["zqpass"]) & (filters.private|filters.group))
+@app.on_message(filters.command(["zqpass"]))
 async def zqpass_cmd(client, message):
     """Set a common password for all ZIPs in the queue."""
     if not message.from_user: return
@@ -726,7 +726,7 @@ async def zqpass_cmd(client, message):
     await message.reply_text(f"🔐 Queue password set: <tg-spoiler>{password}</tg-spoiler>\nSaari ZIPs is password se extract hongi.")
 
 
-@app.on_message(filters.command(["cancelqueue","qcancel"]) & (filters.private|filters.group))
+@app.on_message(filters.command(["cancelqueue","qcancel"]))
 async def cancelqueue_cmd(client, message):
     if not message.from_user: return
     uid = message.from_user.id
@@ -879,7 +879,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
 # ════════════════════════════════════════════════════════════════════════════
 # FILE HANDLER
 # ════════════════════════════════════════════════════════════════════════════
-@app.on_message((filters.document|filters.video|filters.photo|filters.audio) & (filters.private|filters.group|filters.channel))
+@app.on_message((filters.document|filters.video|filters.photo|filters.audio) )
 async def on_file(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -976,7 +976,7 @@ async def process_links_message(client, message, content):
              _btn("⏭ Skip", f"links|skip|{message.chat.id}|{message.id}", "primary")]]))
 
 
-@app.on_message((filters.text|filters.caption) & _non_cmd & (filters.private|filters.group))
+@app.on_message((filters.text|filters.caption) & _non_cmd )
 async def on_text(client, message):
     if not message.from_user: return
     uid=message.from_user.id
