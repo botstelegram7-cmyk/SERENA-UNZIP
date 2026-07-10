@@ -159,7 +159,7 @@ async def check_rate_limit(uid, msg):
         await msg.reply_text(
             f"⚠️ <b>Daily limit reached!</b>\n📦 Tasks: <b>{stats['daily_tasks']}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
             f"⏰ Resets in: <b>{_ht(_secs_to_midnight())}</b>\n\nGet ⭐ Premium for unlimited!",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Get Premium",callback_data="premium_info")]]))
+            reply_markup=InlineKeyboardMarkup([[_btn("⭐ Get Premium", "premium_info", "primary")]]))
         return False
     if float(stats.get("daily_size_mb",0))>=Config.FREE_DAILY_SIZE_MB:
         await msg.reply_text("⚠️ Daily data limit reached. Get ⭐ Premium for no limits!"); return False
@@ -243,57 +243,57 @@ def _cb(): return InlineKeyboardButton("📢 Channel",url=f"https://t.me/{Config
 def main_keyboard():
     return InlineKeyboardMarkup([
         [_cb()],
-        [InlineKeyboardButton("📦 Unzip File",callback_data="help:unzip"),
-         InlineKeyboardButton("⬇️ Download Link",callback_data="help:link")],
-        [InlineKeyboardButton("⚙️ Settings",callback_data="open_settings"),
-         InlineKeyboardButton("📊 My Stats",callback_data="show_mystats")],
-        [InlineKeyboardButton("💬 Help",callback_data="show_help"),
-         InlineKeyboardButton("⭐ Premium",callback_data="premium_info")],
+        [_btn("📦 Unzip File", "help:unzip", "success"),
+         _btn("⬇️ Download Link", "help:link", "success")],
+        [_btn("⚙️ Settings", "open_settings", "primary"),
+         _btn("📊 My Stats", "show_mystats", "primary")],
+        [_btn("💬 Help", "show_help", "primary"),
+         _btn("⭐ Premium", "premium_info", "primary")],
         [_ob()],
     ])
 
 def settings_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Caption",callback_data="settings:caption"),
-         InlineKeyboardButton("🔤 Replace Words",callback_data="settings:replace")],
-        [InlineKeyboardButton("📸 Original Thumb",callback_data="settings:thumb:original"),
-         InlineKeyboardButton("🎲 Random Thumb",callback_data="settings:thumb:random")],
-        [InlineKeyboardButton("⚙️ Reset All",callback_data="settings:reset")],
+        [_btn("📝 Caption", "settings:caption", "primary"),
+         _btn("🔤 Replace Words", "settings:replace", "primary")],
+        [_btn("📸 Original Thumb", "settings:thumb:original", "primary"),
+         _btn("🎲 Random Thumb", "settings:thumb:random", "primary")],
+        [_btn("⚙️ Reset All", "settings:reset", "primary")],
         [_ob()],
     ])
 
 def file_action_keyboard(msg, fname, fsize_mb=0):
     cid,mid=msg.chat.id,msg.id; rows=[]
     if is_archive_file(fname):
-        rows.append([InlineKeyboardButton("📦 Unzip",callback_data=f"unzip|{cid}|{mid}|nopass"),
-                     InlineKeyboardButton("🔐 With Password",callback_data=f"unzip|{cid}|{mid}|askpass")])
+        rows.append([_btn("📦 Unzip", f"unzip|{cid}|{mid}|nopass", "danger"),
+                     _btn("🔐 With Password", f"unzip|{cid}|{mid}|askpass", "success")])
         if Config.ENABLE_AUTO_PASSWORD:
-            rows.append([InlineKeyboardButton("🔑 Auto-Try Passwords",callback_data=f"unzip|{cid}|{mid}|autopass")])
+            rows.append([_btn("🔑 Auto-Try Passwords", f"unzip|{cid}|{mid}|autopass", "success")])
     elif is_video_file(fname):
-        rows.append([InlineKeyboardButton("🎵 Extract Audio",callback_data=f"audio|{cid}|{mid}"),
-                     InlineKeyboardButton("📦 Compress",callback_data=f"compress|{cid}|{mid}")])
-        rows.append([InlineKeyboardButton("✂️ Split File",callback_data=f"split|{cid}|{mid}"),
-                     InlineKeyboardButton("ℹ️ File Info",callback_data=f"finfo|{cid}|{mid}")])
+        rows.append([_btn("🎵 Extract Audio", f"audio|{cid}|{mid}", "success"),
+                     _btn("📦 Compress", f"compress|{cid}|{mid}", "primary")])
+        rows.append([_btn("✂️ Split File", f"split|{cid}|{mid}", "primary"),
+                     _btn("ℹ️ File Info", f"finfo|{cid}|{mid}", "primary")])
         if _ext(fname) in {".mkv",".mp4",".mov",".avi"}:
-            rows.append([InlineKeyboardButton("🔤 Extract Subs",callback_data=f"subs|{cid}|{mid}"),
-                         InlineKeyboardButton("📸 Screenshot",callback_data=f"screenshot|{cid}|{mid}")])
-        rows.append([InlineKeyboardButton("💧 Watermark",callback_data=f"watermark|{cid}|{mid}"),
-                     InlineKeyboardButton("✏️ Rename",callback_data=f"rename|{cid}|{mid}")])
+            rows.append([_btn("🔤 Extract Subs", f"subs|{cid}|{mid}", "success"),
+                         _btn("📸 Screenshot", f"screenshot|{cid}|{mid}", "primary")])
+        rows.append([_btn("💧 Watermark", f"watermark|{cid}|{mid}", "primary"),
+                     _btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
     elif is_audio_file(fname):
-        rows.append([InlineKeyboardButton("ℹ️ File Info",callback_data=f"finfo|{cid}|{mid}"),
-                     InlineKeyboardButton("✏️ Rename",callback_data=f"rename|{cid}|{mid}")])
+        rows.append([_btn("ℹ️ File Info", f"finfo|{cid}|{mid}", "primary"),
+                     _btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
     elif is_pdf_file(fname):
-        rows.append([InlineKeyboardButton("📄 PDF Tools",callback_data=f"pdf|{cid}|{mid}"),
-                     InlineKeyboardButton("ℹ️ File Info",callback_data=f"finfo|{cid}|{mid}")])
-        rows.append([InlineKeyboardButton("✏️ Rename",callback_data=f"rename|{cid}|{mid}")])
+        rows.append([_btn("📄 PDF Tools", f"pdf|{cid}|{mid}", "primary"),
+                     _btn("ℹ️ File Info", f"finfo|{cid}|{mid}", "primary")])
+        rows.append([_btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
     else:
         # BUG FIX #1 — unsupported file
-        rows.append([InlineKeyboardButton("📤 Send As-Is",callback_data=f"sendas|{cid}|{mid}"),
-                     InlineKeyboardButton("✏️ Rename",callback_data=f"rename|{cid}|{mid}")])
-        rows.append([InlineKeyboardButton("🗜 Add to ZIP",callback_data=f"addtozip|{cid}|{mid}")])
+        rows.append([_btn("📤 Send As-Is", f"sendas|{cid}|{mid}", "success"),
+                     _btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
+        rows.append([_btn("🗜 Add to ZIP", f"addtozip|{cid}|{mid}", "primary")])
     if fsize_mb>Config.AUTO_SPLIT_MB:
-        rows.append([InlineKeyboardButton("✂️ Split Parts",callback_data=f"split|{cid}|{mid}"),
-                     InlineKeyboardButton("☁️ Cloud Upload",callback_data=f"cloudopt|{cid}|{mid}")])
+        rows.append([_btn("✂️ Split Parts", f"split|{cid}|{mid}", "primary"),
+                     _btn("☁️ Cloud Upload", f"cloudopt|{cid}|{mid}", "success")])
     rows.append([_ob()]); return InlineKeyboardMarkup(rows)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -319,7 +319,7 @@ async def check_force_sub(client, message):
                 "⚠️ Pehle channel join karo!",
                 reply_markup=InlineKeyboardMarkup([
                     [_cb()],
-                    [InlineKeyboardButton("✅ Joined! Try Again", callback_data="retry_force_sub")],
+                    [_btn("✅ Joined! Try Again", "retry_force_sub", "success")],
                 ]),
             )
         except Exception:
@@ -393,7 +393,7 @@ async def help_cmd(client, message):
     await message.reply_text(text)
 
 
-@app.on_message(filters.command("settings") & filters.private)
+@app.on_message(filters.command("settings") & (filters.private|filters.group))
 async def settings_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id; cfg=await get_user_settings(uid) or {}
@@ -443,7 +443,7 @@ async def mystats_cmd(client, message):
         f"🖼 Thumb: <code>{cfg.get('thumb_mode','random')}</code>")
 
 
-@app.on_message(filters.command("refer") & filters.private)
+@app.on_message(filters.command("refer") & (filters.private|filters.group))
 async def refer_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id; me=await client.get_me()
@@ -486,7 +486,7 @@ async def ytdl_cmd(client, message):
     buttons=[]
     for i,f in enumerate(formats):
         sz=f" (~{human_bytes(f['size_approx'])})" if f.get("size_approx") else ""
-        buttons.append([InlineKeyboardButton(f"{f['label']}{sz}",callback_data=f"ytdlq|{task_id}|{i}")])
+        buttons.append([_btn(f"{f['label']}{sz}", f"ytdlq|{task_id}|{i}", "primary")])
     buttons.append([_btn("❌ Cancel", f"ytdlcancel|{task_id}", "danger")])
     try: await status.edit_text(f"🎬 Quality choose karo:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
     except: pass
@@ -506,8 +506,8 @@ async def zip_cmd(client, message):
     await message.reply_text(
         "📦 <b>ZIP Creator Mode ON!</b>\n\nAb files bhejo ek ek karke.\nDone hone pe ✅ dabao.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Done — Create ZIP",callback_data=f"zipfile|done|{uid}"),
-             InlineKeyboardButton("🔐 Add Password",callback_data=f"zipfile|askpass|{uid}")],
+            [_btn("✅ Done — Create ZIP", f"zipfile|done|{uid}", "success"),
+             _btn("🔐 Add Password", f"zipfile|askpass|{uid}", "primary")],
             [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
 
 
@@ -599,9 +599,9 @@ async def admin_cmd(client, message):
         f"🛡 <b>Admin Panel</b>\n\n👥 {total}  ⭐ {premium}  🚫 {banned}\n"
         f"💾 Free: {human_bytes(disk.free)}",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Full Stats",callback_data="admin:status"),
-             InlineKeyboardButton("📢 Broadcast hint",callback_data="admin:broadcast")],
-            [InlineKeyboardButton("🧹 Clean Storage",callback_data="admin:clean")]]))
+            [_btn("📊 Full Stats", "admin:status", "primary"),
+             _btn("📢 Broadcast hint", "admin:broadcast", "primary")],
+            [_btn("🧹 Clean Storage", "admin:clean", "primary")]]))
 
 
 @app.on_message(filters.command("broadcast") & filters.private)
@@ -615,7 +615,7 @@ async def broadcast_cmd(client, message):
     await message.reply_text(f"📢 Done. Sent: {sent}  Failed: {failed}")
 
 
-@app.on_message(filters.command("premium") & filters.private)
+@app.on_message(filters.command("premium") & (filters.private|filters.group))
 async def premium_cmd(client, message):
     if not message.from_user or not is_owner(message.from_user.id): return
     parts=(message.text or "").split()
@@ -665,7 +665,7 @@ async def zipqueue_cmd(client, message):
             "Aur ZIPs bhejo ya neeche process karo ⬇️",
             reply_markup=InlineKeyboardMarkup([
                 [_btn(f"▶️ Process All ({n} ZIPs)", f"zq_start|{uid}", "success")],
-                [InlineKeyboardButton("📋 List Queue", callback_data=f"zq_list|{uid}"),
+                [_btn("📋 List Queue", f"zq_list|{uid}", "primary"),
                  _btn("🗑 Clear", f"zq_cancel|{uid}", "danger")],
             ])
         ); return
@@ -696,7 +696,7 @@ async def zipqueue_cmd(client, message):
         + group_note,
         reply_markup=InlineKeyboardMarkup([
             [_btn("▶️ Process Queue (0 ZIPs)", f"zq_start|{uid}", "success")],
-            [InlineKeyboardButton("📋 List Queue", callback_data=f"zq_list|{uid}"),
+            [_btn("📋 List Queue", f"zq_list|{uid}", "primary"),
              _btn("🗑 Cancel Queue", f"zq_cancel|{uid}", "danger")],
         ])
     )
@@ -732,7 +732,7 @@ async def cancelqueue_cmd(client, message):
         "🛑 <b>ZIP Queue cancel ho gaya!</b>\n"
         "Saari pending ZIPs hata di gayi hain.",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📦 Naya Queue Start", callback_data="cmd_zipqueue")
+            _btn("📦 Naya Queue Start", "cmd_zipqueue", "success")
         ]])
     )
 
@@ -871,7 +871,7 @@ async def on_file(client, message):
         await message.reply_text(f"📎 File {cnt}: <code>{fname}</code>\nAur bhejo ya ✅ Done.",
             reply_markup=InlineKeyboardMarkup([
                 [_btn("✅ Done", f"zipfile|done|{uid}", "success"),
-                 InlineKeyboardButton("🔐 Password",callback_data=f"zipfile|askpass|{uid}")],
+                 _btn("🔐 Password", f"zipfile|askpass|{uid}", "primary")],
                 [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
         return
     # Merge session collect
@@ -944,12 +944,12 @@ async def process_links_message(client, message, content):
     await message.reply_text(
         f"🔗 <b>{len(links)} links found</b>\n\n"+"\n".join(lines)+"\n\nChoose action:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬇️ Download All",callback_data=f"links|download_all|{message.chat.id}|{message.id}")],
-            [InlineKeyboardButton("🧹 Cleaned TXT",callback_data=f"links|clean_txt|{message.chat.id}|{message.id}"),
-             InlineKeyboardButton("⏭ Skip",callback_data=f"links|skip|{message.chat.id}|{message.id}")]]))
+            [_btn("⬇️ Download All", f"links|download_all|{message.chat.id}|{message.id}", "success")],
+            [_btn("🧹 Cleaned TXT", f"links|clean_txt|{message.chat.id}|{message.id}", "primary"),
+             _btn("⏭ Skip", f"links|skip|{message.chat.id}|{message.id}", "primary")]]))
 
 
-@app.on_message((filters.text|filters.caption) & filters.private)
+@app.on_message((filters.text|filters.caption) & (filters.private|filters.group))
 async def on_text(client, message):
     if not message.from_user: return
     uid=message.from_user.id
@@ -1244,8 +1244,8 @@ async def callbacks(client, cq: CallbackQuery):
         _,cid,mid=data.split("|",2); await cq.answer()
         await cq.message.reply_text("☁️ Cloud platform choose karo:",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🌐 GoFile (No limit)",callback_data=f"cloudgo|{cid}|{mid}"),
-                 InlineKeyboardButton("📦 Catbox (≤200MB)",callback_data=f"cloudcat|{cid}|{mid}")],
+                [_btn("🌐 GoFile (No limit)", f"cloudgo|{cid}|{mid}", "primary"),
+                 _btn("📦 Catbox (≤200MB)", f"cloudcat|{cid}|{mid}", "primary")],
                 [_btn("❌ Cancel", "noop", "danger")]])); return
     if data.startswith("cloudgo|") or data.startswith("cloudcat|"):
         platform="gofile" if data.startswith("cloudgo|") else "catbox"
@@ -1433,14 +1433,14 @@ async def run_unzip_task(client, msg, password, reply_msg=None):
         tl=sum(len(v) for v in links_map.values())
         if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
         rows=[[_btn("❌ Cancel", f"ucancel|{tid}", "danger")],
-              [InlineKeyboardButton("🚀 Send ALL",callback_data=f"sendall|{tid}")]]
+              [_btn("🚀 Send ALL", f"sendall|{tid}", "success")]]
         for idx,rel in enumerate(files[:25]):
             short=rel if len(rel)<=42 else "…"+rel[-39:]
-            rows.append([InlineKeyboardButton(short,callback_data=f"sendone|{tid}|{idx}")])
+            rows.append([_btn(short, f"sendone|{tid}|{idx}", "success")])
         if tl:
             all_links=[l for v in links_map.values() for l in v]
             LINK_SESSIONS[(status.chat.id,status.id)]={"links":all_links,"content":"\n".join(all_links)}
-            rows.append([InlineKeyboardButton(f"⬇️ Download {tl} links",callback_data=f"links|download_all|{status.chat.id}|{status.id}")])
+            rows.append([_btn(f"⬇️ Download {tl} links", f"links|download_all|{status.chat.id}|{status.id}", "success")])
         await status.edit_text(summary,reply_markup=InlineKeyboardMarkup(rows))
         await update_user_stats(uid,size_mb)
 
@@ -1605,8 +1605,8 @@ async def _trigger_compress(client, dest, orig, cid, mid):
     COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":media.file_name or "video.mp4"}
     await dest.reply_text(f"📦 Compress: <code>{media.file_name or 'video'}</code>\nResolution:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📱 360p",callback_data=f"comprq|{tid}|360"),InlineKeyboardButton("📺 480p",callback_data=f"comprq|{tid}|480")],
-            [InlineKeyboardButton("💻 720p",callback_data=f"comprq|{tid}|720"),InlineKeyboardButton("🖥 1080p",callback_data=f"comprq|{tid}|1080")],
+            [_btn("📱 360p", f"comprq|{tid}|360", "primary"),_btn("📺 480p", f"comprq|{tid}|480", "primary")],
+            [_btn("💻 720p", f"comprq|{tid}|720", "primary"),_btn("🖥 1080p", f"comprq|{tid}|1080", "primary")],
             [_btn("❌ Cancel", "noop", "danger")]]))
 
 async def _do_compress(client, cq, tid, res):
@@ -1654,8 +1654,8 @@ async def _trigger_split(client, dest, orig, cid, mid, fname):
     SPLIT_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":fname}
     await dest.reply_text(f"✂️ Split: <code>{fname}</code>\nPart size:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📦 500 MB",callback_data=f"splitq|{tid}|500"),InlineKeyboardButton("📦 1 GB",callback_data=f"splitq|{tid}|1024")],
-            [InlineKeyboardButton("📦 1.5 GB",callback_data=f"splitq|{tid}|1536"),InlineKeyboardButton("📦 1.9 GB",callback_data=f"splitq|{tid}|1900")],
+            [_btn("📦 500 MB", f"splitq|{tid}|500", "primary"),_btn("📦 1 GB", f"splitq|{tid}|1024", "primary")],
+            [_btn("📦 1.5 GB", f"splitq|{tid}|1536", "primary"),_btn("📦 1.9 GB", f"splitq|{tid}|1900", "primary")],
             [_btn("❌ Cancel", "noop", "danger")]]))
 
 async def _do_split(client, cq, tid, size_mb):
@@ -1713,8 +1713,8 @@ async def _trigger_subs(client, dest, orig):
     subs=await extract_subtitles(dl,str(temp_root/"subs"))
     if not subs: await status.edit_text("❌ Koi subtitle track nahi mila."); return
     SUB_TASKS[tid]={"user_id":uid,"subs":subs,"chat_id":dest.chat.id,"reply_to":status.id}
-    buttons=[[InlineKeyboardButton(s["label"],callback_data=f"subsq|{tid}|{s['stream_index']}")] for s in subs]
-    buttons.append([InlineKeyboardButton("📥 Download ALL",callback_data=f"subsq|{tid}|all")])
+    buttons=[[_btn(s["label"], f"subsq|{tid}|{s['stream_index']}", "primary")] for s in subs]
+    buttons.append([_btn("📥 Download ALL", f"subsq|{tid}|all", "success")])
     await status.edit_text(f"🔤 <b>{len(subs)} subtitle tracks found!</b>",reply_markup=InlineKeyboardMarkup(buttons))
 
 async def _do_extract_sub(client, cq, tid, sidx):
@@ -1834,8 +1834,8 @@ async def _trigger_pdf_tools(client, dest, orig, fname):
     await status.edit_text(
         f"📄 <b>{fname}</b>\nPages: <b>{pi['pages']}</b>  Size: <b>{pi['size_mb']} MB</b>\n\nWhat to do?",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✂️ Split by Pages",callback_data=f"pdfq|{tid}|split"),
-             InlineKeyboardButton("📝 Extract Text",callback_data=f"pdfq|{tid}|text")],
+            [_btn("✂️ Split by Pages", f"pdfq|{tid}|split", "primary"),
+             _btn("📝 Extract Text", f"pdfq|{tid}|text", "success")],
             [_btn("❌ Cancel", "noop", "danger")]]))
 
 async def _do_pdf_action(client, cq, tid, action):
@@ -1993,7 +1993,41 @@ async def _do_ytdl_download(client, cq, tid, idx):
             YTDL_TASKS.pop(tid,None); return
         dl_path = await ytdl_download(url, str(temp_root), format_id=fmt["format_id"], height=fmt.get("height",0))
     except Exception as e:
-        try: await cq.message.edit_text(f"❌ Download failed:\n<code>{e}</code>")
+        err_str = str(e)
+        # Instagram photo post? Redirect to photo downloader
+        if _is_instagram_url(url) and any(k in err_str.lower() for k in
+                ("no video", "there is no video", "no video in this post",
+                 "no video formats")):
+            try: await cq.message.edit_text("📸 Photo post detected — switching to image downloader…")
+            except: pass
+            try:
+                photo_files = await _download_instagram_photos(url, str(temp_root))
+                if photo_files:
+                    cap = await build_caption(uid, "📸 Instagram")
+                    for i, fpath in enumerate(photo_files):
+                        ext_i = Path(fpath).suffix.lower()
+                        fname_i = Path(fpath).name
+                        try:
+                            if ext_i in IMAGE_EXT_SET:
+                                await client.send_photo(info["chat_id"], fpath,
+                                    caption=cap if i==0 else fname_i,
+                                    reply_to_message_id=info["reply_to"])
+                            elif is_video_path(fname_i):
+                                dur_i = await _get_video_duration(fpath)
+                                th_i = await choose_thumbnail(uid, fpath)
+                                await client.send_video(info["chat_id"], fpath,
+                                    caption=cap if i==0 else fname_i,
+                                    thumb=th_i, duration=dur_i,
+                                    reply_to_message_id=info["reply_to"])
+                        except Exception: pass
+                        await asyncio.sleep(0.3)
+                    try: await cq.message.delete()
+                    except: pass
+                    await update_user_stats(uid, sum(Path(f).stat().st_size for f in photo_files if Path(f).exists())/1048576)
+                    YTDL_TASKS.pop(tid,None); return
+            except Exception as pe:
+                err_str = str(pe)
+        try: await cq.message.edit_text(f"❌ Download failed:\n<code>{err_str[:500]}</code>")
         except: pass
         YTDL_TASKS.pop(tid,None); return
     basename=os.path.basename(dl_path)
@@ -2079,7 +2113,7 @@ async def offer_m3u8_menu(client, cq, uid, url, temp_root):
     if not variants: variants=[{"name":"Auto","url":url}]
     tid=uuid.uuid4().hex
     M3U8_TASKS[tid]={"user_id":uid,"url":url,"variants":variants,"temp_root":str(temp_root),"base_name":base}
-    buttons=[[InlineKeyboardButton(v["name"],callback_data=f"m3q|{tid}|{i}")] for i,v in enumerate(variants)]
+    buttons=[[_btn(v["name"], f"m3q|{tid}|{i}", "primary")] for i,v in enumerate(variants)]
     await client.send_message(chat_id,f"📺 m3u8:\n<code>{url}</code>\n\nQuality:",
         reply_markup=InlineKeyboardMarkup(buttons),reply_to_message_id=reply_to)
 
