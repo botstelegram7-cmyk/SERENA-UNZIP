@@ -152,111 +152,124 @@ def _is_instagram_url(url: str) -> bool:
 async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
     """Download Instagram post — photos, carousel, reels, stories.
     
-    Strategy:
-    1. yt-dlp without --format (handles both photos and videos)
-    2. If yt-dlp fails → get thumbnail URL from --dump-json (= actual photo)
-    3. Download thumbnail directly via HTTP (works for public photo posts)
-    4. Login errors → show clear cookie setup message
+    Strategy (in order):
+    1. yt-dlp --dump-json → extract image URLs from JSON → direct HTTP download
+       (MOST reliable for photo posts — avoids "No video formats" error entirely)
+    2. yt-dlp normal download with cookies (videos, reels, stories)
+    3. yt-dlp without cookies (public posts)
+    4. Clear error for login-required content
     """
+    import json as _json, urllib.request as _req
     os.makedirs(output_dir, exist_ok=True)
-    out_tmpl = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
     media_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".mkv", ".m4v"}
-    
+    out_tmpl = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
+
     def _collect_files():
+        if not Path(output_dir).exists(): return []
         return sorted(
             [str(p) for p in Path(output_dir).iterdir()
              if p.is_file() and p.suffix.lower() in media_exts],
             key=os.path.getmtime
         )
-    
-    # ── Strategy 1: yt-dlp with cookies ──
+
+    def _dl_image(img_url: str, idx: int) -> str:
+        """Download image from CDN URL directly."""
+        ext = ".jpg"
+        for e in (".png", ".webp"):
+            if e in img_url: ext = e; break
+        img_path = os.path.join(output_dir, f"photo_{idx:02d}{ext}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) "
+                          "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 "
+                          "Instagram/222.0.0.17.114",
+            "Referer": "https://www.instagram.com/",
+            "Accept": "image/avif,image/webp,image/apng,*/*;q=0.8",
+        }
+        req = _req.Request(img_url, headers=headers)
+        with _req.urlopen(req, timeout=30) as r:
+            with open(img_path, "wb") as f:
+                f.write(r.read())
+        return img_path
+
+    def _extract_images_from_json(data: dict) -> list:
+        """Pull all image/thumbnail URLs from yt-dlp info JSON."""
+        urls = []
+        entries = data.get("entries") or []
+        if entries:
+            for entry in entries:
+                # For carousel: each entry is a photo
+                for key in ("url", "thumbnail", "display_url"):
+                    u = entry.get(key, "")
+                    if u and any(x in u for x in ("cdninstagram", "fbcdn", ".jpg", ".jpeg", ".png", ".webp")):
+                        urls.append(u); break
+        else:
+            for key in ("url", "thumbnail", "display_url"):
+                u = data.get(key, "")
+                if u and any(x in u for x in ("cdninstagram", "fbcdn", ".jpg", ".jpeg", ".png", ".webp")):
+                    urls.append(u); break
+        return urls
+
+    last_err = ""
+
+    # ── Strategy 1: Get JSON info → try direct image download (photo posts) ──
+    info_args = ["--dump-single-json", "--yes-playlist", "--no-warnings", "--quiet"]
+    cmd_info = _build_cmd(url, info_args, use_cookies=True, use_impersonation=True)
+    _, info_out, _ = await _run(cmd_info, timeout=40)
+    if not info_out.strip():
+        cmd_info = _build_cmd(url, info_args, use_cookies=False, use_impersonation=True)
+        _, info_out, _ = await _run(cmd_info, timeout=40)
+    if info_out.strip():
+        try:
+            info_data = _json.loads(info_out.strip())
+            img_urls = _extract_images_from_json(info_data)
+            if img_urls:
+                saved = []
+                for idx, img_url in enumerate(img_urls, 1):
+                    try: saved.append(_dl_image(img_url, idx))
+                    except Exception: continue
+                if saved: return saved
+        except Exception:
+            pass
+
+    # ── Strategy 2: yt-dlp normal download with cookies ──
     base_args = ["--output", out_tmpl, "--yes-playlist", "--no-warnings", "--quiet"]
     cmd = _build_cmd(url, base_args, use_cookies=True, use_impersonation=True)
-    ret, _, err1 = await _run(cmd, timeout=120)
+    ret, _, err1 = await _run(cmd, timeout=180)
+    last_err = err1
     if ret == 0:
         files = _collect_files()
         if files: return files
-    
-    # ── Strategy 2: yt-dlp without cookies (public posts) ──
-    if ret != 0:
-        cmd = _build_cmd(url, base_args, use_cookies=False, use_impersonation=True)
-        ret, _, err1 = await _run(cmd, timeout=120)
-        if ret == 0:
-            files = _collect_files()
-            if files: return files
 
-    # ── Strategy 3: Thumbnail fallback (for photo posts where yt-dlp says "No video formats") ──
-    # yt-dlp --dump-json returns thumbnail URL which IS the actual Instagram photo
-    err_lower = err1.lower()
-    is_no_video = "no video" in err_lower or "no video formats" in err_lower
-    is_login_err = any(k in err_lower for k in ("log in", "login", "cookies", "authentication"))
-    
+    # ── Strategy 3: yt-dlp without cookies ──
+    cmd = _build_cmd(url, base_args, use_cookies=False, use_impersonation=True)
+    ret, _, err1 = await _run(cmd, timeout=180)
+    if err1: last_err = err1
+    if ret == 0:
+        files = _collect_files()
+        if files: return files
+
+    # ── Classify error for helpful message ──
+    err_lower = last_err.lower()
+    is_login_err = any(k in err_lower for k in ("log in", "login", "cookies", "authentication", "private"))
+
     if is_login_err:
-        # Check if cookies are configured but not working
         has_cookies = _cookie_file_exists()
+        if has_cookies:
+            raise RuntimeError(
+                "🔒 Login required.\n\n"
+                "Cookies set hain — lekin shayad:\n"
+                "• Session expire ho gayi ho\n"
+                "• Account se Instagram ne logout kar diya ho\n\n"
+                "✅ <b>Fix:</b> Browser se nayi fresh cookies export karo aur "
+                "INSTAGRAM_COOKIES env variable update karo."
+            )
         raise RuntimeError(
-            "🔒 Login required for this content (Stories/Highlights).\n\n"
-            + ("⚠️ Cookies set hain lekin expire ho gaye hain ya invalid hain. "
-               "Nayi cookies set karo." if has_cookies else
-               "INSTAGRAM_COOKIES env variable set karo.\n"
-               "Format: Netscape format mein paste karo.")
+            "🔒 Login required (Stories/Highlights private hain).\n\n"
+            "✅ <b>Fix:</b> INSTAGRAM_COOKIES env variable mein Netscape format "
+            "mein cookies paste karo."
         )
-    
-    if is_no_video or ret != 0:
-        # Try to get thumbnail/image URL from yt-dlp info JSON
-        info_args = ["--dump-single-json", "--no-playlist", "--quiet"]
-        cmd_info = _build_cmd(url, info_args, use_cookies=True, use_impersonation=True)
-        _, info_out, _ = await _run(cmd_info, timeout=30)
-        if not info_out.strip():
-            cmd_info = _build_cmd(url, info_args, use_cookies=False, use_impersonation=True)
-            _, info_out, _ = await _run(cmd_info, timeout=30)
-        
-        if info_out.strip():
-            import json as _json
-            try:
-                info_data = _json.loads(info_out)
-                # Collect thumbnail URLs — for carousels, check entries
-                thumb_urls = []
-                entries = info_data.get("entries") or []
-                if entries:
-                    for entry in entries:
-                        t = entry.get("thumbnail") or entry.get("url")
-                        if t and ("jpg" in t or "jpeg" in t or "png" in t or "cdninstagram" in t):
-                            thumb_urls.append(t)
-                else:
-                    t = info_data.get("thumbnail") or info_data.get("url")
-                    if t: thumb_urls.append(t)
-                
-                if thumb_urls:
-                    import urllib.request as _req
-                    import urllib.error as _uerr
-                    saved = []
-                    for idx, thumb_url in enumerate(thumb_urls, 1):
-                        try:
-                            ext = ".jpg"
-                            if ".png" in thumb_url: ext = ".png"
-                            elif ".webp" in thumb_url: ext = ".webp"
-                            img_path = os.path.join(output_dir, f"photo_{idx:02d}{ext}")
-                            headers = {
-                                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) "
-                                              "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 "
-                                              "Instagram/210.0.0.40.118",
-                                "Referer": "https://www.instagram.com/",
-                            }
-                            req = _req.Request(thumb_url, headers=headers)
-                            with _req.urlopen(req, timeout=30) as resp:
-                                with open(img_path, "wb") as imgf:
-                                    imgf.write(resp.read())
-                            saved.append(img_path)
-                        except Exception:
-                            continue
-                    if saved:
-                        return saved
-            except Exception:
-                pass
-    
-    # ── All strategies failed ──
-    raise RuntimeError(_clean_err(err1) or "Instagram download failed — try again later")
+
+    raise RuntimeError(_clean_err(last_err) or "Instagram download failed — try again later")
 
 
 async def download_video(url: str, output_dir: str, format_id: str = "best", height: int = 0) -> str:
@@ -268,18 +281,23 @@ async def download_video(url: str, output_dir: str, format_id: str = "best", hei
     if format_id == "bestaudio":
         fmt_str = "bestaudio/best"
     elif is_insta:
-        # Instagram reels: explicitly request audio+video merge
-        # "best" alone picks video-only DASH stream → no audio
-        # "bestvideo+bestaudio" with --merge-output-format mp4 = audio guaranteed
+        # Instagram reels FIX:
+        # "best[ext=mp4]" = pre-merged progressive MP4 stream with BOTH audio+video
+        # This avoids the bestvideo (video-only DASH) + bestaudio merge issue
+        # Fallback: bestvideo+bestaudio (requires ffmpeg), then plain best
         if height and height > 0:
             fmt_str = (
-                f"bestvideo[height<={height}]+bestaudio"
-                f"/bestvideo[height<={height}]+bestaudio[ext=m4a]"
-                f"/best[height<={height}]"
-                f"/best"
+                f"best[ext=mp4][height<={height}][vcodec!=none][acodec!=none]"
+                f"/best[height<={height}][ext=mp4]"
+                f"/bestvideo[height<={height}]+bestaudio"
+                f"/best[height<={height}]/best"
             )
         else:
-            fmt_str = "bestvideo+bestaudio/bestvideo+bestaudio[ext=m4a]/best"
+            fmt_str = (
+                "best[ext=mp4][vcodec!=none][acodec!=none]"
+                "/bestvideo+bestaudio"
+                "/best[ext=mp4]/best"
+            )
     elif height and height > 0:
         fmt_str = (
             f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
