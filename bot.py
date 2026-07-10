@@ -301,15 +301,29 @@ def file_action_keyboard(msg, fname, fsize_mb=0):
 # ════════════════════════════════════════════════════════════════════════════
 async def check_force_sub(client, message):
     if not message.from_user or not Config.FORCE_SUB_CHANNEL: return True
-    try:
-        m=await client.get_chat_member(Config.FORCE_SUB_CHANNEL,message.from_user.id)
-        if m.status not in (enums.ChatMemberStatus.OWNER,enums.ChatMemberStatus.ADMINISTRATOR,enums.ChatMemberStatus.MEMBER): raise ValueError
+    # Groups/channels mein force_sub check nahi hoga — only DM
+    if hasattr(message, "chat") and message.chat.type != enums.ChatType.PRIVATE:
         return True
-    except:
+    try:
+        m = await client.get_chat_member(Config.FORCE_SUB_CHANNEL, message.from_user.id)
+        if m.status not in (
+            enums.ChatMemberStatus.OWNER,
+            enums.ChatMemberStatus.ADMINISTRATOR,
+            enums.ChatMemberStatus.MEMBER,
+        ):
+            raise ValueError
+        return True
+    except Exception:
         try:
-            await message.reply_text("Pehle channel join karo 😎",reply_markup=InlineKeyboardMarkup([
-                [_cb()],[InlineKeyboardButton("✅ Try Again",callback_data="retry_force_sub")]]))
-        except: pass
+            await message.reply_text(
+                "⚠️ Pehle channel join karo!",
+                reply_markup=InlineKeyboardMarkup([
+                    [_cb()],
+                    [InlineKeyboardButton("✅ Joined! Try Again", callback_data="retry_force_sub")],
+                ]),
+            )
+        except Exception:
+            pass
         return False
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -630,40 +644,78 @@ async def ban_cmd(client, message):
 # ════════════════════════════════════════════════════════════════════════════
 # ZIP QUEUE — /zipqueue command + auto batch processing
 # ════════════════════════════════════════════════════════════════════════════
-@app.on_message(filters.command(["zipqueue","zqueue"]) & (filters.private|filters.group))
+@app.on_message(filters.command(["zipqueue","zqueue","zq"]) & (filters.private|filters.group|filters.channel))
 async def zipqueue_cmd(client, message):
-    """Start ZIP queue: send multiple ZIPs then process all at once."""
+    """Advanced ZIP Queue: batch extract multiple archives with full ETA, progress & stats."""
     if not message.from_user: return
     uid = message.from_user.id
     if await is_banned(uid): return
     if not await check_force_sub(client, message): return
     await get_or_create_user(uid)
+    in_group = message.chat.type != enums.ChatType.PRIVATE
+
     if uid in ZIP_QUEUE_SESSIONS and not ZIP_QUEUE_SESSIONS[uid].get("processing"):
-        n = len(ZIP_QUEUE_SESSIONS[uid]["files"])
+        sess = ZIP_QUEUE_SESSIONS[uid]
+        n = len(sess["files"])
+        total_mb = sum(f["size"] for f in sess["files"]) / 1048576
         await message.reply_text(
-            f"⚠️ Queue already active! <b>{n}</b> ZIP(s) added.\n"
-            "Aur ZIPs bhejo ya process karo.",
+            f"📦 <b>Queue Already Active!</b>\n\n"
+            f"📋 ZIPs queued : <b>{n}</b>\n"
+            f"💾 Total size  : <b>{total_mb:.1f} MB</b>\n\n"
+            "Aur ZIPs bhejo ya neeche process karo ⬇️",
             reply_markup=InlineKeyboardMarkup([
-                [_btn(f"▶️ Process {n} ZIPs", f"zq_start|{uid}", "success")],
-                [_btn("🗑 Clear Queue", f"zq_cancel|{uid}", "danger")],
+                [_btn(f"▶️ Process All ({n} ZIPs)", f"zq_start|{uid}", "success")],
+                [InlineKeyboardButton("📋 List Queue", callback_data=f"zq_list|{uid}"),
+                 _btn("🗑 Clear", f"zq_cancel|{uid}", "danger")],
             ])
         ); return
+
     ZIP_QUEUE_SESSIONS[uid] = {
-        "files": [], "chat_id": message.chat.id,
-        "reply_to": message.id, "cancelled": False, "processing": False,
+        "files": [],
+        "chat_id": message.chat.id,
+        "reply_to": message.id,
+        "cancelled": False,
+        "processing": False,
+        "default_password": None,   # optional global password for all ZIPs
+        "created_at": time.time(),
     }
+    group_note = (
+        "\n\n📌 <b>Group Note:</b> Bot ko group mein files milti hain tabhi jab "
+        "Bot ka Privacy Mode OFF ho (BotFather mein set karo)."
+        if in_group else ""
+    )
     await message.reply_text(
         "📦 <b>ZIP Queue Mode ON!</b>\n\n"
-        "✅ Ab ek saath ya ek ek karke ZIP files bhejo\n"
-        "✅ Sab queue mein add hote jaayenge\n"
-        "✅ <b>▶️ Process</b> dabao — sab sequentially extract honge\n"
-        "✅ Har ZIP extract ke baad cache turant delete hoga\n\n"
-        "🗑 /cancelqueue → queue band karo",
+        "📌 <b>How to use:</b>\n"
+        "  1️⃣  ZIP files bhejo (ek ek ya jaldi jaldi)\n"
+        "  2️⃣  <b>▶️ Process</b> dabao — sab extract honge\n"
+        "  3️⃣  Har ZIP ke baad cache turant delete hoga ✅\n\n"
+        "🔐 <b>Password:</b> /zqpass [password] se saari ZIPs ka common password set karo\n"
+        "📋 <b>List:</b> Queue mein kaun kaun si ZIPs hain dekhne ke liye button dabao\n"
+        "🛑 <b>Cancel:</b> /cancelqueue ya button se cancel karo"
+        + group_note,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Process Queue (0 ZIPs)", callback_data=f"zq_start|{uid}")],
-            [_btn("🗑 Cancel Queue", f"zq_cancel|{uid}", "danger")],
+            [_btn("▶️ Process Queue (0 ZIPs)", f"zq_start|{uid}", "success")],
+            [InlineKeyboardButton("📋 List Queue", callback_data=f"zq_list|{uid}"),
+             _btn("🗑 Cancel Queue", f"zq_cancel|{uid}", "danger")],
         ])
     )
+
+
+@app.on_message(filters.command(["zqpass"]) & (filters.private|filters.group))
+async def zqpass_cmd(client, message):
+    """Set a common password for all ZIPs in the queue."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    sess = ZIP_QUEUE_SESSIONS.get(uid)
+    if not sess:
+        await message.reply_text("❌ Koi active queue nahi. Pehle /zipqueue chalao."); return
+    args = message.command[1:]
+    if not args:
+        await message.reply_text("❌ Password bhejo: <code>/zqpass yourpassword</code>"); return
+    password = " ".join(args)
+    sess["default_password"] = password
+    await message.reply_text(f"🔐 Queue password set: <tg-spoiler>{password}</tg-spoiler>\nSaari ZIPs is password se extract hongi.")
 
 
 @app.on_message(filters.command(["cancelqueue","qcancel"]) & (filters.private|filters.group))
@@ -1214,6 +1266,24 @@ async def callbacks(client, cq: CallbackQuery):
         elif action=="clean":
             await cq.message.reply_text("🧹 Cleanup triggered (background worker chal raha hai).")
         await cq.answer(); return
+    if data.startswith("zq_list|"):
+        uid = int(data.split("|",1)[1])
+        if cq.from_user.id != uid: await cq.answer("Ye tumhara queue nahi!", show_alert=True); return
+        sess = ZIP_QUEUE_SESSIONS.get(uid)
+        if not sess: await cq.answer("Queue nahi mili.", show_alert=True); return
+        files = sess["files"]
+        if not files: await cq.answer("Queue empty hai!", show_alert=True); return
+        lines = [f"📦 <b>Queue ({len(files)} ZIPs):</b>"]
+        for i, f in enumerate(files, 1):
+            mb = f["size"]/1048576
+            pw = "🔐" if f.get("password") or sess.get("default_password") else ""
+            lines.append(f"  {i}. <code>{f['file_name']}</code> ({mb:.1f} MB) {pw}")
+        total_mb = sum(f["size"] for f in files)/1048576
+        lines.append(f"\n💾 <b>Total: {total_mb:.1f} MB</b>")
+        try: await cq.message.reply_text("\n".join(lines))
+        except: pass
+        await cq.answer()
+        return
     if data=="cmd_zipqueue":
         await cq.answer()
         ZIP_QUEUE_SESSIONS[cq.from_user.id] = {
