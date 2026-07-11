@@ -938,6 +938,21 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
 async def on_file(client, message):
     if not message.from_user: return
     uid=message.from_user.id
+
+    # ── GROUP FILTER: groups mein sirf ZIP queue wali files process hongi ──
+    # Baaki sab (photos, videos, random docs) ignore — kachra nahi badhega
+    # Private DM mein normal kaam karta hai
+    is_group = message.chat and message.chat.type in (
+        enums.ChatType.GROUP, enums.ChatType.SUPERGROUP
+    )
+    if is_group:
+        # Only allow if ZIP queue is active for this user AND file is a ZIP
+        media_check = message.document or message.video
+        fname_check = (media_check.file_name or "") if media_check else ""
+        in_queue = uid in ZIP_QUEUE_SESSIONS and not ZIP_QUEUE_SESSIONS[uid].get("processing")
+        if not (in_queue and is_archive_file(fname_check)):
+            return  # ← group mein command ke bina kuch nahi hoga
+
     if await is_banned(uid): return
     if not await check_force_sub(client,message): return
     await get_or_create_user(uid)
