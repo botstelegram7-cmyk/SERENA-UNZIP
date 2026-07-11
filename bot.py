@@ -756,13 +756,18 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
         f"📋 Sequence: sorted by send order ✅",
         reply_to_message_id=reply_to
     )
+    # ── Delete old queue notification message (reply_to) to keep chat clean ──
+    try:
+        await client.delete_messages(chat_id, [reply_to])
+    except Exception:
+        pass
     for i, finfo in enumerate(sorted_files, 1):
         if sess.get("cancelled"): break
         fname = finfo["file_name"]
         st = await client.send_message(
             chat_id,
             f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
-            reply_to_message_id=reply_to
+            reply_to_message_id=header.id
         )
         item_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
         item_root.mkdir(parents=True, exist_ok=True)
@@ -815,7 +820,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                             caption=rel,
                             progress=progress_for_pyrogram,
                             progress_args=(st, start_up, Path(rel).name, "Uploading"),
-                            reply_to_message_id=reply_to)
+                            reply_to_message_id=header.id)
                     sent_n += 1
                 except Exception as e:
                     await client.send_message(chat_id,
@@ -826,6 +831,9 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                 await st.edit_text(
                     f"✅ <b>[{i}/{total}]</b> Done: <code>{fname}</code>\n"
                     f"📁 {sent_n}/{len(rel_files)} files sent.")
+                await asyncio.sleep(1.5)
+                try: await st.delete()   # ← delete status message after done
+                except: pass
             except: pass
             ok += 1
             # ── Send GIF after EVERY successfully extracted ZIP ──
@@ -844,6 +852,11 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                                 reply_to_message_id=reply_to)
                 except Exception:
                     pass
+            # Delete per-ZIP status message to keep chat clean
+            try:
+                await st.delete()
+            except Exception:
+                pass
         except asyncio.CancelledError:
             raise
         except Exception as e:
