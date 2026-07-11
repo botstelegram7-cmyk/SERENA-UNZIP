@@ -18,14 +18,10 @@ from pyrogram.types import (
 
 # ── Safe colored button helper (works with pyrofork; graceful fallback for plain pyrogram) ──
 def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButton:
-    """Create InlineKeyboardButton with optional color style.
-    style: 'success' (green) | 'danger' (red) | 'primary' (blue)
-    Falls back to plain button if pyrofork not installed."""
-    if style:
-        try:
-            return InlineKeyboardButton(text, callback_data=callback_data, style=style)
-        except TypeError:
-            pass
+    """InlineKeyboardButton wrapper.
+    NOTE: style= is a python-telegram-bot (PTB) feature, NOT Pyrogram.
+    Pyrogram does not support button colors via style= parameter.
+    Kept as API-compatible wrapper for future migration."""
     return InlineKeyboardButton(text, callback_data=callback_data)
 
 from config import Config
@@ -750,14 +746,17 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
     sess = ZIP_QUEUE_SESSIONS.get(uid)
     if not sess or not sess["files"]: return
     USER_TASKS[uid] = asyncio.current_task()
-    total = len(sess["files"])
+    # ── Sort by message ID → guarantees exact order user sent files ──
+    sorted_files = sorted(sess["files"], key=lambda f: f.get("msg_id", 0))
+    total = len(sorted_files)
     ok = fail = 0
     header = await client.send_message(
         chat_id,
-        f"🚀 <b>ZIP Queue Processing Start!</b>\n📦 Total: <b>{total}</b> ZIPs",
+        f"🚀 <b>ZIP Queue Processing Start!</b>\n📦 Total: <b>{total}</b> ZIPs\n"
+        f"📋 Sequence: sorted by send order ✅",
         reply_to_message_id=reply_to
     )
-    for i, finfo in enumerate(list(sess["files"]), 1):
+    for i, finfo in enumerate(sorted_files, 1):
         if sess.get("cancelled"): break
         fname = finfo["file_name"]
         st = await client.send_message(
@@ -829,6 +828,22 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                     f"📁 {sent_n}/{len(rel_files)} files sent.")
             except: pass
             ok += 1
+            # ── Send GIF after EVERY successfully extracted ZIP ──
+            if Config.QUEUE_END_GIF:
+                try:
+                    gif = Config.QUEUE_END_GIF.strip()
+                    if gif.startswith("http"):
+                        await client.send_animation(chat_id, gif,
+                            reply_to_message_id=reply_to)
+                    else:
+                        try:
+                            await client.send_sticker(chat_id, gif,
+                                reply_to_message_id=reply_to)
+                        except Exception:
+                            await client.send_animation(chat_id, gif,
+                                reply_to_message_id=reply_to)
+                except Exception:
+                    pass
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -914,23 +929,35 @@ async def on_file(client, message):
     # ── AUTO ZIP QUEUE: ZIPs add hoti rehti hai, ek saath process hoti hain ──
     if uid in ZIP_QUEUE_SESSIONS and media and is_archive_file(fname):
         sess = ZIP_QUEUE_SESSIONS[uid]
+        MAX_QUEUE = 100
         if not sess.get("processing", False):
+            n_now = len(sess["files"])
+            if n_now >= MAX_QUEUE:
+                await message.reply_text(
+                    f"⚠️ Queue full hai! Maximum <b>{MAX_QUEUE} ZIPs</b> allowed.\n"
+                    f"Pehle process karo ya /cancelqueue se clear karo."
+                )
+                return
+            # ── Store message.id for correct sequence sorting ──
             sess["files"].append({
-                "file_id": media.file_id,
-                "file_name": fname,
-                "size": getattr(media, "file_size", 0) or 0,
-                "password": None,
+                "file_id":    media.file_id,
+                "file_name":  fname,
+                "size":       getattr(media, "file_size", 0) or 0,
+                "password":   sess.get("default_password"),
+                "msg_id":     message.id,   # ← sequence key
             })
             n = len(sess["files"])
             total_mb = sum(f["size"] for f in sess["files"]) / 1048576
+            remaining = MAX_QUEUE - n
             await message.reply_text(
-                f"📥 <b>ZIP #{n} Queue mein add hua!</b>\n"
+                f"✅ <b>ZIP #{n} added!</b>  (Slot {n}/{MAX_QUEUE})\n"
                 f"📄 <code>{fname}</code>\n"
-                f"📦 Queue: <b>{n} ZIPs</b> | 💾 {total_mb:.1f} MB\n\n"
-                f"Aur ZIPs bhejo, ya process karo ⬇️",
+                f"💾 Total: {total_mb:.1f} MB  |  🆓 Remaining slots: {remaining}\n\n"
+                f"Aur ZIPs bhejo ya process dabao ⬇️",
                 reply_markup=InlineKeyboardMarkup([
-                    [_btn(f"▶️ Process Karo {n} ZIPs", f"zq_start|{uid}", "success")],
-                    [_btn("🗑 Queue Cancel", f"zq_cancel|{uid}", "danger")],
+                    [_btn(f"▶️ Process All {n} ZIPs", f"zq_start|{uid}", "success")],
+                    [InlineKeyboardButton("📋 List", callback_data=f"zq_list|{uid}"),
+                     _btn("🗑 Cancel", f"zq_cancel|{uid}", "danger")],
                 ])
             )
             return
