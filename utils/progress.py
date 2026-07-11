@@ -1,7 +1,9 @@
 # utils/progress.py
+import asyncio
 import time
 from typing import Dict
 
+from pyrogram.errors import FloodWait, MessageNotModified
 from pyrogram.types import Message
 from config import Config
 
@@ -79,6 +81,10 @@ async def progress_for_pyrogram(
 
     try:
         await message.edit_text(text)
+    except MessageNotModified:
+        pass          # same content — ignore silently
+    except FloodWait as e:
+        await asyncio.sleep(min(e.value, 10))   # wait what Telegram says, max 10s
     except Exception:
         pass
 
