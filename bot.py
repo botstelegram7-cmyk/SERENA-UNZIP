@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pyrogram import Client, enums, filters, idle
-from pyrogram.errors import MessageNotModified
+from pyrogram.errors import FloodWait, MessageNotModified
 from pyrogram.types import (
     CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message,
 )
@@ -23,6 +23,33 @@ def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButt
     Pyrogram does not support button colors via style= parameter.
     Kept as API-compatible wrapper for future migration."""
     return InlineKeyboardButton(text, callback_data=callback_data)
+
+
+async def _safe_edit(msg, text: str, **kwargs):
+    """Edit silently — handles MessageNotModified + FloodWait."""
+    try:
+        await msg.edit_text(text, **kwargs)
+    except MessageNotModified:
+        pass
+    except FloodWait as e:
+        await asyncio.sleep(min(e.value, 15))
+        try: await msg.edit_text(text, **kwargs)
+        except Exception: pass
+    except Exception:
+        pass
+
+async def _safe_reply(msg, text: str, **kwargs):
+    """Reply with FloodWait retry."""
+    try:
+        return await msg.reply_text(text, **kwargs)
+    except FloodWait as e:
+        await asyncio.sleep(min(e.value, 15))
+        try: return await msg.reply_text(text, **kwargs)
+        except Exception: pass
+    except Exception:
+        pass
+    return None
+
 
 from config import Config
 from database import (
@@ -773,7 +800,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
         item_root.mkdir(parents=True, exist_ok=True)
         try:
             start_dl = time.time()
-            await st.edit_text(f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…")
+            await _safe_edit(st, f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…")
             dl = await client.download_media(
                 finfo["file_id"], file_name=str(item_root),
                 progress=progress_for_pyrogram,
@@ -781,7 +808,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
             )
             if not dl: raise RuntimeError("Download failed")
             if sess.get("cancelled"): break
-            await st.edit_text(f"🔓 <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
+            await _safe_edit(st, f"🔓 <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
             extract_dir = item_root / "extracted"
             result = extract_archive(dl, str(extract_dir), password=finfo.get("password"))
             rel_files = sorted(result["files"], key=str.lower)
@@ -826,7 +853,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                     await client.send_message(chat_id,
                         f"⚠️ <code>{Path(rel).name}</code>: {str(e)[:150]}",
                         reply_to_message_id=reply_to)
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.8)  # 0.8s gap prevents FloodWait
             try:
                 await st.edit_text(
                     f"✅ <b>[{i}/{total}]</b> Done: <code>{fname}</code>\n"
@@ -1001,7 +1028,7 @@ async def on_file(client, message):
 async def process_links_message(client, message, content):
     if not message.from_user: return
     links=find_links_in_text(content or "")
-    if not links: await message.reply_text("No valid URLs found."); return
+    if not links: await _safe_reply(message, "No valid URLs found."); return
     LINK_SESSIONS[(message.chat.id,message.id)]={"links":links,"content":content or ""}
     cats={}
     for u in links:
