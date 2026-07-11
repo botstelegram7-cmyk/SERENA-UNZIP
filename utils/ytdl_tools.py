@@ -176,7 +176,14 @@ def _is_instagram_url(url: str) -> bool:
 
 
 async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
-    """Download Instagram post — photos, carousel, reels, stories, highlights."""
+    """Download Instagram post — photos, carousel, reels, stories, highlights.
+
+    Priority order:
+    1. --write-thumbnail --skip-download  → gets actual photo without video error
+    2. JSON dump → CDN URL direct download → works for public carousels  
+    3. Normal yt-dlp download (for videos/reels)
+    4. Cookie-less retry
+    """
     url = _normalize_instagram_url(url)  # decode encoded highlight/story URLs
     """Original docstring:
     
@@ -189,14 +196,17 @@ async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
     """
     import json as _json, urllib.request as _req
     os.makedirs(output_dir, exist_ok=True)
-    media_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".mkv", ".m4v"}
-    out_tmpl = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
+    media_exts  = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".mkv", ".m4v"}
+    image_exts  = {".jpg", ".jpeg", ".png", ".webp"}
+    out_tmpl    = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
+    thumb_tmpl  = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
 
-    def _collect_files():
+    def _collect_files(exts=None):
         if not Path(output_dir).exists(): return []
+        check = exts or media_exts
         return sorted(
             [str(p) for p in Path(output_dir).iterdir()
-             if p.is_file() and p.suffix.lower() in media_exts],
+             if p.is_file() and p.suffix.lower() in check],
             key=os.path.getmtime
         )
 
@@ -239,6 +249,28 @@ async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
 
     last_err = ""
 
+    # ── Strategy 0: --write-thumbnail --skip-download → gets actual photo ──
+    # This avoids "There is no video in this post" completely
+    thumb_args = [
+        "--write-thumbnail", "--skip-download",
+        "--ignore-errors",
+        "--convert-thumbnails", "jpg",
+        "--output", out_tmpl,
+        "--no-warnings",
+    ]
+    cmd_t = _build_cmd(url, thumb_args, use_cookies=True, use_impersonation=True)
+    ret_t, _, _ = await _run(cmd_t, timeout=60)
+    if ret_t == 0:
+        files_t = _collect_files(image_exts)
+        if files_t: return files_t
+
+    # Try without cookies (public posts)
+    cmd_t = _build_cmd(url, thumb_args, use_cookies=False, use_impersonation=True)
+    ret_t, _, _ = await _run(cmd_t, timeout=60)
+    if ret_t == 0:
+        files_t = _collect_files(image_exts)
+        if files_t: return files_t
+
     # ── Strategy 1: Get JSON info → try direct image download (photo posts) ──
     info_args = ["--dump-single-json", "--yes-playlist", "--no-warnings", "--quiet"]
     cmd_info = _build_cmd(url, info_args, use_cookies=True, use_impersonation=True)
@@ -259,18 +291,34 @@ async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
         except Exception:
             pass
 
-    # ── Strategy 2: yt-dlp normal download with cookies ──
-    base_args = ["--output", out_tmpl, "--yes-playlist", "--no-warnings", "--quiet"]
+    # ── Strategy 2: yt-dlp with explicit video format + cookies ──
+    # For highlights: force video download with audio
+    is_highlight = "highlights" in url or "stories" in url
+    vid_fmt = (
+        # Highlights use HLS streams — force ffmpeg merge for audio+video
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best"
+        if is_highlight else "best"
+    )
+    base_args = [
+        "--format", vid_fmt,
+        "--merge-output-format", "mp4",
+        "--hls-prefer-ffmpeg",
+        "--output", out_tmpl,
+        "--yes-playlist", "--no-warnings", "--quiet",
+    ]
     cmd = _build_cmd(url, base_args, use_cookies=True, use_impersonation=True)
-    ret, _, err1 = await _run(cmd, timeout=180)
+    ret, _, err1 = await _run(cmd, timeout=300)
     last_err = err1
     if ret == 0:
         files = _collect_files()
-        if files: return files
+        # Verify downloaded files are actual videos (not blank thumbnails)
+        video_files = [f for f in files if Path(f).suffix.lower() in {".mp4",".mov",".mkv",".m4v"}]
+        if video_files: return video_files
+        if files: return files   # photos/images also OK
 
-    # ── Strategy 3: yt-dlp without cookies ──
+    # ── Strategy 3: yt-dlp without cookies (public posts) ──
     cmd = _build_cmd(url, base_args, use_cookies=False, use_impersonation=True)
-    ret, _, err1 = await _run(cmd, timeout=180)
+    ret, _, err1 = await _run(cmd, timeout=300)
     if err1: last_err = err1
     if ret == 0:
         files = _collect_files()
