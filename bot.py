@@ -25,6 +25,30 @@ def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButt
     return InlineKeyboardButton(text, callback_data=callback_data)
 
 
+
+# ── Group permission helpers ──────────────────────────────────────────────────
+
+async def _is_group_admin(client, chat_id: int, user_id: int) -> bool:
+    """True if user is bot owner, group owner, or group admin."""
+    if user_id == Config.OWNER_ID:
+        return True
+    try:
+        m = await client.get_chat_member(chat_id, user_id)
+        return m.status in (
+            enums.ChatMemberStatus.OWNER,
+            enums.ChatMemberStatus.ADMINISTRATOR,
+        )
+    except Exception:
+        return False
+
+
+async def _is_authorized(client, chat_id: int, user_id: int) -> bool:
+    """True if user is admin OR owner has authorized them via /authorize."""
+    if await _is_group_admin(client, chat_id, user_id):
+        return True
+    return await is_group_authorized(chat_id, user_id)
+
+
 async def _safe_edit(msg, text: str, **kwargs):
     """Edit silently — handles MessageNotModified + FloodWait."""
     try:
@@ -53,8 +77,11 @@ async def _safe_reply(msg, text: str, **kwargs):
 
 from config import Config
 from database import (
-    count_users, get_all_users, get_or_create_user, get_premium_until,
-    get_referral_count, get_user_settings, has_been_referred, is_banned,
+    authorize_group_user, count_users, delete_queue_state, deauth_group_user,
+    get_all_paused_queues, get_all_users, get_or_create_user, get_premium_until,
+    get_queue_state, get_referral_count, get_user_settings, has_been_referred,
+    is_banned, is_group_authorized, mark_queue_file_done, save_queue_state,
+    update_queue_progress,
     register_referral, register_temp_path, save_user_settings, set_ban,
     set_premium, update_user_stats,
 )
@@ -565,6 +592,10 @@ async def file_command_handler(client, message):
     if not message.from_user: return
     uid=message.from_user.id
     if await is_banned(uid): return
+    # Groups mein sirf admins + owner-authorized users ka command chalega
+    if message.chat and message.chat.type != enums.ChatType.PRIVATE:
+        if not await _is_authorized(client, message.chat.id, uid):
+            return
     cmd=message.command[0].lower()
     r=message.reply_to_message
     media=None
@@ -684,6 +715,10 @@ async def zipqueue_cmd(client, message):
     if not await check_force_sub(client, message): return
     await get_or_create_user(uid)
     in_group = message.chat.type != enums.ChatType.PRIVATE
+    # Groups mein sirf admins + authorized users
+    if in_group:
+        if not await _is_authorized(client, message.chat.id, uid):
+            return
 
     if uid in ZIP_QUEUE_SESSIONS and not ZIP_QUEUE_SESSIONS[uid].get("processing"):
         sess = ZIP_QUEUE_SESSIONS[uid]
@@ -774,10 +809,19 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     sess = ZIP_QUEUE_SESSIONS.get(uid)
     if not sess or not sess["files"]: return
     USER_TASKS[uid] = asyncio.current_task()
-    # ── Sort by message ID → guarantees exact order user sent files ──
     sorted_files = sorted(sess["files"], key=lambda f: f.get("msg_id", 0))
     total = len(sorted_files)
+    # Mark each file as pending for resume tracking
+    for f in sorted_files:
+        f.setdefault("status", "pending")
     ok = fail = 0
+    # ── Save initial state to DB (enables /continue after bot restart) ──
+    await save_queue_state(uid, {
+        "uid": uid, "chat_id": chat_id, "reply_to": reply_to,
+        "thread_id": thread_id, "files": sorted_files,
+        "current_index": 0, "ok": 0, "fail": 0, "status": "paused",
+        "started_at": __import__("datetime").datetime.utcnow().isoformat(),
+    })
     header = await client.send_message(
         chat_id,
         f"🚀 <b>ZIP Queue Processing Start!</b>\n📦 Total: <b>{total}</b> ZIPs\n"
@@ -898,7 +942,9 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 try: await st.delete()   # ← delete status message after done
                 except: pass
             except: pass
+            await mark_queue_file_done(uid, i-1, "done")
             ok += 1
+            await update_queue_progress(uid, i, ok, fail)
             # ── Send GIF after EVERY successfully extracted ZIP ──
             if Config.QUEUE_END_GIF:
                 try:
@@ -930,7 +976,9 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 f"❌ <b>[{i}/{total}]</b> Failed: <code>{fname}</code>\n"
                 f"<code>{str(e)[:250]}</code>")
             except: pass
+            await mark_queue_file_done(uid, i-1, "failed")
             fail += 1
+            await update_queue_progress(uid, i, ok, fail)
         finally:
             # ✅ Cache delete immediately after each ZIP
             import shutil as _sh
@@ -939,6 +987,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     USER_TASKS.pop(uid, None)
     cancelled = sess.get("cancelled", False)
     ZIP_QUEUE_SESSIONS.pop(uid, None)
+    await delete_queue_state(uid)   # cleanup DB after successful completion
     try:
         if cancelled:
             await header.edit_text(
@@ -969,6 +1018,117 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 except Exception:
                     pass
     except: pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# QUEUE RESUME + GROUP AUTH COMMANDS (Owner only)
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.on_message(filters.command(["continue","resume"]))
+async def continue_cmd(client, message):
+    """Owner: resume a paused ZIP queue after bot restart/failure."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    if uid != Config.OWNER_ID:
+        await message.reply_text("❌ Sirf owner use kar sakta hai."); return
+
+    state = await get_queue_state(uid)
+    if not state:
+        # Check if any queue is paused (for any user)
+        all_paused = await get_all_paused_queues()
+        if not all_paused:
+            await message.reply_text("✅ Koi paused queue nahi mili. Sab theek hai!"); return
+        # Show paused queues
+        lines = ["⏸ <b>Paused Queues:</b>\n"]
+        for s in all_paused[:5]:
+            n_done = s.get("ok", 0) + s.get("fail", 0)
+            n_total = len(s.get("files", []))
+            lines.append(f"• User <code>{s.get('uid')}</code> — {n_done}/{n_total} done")
+        await message.reply_text("\n".join(lines)); return
+
+    files   = state.get("files", [])
+    start_i = state.get("current_index", 0)
+    ok      = state.get("ok", 0)
+    fail    = state.get("fail", 0)
+    chat_id = state.get("chat_id", message.chat.id)
+    reply_to= state.get("reply_to", message.id)
+    thread_id = state.get("thread_id")
+    pending = [f for f in files[start_i:] if f.get("status") != "done"]
+
+    if not pending:
+        await delete_queue_state(uid)
+        await message.reply_text("✅ Queue already complete thi — state clean kar di."); return
+
+    await message.reply_text(
+        f"▶️ <b>Resuming Queue!</b>\n\n"
+        f"📦 Total files: {len(files)}\n"
+        f"✅ Already done: {ok}\n"
+        f"⏳ Remaining: {len(pending)}\n\n"
+        f"Processing shuru ho raha hai…"
+    )
+
+    # Rebuild session and resume
+    ZIP_QUEUE_SESSIONS[uid] = {
+        "files": files, "chat_id": chat_id, "reply_to": reply_to,
+        "thread_id": thread_id, "cancelled": False, "processing": True,
+        "default_password": state.get("default_password"), "created_at": time.time(),
+    }
+    task = asyncio.create_task(
+        _process_zip_queue(client, uid, chat_id, reply_to, thread_id=thread_id)
+    )
+    USER_TASKS[uid] = task
+
+
+@app.on_message(filters.command(["authorize","auth"]))
+async def authorize_cmd(client, message):
+    """Owner: authorize a user to use bot commands in a group."""
+    if not message.from_user: return
+    if message.from_user.id != Config.OWNER_ID:
+        return
+    args = message.command[1:]
+    if not args:
+        await message.reply_text(
+            "❌ Usage: <code>/authorize @username</code> or reply to user's message"
+        ); return
+    # Get target user
+    target = None
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+    else:
+        try:
+            target = await client.get_users(args[0].lstrip("@"))
+        except Exception:
+            await message.reply_text("❌ User nahi mila."); return
+    if not target: return
+    await authorize_group_user(message.chat.id, target.id)
+    await message.reply_text(
+        f"✅ <b>{target.first_name}</b> (<code>{target.id}</code>) ko "
+        f"is group mein authorize kar diya!\n"
+        f"Ab ye bot commands use kar sakta hai."
+    )
+
+
+@app.on_message(filters.command(["deauthorize","deauth","unauth"]))
+async def deauth_cmd(client, message):
+    """Owner: remove a user's authorization in a group."""
+    if not message.from_user: return
+    if message.from_user.id != Config.OWNER_ID:
+        return
+    target = None
+    args = message.command[1:]
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+    elif args:
+        try:
+            target = await client.get_users(args[0].lstrip("@"))
+        except Exception:
+            await message.reply_text("❌ User nahi mila."); return
+    if not target: return
+    await deauth_group_user(message.chat.id, target.id)
+    await message.reply_text(
+        f"🚫 <b>{target.first_name}</b> ki authorization hata di."
+    )
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # FILE HANDLER
