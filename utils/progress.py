@@ -120,30 +120,31 @@ async def progress_for_pyrogram(
     actual_total = total if total > 0 else known_total
 
     if actual_total > 0:
-        percent = min((current * 100 / actual_total), 100.0)
-        filled  = int(20 * percent / 100)
-        bar     = "█" * filled + "░" * (20 - filled)
+        percent   = min((current * 100 / actual_total), 100.0)
+        filled    = int(20 * percent / 100)
+        bar       = "●" * filled + "○" * (20 - filled)   # dots style
         remaining = actual_total - current
-        eta     = int(remaining / speed) if speed > 0 else 0
-        size_str = f"{human_bytes(current)} / {human_bytes(actual_total)}"
-        pct_str  = f"{percent:.1f}%"
-        eta_str  = human_time(eta)
+        eta       = int(remaining / speed) if speed > 0 else 0
+        size_str  = f"{human_bytes(current)} of {human_bytes(actual_total)}"
+        pct_str   = f"{percent:.1f}%"
+        eta_str   = human_time(eta)
     else:
-        # Total unknown — show indeterminate bar
-        spinner  = ["▱▱▱▱▱", "█▱▱▱▱", "██▱▱▱", "███▱▱", "████▱", "█████"][int(now * 2) % 6]
-        bar      = spinner * 4
+        # Total unknown — empty dots indeterminate bar
+        bar      = "○" * 20
         pct_str  = "..."
-        size_str = f"{human_bytes(current)} (size unknown)"
+        size_str = human_bytes(current)
         eta_str  = "calculating..."
 
+    icon = "📥" if "down" in direction.lower() else "📤"
     text = (
-        f"{'📥' if 'down' in direction.lower() else '📤'} <b>{direction}</b>\n\n"
+        f"{icon} <b>{direction}</b>\n\n"
         f"📄 <code>{file_name}</code>\n"
-        f"[{bar}] <b>{pct_str}</b>\n\n"
-        f"📦 Size   : <code>{size_str}</code>\n"
-        f"🚀 Speed  : <code>{human_bytes(int(speed))}/s</code>\n"
-        f"⏳ ETA    : <code>{eta_str}</code>\n"
-        f"🌐 Network: {_network_quality(speed)}"
+        f" [{bar}] \n"
+        f"◌ Progress 😉 : 〘 {pct_str} 〙\n"
+        f"✅ Done       : 〘 {size_str} 〙\n"
+        f"🚀 Speed      : 〘 {human_bytes(int(speed))}/s 〙\n"
+        f"⏳ ETA        : 〘 {eta_str} 〙\n"
+        f"📶 Network    : {_network_quality(speed)}"
     )
 
     await _safe_edit_msg(message, text)
