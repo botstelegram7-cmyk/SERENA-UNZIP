@@ -905,14 +905,17 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     gif = Config.QUEUE_END_GIF.strip()
                     if gif.startswith("http"):
                         await client.send_animation(chat_id, gif,
-                            reply_to_message_id=reply_to)
+                            reply_to_message_id=reply_to,
+                            message_thread_id=thread_id)
                     else:
                         try:
                             await client.send_sticker(chat_id, gif,
-                                reply_to_message_id=reply_to)
+                                reply_to_message_id=reply_to,
+                                message_thread_id=thread_id)
                         except Exception:
                             await client.send_animation(chat_id, gif,
-                                reply_to_message_id=reply_to)
+                                reply_to_message_id=reply_to,
+                                message_thread_id=thread_id)
                 except Exception:
                     pass
             # Delete per-ZIP status message to keep chat clean
@@ -972,35 +975,22 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
 # ════════════════════════════════════════════════════════════════════════════
 @app.on_message((filters.document|filters.video|filters.photo|filters.audio) )
 async def on_file(client, message):
+    # ══ STEP 0: Group/Channel filter — runs BEFORE everything else ══
+    # Private nahi hai → sirf ZIP queue allowed, BAAKI SACH MEIN KUCH NAHI
+    if message.chat and message.chat.type != enums.ChatType.PRIVATE:
+        uid_g  = getattr(message.from_user, "id", 0) if message.from_user else 0
+        doc_g  = message.document                          # None for video/photo/audio
+        fname_g = getattr(doc_g, "file_name", "") or ""   # "" if no document
+        in_q   = (
+            uid_g in ZIP_QUEUE_SESSIONS
+            and not ZIP_QUEUE_SESSIONS.get(uid_g, {}).get("processing")
+        )
+        # Allow ONLY: active queue + ZIP archive document
+        if doc_g is None or not is_archive_file(fname_g) or not in_q:
+            return   # silently ignore — no reply, no buttons, nothing
+    # ══ Private chat: normal processing below ══
     if not message.from_user: return
     uid=message.from_user.id
-
-    # ── GROUP FILTER: groups mein sirf ZIP queue wali files process hongi ──
-    # Baaki sab (photos, videos, random docs) ignore — kachra nahi badhega
-    # Private DM mein normal kaam karta hai
-    is_group = message.chat and message.chat.type in (
-        enums.ChatType.GROUP, enums.ChatType.SUPERGROUP
-    )
-    if is_group:
-        # ── STRICT GROUP RULE ──
-        # Groups mein on_file handler KUCH NAHI karta automatically
-        # EXCEPTIONS:
-        #   ✅ /zq queue active hai + ZIP file hai → queue mein add karo
-        #   ✅ Explicit command (/unzip, /compress etc) → alag handler handle karta hai
-        # IGNORE:
-        #   ❌ Photos, videos, audio → silently ignore
-        #   ❌ ZIPs without active queue → silently ignore
-        #   ❌ Any document without queue → silently ignore
-        doc = message.document
-        if doc is None:
-            return   # photo/video/audio — completely ignore in groups
-        fname_check = getattr(doc, "file_name", "") or ""
-        in_queue = (
-            uid in ZIP_QUEUE_SESSIONS
-            and not ZIP_QUEUE_SESSIONS[uid].get("processing")
-        )
-        if not (in_queue and is_archive_file(fname_check)):
-            return   # ZIP without queue, or non-archive doc — silently ignore
 
     if await is_banned(uid): return
     if not await check_force_sub(client,message): return
