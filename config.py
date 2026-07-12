@@ -60,7 +60,8 @@ class Config:
     # Set QUEUE_END_GIF in Render env:
     #   • Giphy MP4 URL  → sends as animation
     #   • Telegram sticker file_id → sends as sticker
-    QUEUE_END_GIF = os.getenv("QUEUE_END_GIF", "")
+    QUEUE_END_GIF  = os.getenv("QUEUE_END_GIF", "")   # GIF after each ZIP done
+    PROGRESS_GIF  = os.getenv("PROGRESS_GIF", "")    # GIF shown during download/upload progress
 
     REFERRAL_REQUIRED    = int(os.getenv("REFERRAL_REQUIRED", "5"))
     REFERRAL_REWARD_DAYS = int(os.getenv("REFERRAL_REWARD_DAYS", "7"))
