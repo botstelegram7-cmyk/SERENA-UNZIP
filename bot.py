@@ -75,7 +75,7 @@ from utils.pdf_tools import (
     extract_text_from_pdf, get_pdf_info, merge_pdfs,
     parse_page_ranges, split_pdf, split_pdf_by_range,
 )
-from utils.progress import human_bytes, progress_for_pyrogram
+from utils.progress import human_bytes, human_time, make_progress_message, progress_for_pyrogram
 from utils.ytdl_tools import download_video as ytdl_download, get_formats, is_supported_url, _download_instagram_photos, _is_instagram_url
 from utils.zip_creator import create_archive
 
@@ -703,12 +703,13 @@ async def zipqueue_cmd(client, message):
 
     ZIP_QUEUE_SESSIONS[uid] = {
         "files": [],
-        "chat_id": message.chat.id,
-        "reply_to": message.id,
-        "cancelled": False,
-        "processing": False,
-        "default_password": None,   # optional global password for all ZIPs
-        "created_at": time.time(),
+        "chat_id":         message.chat.id,
+        "reply_to":        message.id,
+        "thread_id":       message.message_thread_id,   # ← Topic/Thread ID fix
+        "cancelled":       False,
+        "processing":      False,
+        "default_password": None,
+        "created_at":      time.time(),
     }
     group_note = (
         "\n\n📌 <b>Group Note:</b> Bot ko group mein files milti hain tabhi jab "
@@ -768,7 +769,7 @@ async def cancelqueue_cmd(client, message):
     )
 
 
-async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
+async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thread_id: int = None):
     """Process all queued ZIPs sequentially. Cache delete after each ZIP."""
     sess = ZIP_QUEUE_SESSIONS.get(uid)
     if not sess or not sess["files"]: return
@@ -781,7 +782,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
         chat_id,
         f"🚀 <b>ZIP Queue Processing Start!</b>\n📦 Total: <b>{total}</b> ZIPs\n"
         f"📋 Sequence: sorted by send order ✅",
-        reply_to_message_id=reply_to
+        reply_to_message_id=reply_to,
+        message_thread_id=thread_id,
     )
     # ── Delete old queue notification message (reply_to) to keep chat clean ──
     try:
@@ -828,18 +830,33 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                         thumb = await choose_thumbnail(uid, str(full))
                         cap = await build_caption(uid, Path(rel).name)
                         start_up = time.time()
-                        await st.edit_text(f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…")
+                        up_sz = full.stat().st_size
+                        up_st = await make_progress_message(
+                            client, chat_id, reply_to,
+                            f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…",
+                            thread_id=thread_id,
+                        )
+                        async def _up_v_prog(cur, tot,
+                                             _m=up_st, _sd=start_up,
+                                             _fn=Path(rel).name, _ksz=up_sz):
+                            await progress_for_pyrogram(cur, tot, _m, _sd, _fn,
+                                direction="Uploading", known_total=_ksz)
                         await client.send_video(chat_id, str(full), caption=cap,
                             thumb=thumb, duration=dur,
-                            progress=progress_for_pyrogram,
-                            progress_args=(st, start_up, Path(rel).name, "Uploading"),
-                            reply_to_message_id=reply_to)
+                            progress=_up_v_prog,
+                            reply_to_message_id=reply_to,
+                            message_thread_id=thread_id)
+                        if up_st:
+                            try: await up_st.delete()
+                            except: pass
                     elif is_image_file(rel):
                         await client.send_photo(chat_id, str(full),
-                            caption=Path(rel).name, reply_to_message_id=reply_to)
+                            caption=Path(rel).name, reply_to_message_id=reply_to,
+                            message_thread_id=thread_id)
                     elif is_audio_file(rel):
                         await client.send_audio(chat_id, str(full),
-                            caption=Path(rel).name, reply_to_message_id=reply_to)
+                            caption=Path(rel).name, reply_to_message_id=reply_to,
+                            message_thread_id=thread_id)
                     else:
                         start_up = time.time()
                         await st.edit_text(f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…")
@@ -852,7 +869,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int):
                 except Exception as e:
                     await client.send_message(chat_id,
                         f"⚠️ <code>{Path(rel).name}</code>: {str(e)[:150]}",
-                        reply_to_message_id=reply_to)
+                        reply_to_message_id=reply_to,
+                        message_thread_id=thread_id)
                 await asyncio.sleep(0.8)  # 0.8s gap prevents FloodWait
             try:
                 await st.edit_text(
@@ -1425,8 +1443,9 @@ async def callbacks(client, cq: CallbackQuery):
         )
         except: pass
         await cq.answer("Queue start ho gayi!")
+        sess_thread = sess.get("thread_id")
         task = asyncio.create_task(
-            _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id)
+            _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id, thread_id=sess_thread)
         )
         USER_TASKS[uid] = task
         return
@@ -1577,14 +1596,16 @@ async def handle_send_all(client, cq, tid):
                 start_u=time.time()
                 dur=await _get_video_duration(str(full))
                 sent=await client.send_video(chat_id,str(full),caption=cap,thumb=thumb,duration=dur,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),reply_to_message_id=reply_to)
+                    progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),
+                    reply_to_message_id=reply_to,message_thread_id=thread_id)
                 try: await st.delete()
                 except: pass
             else:
-                st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to)
+                st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,message_thread_id=thread_id)
                 start_u=time.time()
                 sent=await client.send_document(chat_id,str(full),caption=rel,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),reply_to_message_id=reply_to)
+                    progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),
+                    reply_to_message_id=reply_to,message_thread_id=thread_id)
                 try: await st.delete()
                 except: pass
             try: await log_output(client,user,sent,f"send_all {info.get('archive_name','?')}")
