@@ -982,18 +982,25 @@ async def on_file(client, message):
         enums.ChatType.GROUP, enums.ChatType.SUPERGROUP
     )
     if is_group:
-        # Groups mein SIRF /zq queue ke liye ZIP files accept karo
-        # Baki sab (photos, videos, docs, audio) IGNORE — reply nahi karo
-        # /unzip /compress etc commands reply_to se kaam karte hain (alag handler)
-        media_check = message.document  # only documents, not video/photo/audio
-        fname_check = getattr(media_check, "file_name", "") or ""
+        # ── STRICT GROUP RULE ──
+        # Groups mein on_file handler KUCH NAHI karta automatically
+        # EXCEPTIONS:
+        #   ✅ /zq queue active hai + ZIP file hai → queue mein add karo
+        #   ✅ Explicit command (/unzip, /compress etc) → alag handler handle karta hai
+        # IGNORE:
+        #   ❌ Photos, videos, audio → silently ignore
+        #   ❌ ZIPs without active queue → silently ignore
+        #   ❌ Any document without queue → silently ignore
+        doc = message.document
+        if doc is None:
+            return   # photo/video/audio — completely ignore in groups
+        fname_check = getattr(doc, "file_name", "") or ""
         in_queue = (
             uid in ZIP_QUEUE_SESSIONS
             and not ZIP_QUEUE_SESSIONS[uid].get("processing")
         )
-        # Only continue if: ZIP queue active + file is archive
         if not (in_queue and is_archive_file(fname_check)):
-            return  # ← silently ignore everything else in groups
+            return   # ZIP without queue, or non-archive doc — silently ignore
 
     if await is_banned(uid): return
     if not await check_force_sub(client,message): return
