@@ -802,11 +802,29 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
         item_root.mkdir(parents=True, exist_ok=True)
         try:
             start_dl = time.time()
-            await _safe_edit(st, f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…")
+            known_sz  = finfo.get("size", 0)
+            # Replace plain st with GIF progress message if PROGRESS_GIF set
+            try:
+                st2 = await make_progress_message(
+                    client, chat_id, header.id,
+                    f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
+                    thread_id=thread_id,
+                )
+                if st2:
+                    try: await st.delete()
+                    except: pass
+                    st = st2
+            except Exception:
+                pass
+            # Mutable tracker: real total from Telegram when > 0, else finfo size
+            _rtotal = [known_sz]
+            async def _dlp(cur, tgt, _s=st, _sd=start_dl, _fn=fname):
+                if tgt > 0: _rtotal[0] = tgt
+                await progress_for_pyrogram(cur, _rtotal[0], _s, _sd, _fn,
+                    direction="Downloading", known_total=_rtotal[0])
             dl = await client.download_media(
                 finfo["file_id"], file_name=str(item_root),
-                progress=progress_for_pyrogram,
-                progress_args=(st, start_dl, fname, "Downloading")
+                progress=_dlp,
             )
             if not dl: raise RuntimeError("Download failed")
             if sess.get("cancelled"): break
@@ -964,12 +982,18 @@ async def on_file(client, message):
         enums.ChatType.GROUP, enums.ChatType.SUPERGROUP
     )
     if is_group:
-        # Only allow if ZIP queue is active for this user AND file is a ZIP
-        media_check = message.document or message.video
-        fname_check = (media_check.file_name or "") if media_check else ""
-        in_queue = uid in ZIP_QUEUE_SESSIONS and not ZIP_QUEUE_SESSIONS[uid].get("processing")
+        # Groups mein SIRF /zq queue ke liye ZIP files accept karo
+        # Baki sab (photos, videos, docs, audio) IGNORE — reply nahi karo
+        # /unzip /compress etc commands reply_to se kaam karte hain (alag handler)
+        media_check = message.document  # only documents, not video/photo/audio
+        fname_check = getattr(media_check, "file_name", "") or ""
+        in_queue = (
+            uid in ZIP_QUEUE_SESSIONS
+            and not ZIP_QUEUE_SESSIONS[uid].get("processing")
+        )
+        # Only continue if: ZIP queue active + file is archive
         if not (in_queue and is_archive_file(fname_check)):
-            return  # ← group mein command ke bina kuch nahi hoga
+            return  # ← silently ignore everything else in groups
 
     if await is_banned(uid): return
     if not await check_force_sub(client,message): return
@@ -1061,7 +1085,11 @@ async def on_file(client, message):
 async def process_links_message(client, message, content):
     if not message.from_user: return
     links=find_links_in_text(content or "")
-    if not links: await _safe_reply(message, "No valid URLs found."); return
+    # In groups — silently ignore non-URL messages (no kachra)
+    if not links:
+        if message.chat and message.chat.type not in (enums.ChatType.PRIVATE,):
+            return
+        await _safe_reply(message, "No valid URLs found."); return
     LINK_SESSIONS[(message.chat.id,message.id)]={"links":links,"content":content or ""}
     cats={}
     for u in links:
