@@ -113,6 +113,7 @@ app = Client(
     api_hash=Config.API_HASH,
     bot_token=Config.BOT_TOKEN,
     in_memory=True,
+    sleep_threshold=60,   # ← auto-sleep on FloodWait ≤60s (no crash)
 )
 
 VIDEO_EXT_SET = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts"}
@@ -1031,13 +1032,13 @@ async def continue_cmd(client, message):
     if not message.from_user: return
     uid = message.from_user.id
     if uid not in Config.OWNER_IDS:
-        await message.reply_text("❌ Sirf owner use kar sakta hai."); return
+        await _safe_reply(message, "❌ Sirf owner use kar sakta hai."); return
 
     state = await get_queue_state(uid)
     if not state:
         all_paused = await get_all_paused_queues()
         if not all_paused:
-            await message.reply_text(
+            await _safe_reply(message,
                 "✅ <b>Koi paused queue nahi hai!</b>\n\n"
                 "Bot theek chal raha hai — koi task interrupt nahi hua.\n"
                 "Naya queue start karne ke liye /zq use karo."
@@ -1048,7 +1049,7 @@ async def continue_cmd(client, message):
             n_done = s.get("ok", 0) + s.get("fail", 0)
             n_total = len(s.get("files", []))
             lines.append(f"• User <code>{s.get('uid')}</code> — {n_done}/{n_total} done")
-        await message.reply_text("\n".join(lines)); return
+        await _safe_reply(message, "\n".join(lines)); return
 
     files   = state.get("files", [])
     start_i = state.get("current_index", 0)
@@ -1061,9 +1062,9 @@ async def continue_cmd(client, message):
 
     if not pending:
         await delete_queue_state(uid)
-        await message.reply_text("✅ Queue already complete thi — state clean kar di."); return
+        await _safe_reply(message, "✅ Queue already complete thi — state clean kar di."); return
 
-    await message.reply_text(
+    await _safe_reply(message,
         f"▶️ <b>Resuming Queue!</b>\n\n"
         f"📦 Total files: {len(files)}\n"
         f"✅ Already done: {ok}\n"
@@ -1421,7 +1422,8 @@ async def on_file(client, message):
             n = len(sess["files"])
             total_mb = sum(f["size"] for f in sess["files"]) / 1048576
             remaining = MAX_QUEUE - n
-            await message.reply_text(
+            await _safe_reply(
+                message,
                 f"✅ <b>ZIP #{n} added!</b>  (Slot {n}/{MAX_QUEUE})\n"
                 f"📄 <code>{fname}</code>\n"
                 f"💾 Total: {total_mb:.1f} MB  |  🆓 Remaining slots: {remaining}\n\n"
