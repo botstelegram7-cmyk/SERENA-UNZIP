@@ -279,3 +279,122 @@ async def get_expired_temp_paths(now: Optional[datetime.datetime] = None):
         if remove_ids:
             await _safe_db(files_col.delete_many({"_id": {"$in": remove_ids}}))
     return list({p for p in expired if p})
+
+
+# ── Queue State Persistence (for /continue after bot restart) ────────────────
+if USE_DB:
+    queue_state_col = db["queue_states"]
+    group_auth_col  = db["group_auth"]
+else:
+    queue_state_col = group_auth_col = None
+
+_mem_queue_states: Dict[int, Dict[str, Any]] = {}   # uid → queue state
+_mem_group_auth: Dict[str, bool] = {}               # "chat_id:user_id" → True
+
+
+async def save_queue_state(uid: int, state: Dict[str, Any]):
+    """Save full queue state — called at queue start and after each ZIP."""
+    state["uid"] = uid
+    _mem_queue_states[uid] = state
+    if USE_DB:
+        await _safe_db(queue_state_col.update_one(
+            {"uid": uid}, {"$set": state}, upsert=True
+        ))
+
+
+async def get_queue_state(uid: int) -> Optional[Dict[str, Any]]:
+    """Load saved queue state for a user."""
+    if uid in _mem_queue_states:
+        return _mem_queue_states[uid]
+    if USE_DB:
+        doc = await _safe_db(queue_state_col.find_one({"uid": uid}))
+        if doc:
+            doc.pop("_id", None)
+            _mem_queue_states[uid] = doc
+            return doc
+    return None
+
+
+async def update_queue_progress(uid: int, current_index: int, ok: int, fail: int):
+    """Update progress counters — called after each ZIP."""
+    state = _mem_queue_states.get(uid, {})
+    state.update({"current_index": current_index, "ok": ok, "fail": fail,
+                  "status": "paused", "paused_at": datetime.datetime.utcnow().isoformat()})
+    _mem_queue_states[uid] = state
+    if USE_DB:
+        await _safe_db(queue_state_col.update_one(
+            {"uid": uid},
+            {"$set": {"current_index": current_index, "ok": ok, "fail": fail,
+                      "status": "paused", "paused_at": datetime.datetime.utcnow().isoformat()}},
+            upsert=True,
+        ))
+
+
+async def mark_queue_file_done(uid: int, index: int, status: str = "done"):
+    """Mark individual file as done/failed."""
+    state = _mem_queue_states.get(uid, {})
+    files = state.get("files", [])
+    if 0 <= index < len(files):
+        files[index]["status"] = status
+    state["files"] = files
+    _mem_queue_states[uid] = state
+    if USE_DB:
+        await _safe_db(queue_state_col.update_one(
+            {"uid": uid},
+            {"$set": {f"files.{index}.status": status}},
+        ))
+
+
+async def delete_queue_state(uid: int):
+    """Remove queue state after successful completion."""
+    _mem_queue_states.pop(uid, None)
+    if USE_DB:
+        await _safe_db(queue_state_col.delete_one({"uid": uid}))
+
+
+async def get_all_paused_queues() -> List[Dict[str, Any]]:
+    """Get all unfinished queues (for /continue info to owner)."""
+    if USE_DB:
+        result = []
+        cursor = await _safe_db(queue_state_col.find({"status": "paused"}))
+        if cursor:
+            async for doc in cursor:
+                doc.pop("_id", None)
+                result.append(doc)
+        return result
+    return [s for s in _mem_queue_states.values() if s.get("status") == "paused"]
+
+
+# ── Group Authorization (owner can authorize non-admin users) ─────────────────
+
+async def authorize_group_user(chat_id: int, user_id: int):
+    key = f"{chat_id}:{user_id}"
+    _mem_group_auth[key] = True
+    if USE_DB:
+        await _safe_db(group_auth_col.update_one(
+            {"chat_id": chat_id, "user_id": user_id},
+            {"$set": {"chat_id": chat_id, "user_id": user_id, "authorized": True,
+                      "authorized_at": datetime.datetime.utcnow().isoformat()}},
+            upsert=True,
+        ))
+
+
+async def deauth_group_user(chat_id: int, user_id: int):
+    key = f"{chat_id}:{user_id}"
+    _mem_group_auth.pop(key, None)
+    if USE_DB:
+        await _safe_db(group_auth_col.delete_one({"chat_id": chat_id, "user_id": user_id}))
+
+
+async def is_group_authorized(chat_id: int, user_id: int) -> bool:
+    key = f"{chat_id}:{user_id}"
+    if key in _mem_group_auth:
+        return _mem_group_auth[key]
+    if USE_DB:
+        doc = await _safe_db(group_auth_col.find_one(
+            {"chat_id": chat_id, "user_id": user_id}
+        ))
+        if doc:
+            _mem_group_auth[key] = True
+            return True
+    return False

@@ -142,6 +142,7 @@ SUB_TASKS:      Dict[str,Dict[str,Any]]   = {}
 PDF_TASKS:      Dict[str,Dict[str,Any]]   = {}
 BIG_FILE_TASKS: Dict[str,Dict[str,Any]]   = {}
 pending_password: Dict[int,Dict[str,Any]] = {}
+GROUP_ACCESS_ENABLED: bool = True   # Admin can toggle via /groupaccess command
 pending_state:    Dict[int,Dict[str,Any]] = {}
 user_cancelled:   Dict[int,bool]          = {}
 zip_sessions:     Dict[int,Dict[str,Any]] = {}
@@ -1029,15 +1030,18 @@ async def continue_cmd(client, message):
     """Owner: resume a paused ZIP queue after bot restart/failure."""
     if not message.from_user: return
     uid = message.from_user.id
-    if uid != Config.OWNER_ID:
+    if uid != int(Config.OWNER_ID):
         await message.reply_text("❌ Sirf owner use kar sakta hai."); return
 
     state = await get_queue_state(uid)
     if not state:
-        # Check if any queue is paused (for any user)
         all_paused = await get_all_paused_queues()
         if not all_paused:
-            await message.reply_text("✅ Koi paused queue nahi mili. Sab theek hai!"); return
+            await message.reply_text(
+                "✅ <b>Koi paused queue nahi hai!</b>\n\n"
+                "Bot theek chal raha hai — koi task interrupt nahi hua.\n"
+                "Naya queue start karne ke liye /zq use karo."
+            ); return
         # Show paused queues
         lines = ["⏸ <b>Paused Queues:</b>\n"]
         for s in all_paused[:5]:
@@ -1127,6 +1131,81 @@ async def deauth_cmd(client, message):
     await deauth_group_user(message.chat.id, target.id)
     await message.reply_text(
         f"🚫 <b>{target.first_name}</b> ki authorization hata di."
+    )
+
+
+
+@app.on_message(filters.command(["groupaccess","gaccess"]))
+async def groupaccess_cmd(client, message):
+    """Owner: toggle group access ON/OFF for regular users."""
+    global GROUP_ACCESS_ENABLED
+    if not message.from_user or message.from_user.id != int(Config.OWNER_ID): return
+    GROUP_ACCESS_ENABLED = not GROUP_ACCESS_ENABLED
+    status = "✅ ON" if GROUP_ACCESS_ENABLED else "❌ OFF"
+    await message.reply_text(
+        f"🔐 <b>Group Access: {status}</b>\n\n"
+        + (
+            "Sabhi users ab groups mein bot commands use kar sakte hain."
+            if GROUP_ACCESS_ENABLED else
+            "Regular users groups mein bot use nahi kar sakte.\n"
+            "Sirf admins + /authorize wale users kaam kar sakte hain."
+        )
+    )
+
+
+@app.on_message(filters.command(["authhelp","permissions"]))
+async def authhelp_cmd(client, message):
+    """Show authorization system help."""
+    if not message.from_user: return
+    await message.reply_text(
+        "🔐 <b>Bot Permission System</b>\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📋 <b>Default Behavior</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "• DM: <b>Sabhi users</b> bot use kar sakte hain\n"
+        "• Groups: <b>Sabhi users</b> bot use kar sakte hain\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👑 <b>Owner Commands</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>/groupaccess</b> — Group access toggle ON/OFF\n"
+        "<code>/groupaccess</code>\n"
+        "→ OFF hone par sirf admins + authorized users groups mein kaam karenge\n\n"
+
+        "<b>/authorize</b> — User ko group mein bot use ki permission do\n"
+        "<code>/authorize @username</code>\n"
+        "<code>/authorize 123456789</code> (user ID)\n"
+        "→ Reply karke bhi: kisi ke message pe reply karo + <code>/authorize</code>\n\n"
+
+        "<b>/deauth</b> — Permission wapas lo\n"
+        "<code>/deauth @username</code>\n"
+        "<code>/deauth 123456789</code>\n"
+        "→ Reply karke bhi kaam karta hai\n\n"
+
+        "<b>/continue</b> — Bot restart ke baad queue resume karo\n"
+        "<code>/continue</code>\n"
+        "→ MongoDB se last paused queue load hogi\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "👤 <b>Who Can Use Bot in Groups?</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ Bot Owner (hamesha)\n"
+        "✅ Group Admins/Owner\n"
+        "✅ /authorize se authorized users\n"
+        "❌ Regular users (agar groupaccess OFF hai)\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📝 <b>Examples</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Group mein @Ali ko allow karna:\n"
+        "<code>/authorize @Ali</code>\n\n"
+        "Ali ke message pe reply karke:\n"
+        "<code>/authorize</code> (as reply)\n\n"
+        "User ID se:\n"
+        "<code>/authorize 987654321</code>\n\n"
+        "Group access band karna:\n"
+        "<code>/groupaccess</code>"
     )
 
 
