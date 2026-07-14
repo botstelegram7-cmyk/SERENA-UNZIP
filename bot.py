@@ -30,7 +30,7 @@ def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButt
 
 async def _is_group_admin(client, chat_id: int, user_id: int) -> bool:
     """True if user is bot owner, group owner, or group admin."""
-    if user_id == Config.OWNER_ID:
+    if user_id == next(iter(Config.OWNER_IDS)):
         return True
     try:
         m = await client.get_chat_member(chat_id, user_id)
@@ -1030,7 +1030,7 @@ async def continue_cmd(client, message):
     """Owner: resume a paused ZIP queue after bot restart/failure."""
     if not message.from_user: return
     uid = message.from_user.id
-    if uid != int(Config.OWNER_ID):
+    if uid not in Config.OWNER_IDS:
         await message.reply_text("❌ Sirf owner use kar sakta hai."); return
 
     state = await get_queue_state(uid)
@@ -1087,7 +1087,7 @@ async def continue_cmd(client, message):
 async def authorize_cmd(client, message):
     """Owner: authorize a user to use bot commands in a group."""
     if not message.from_user: return
-    if message.from_user.id != Config.OWNER_ID:
+    if message.from_user.id != next(iter(Config.OWNER_IDS)):
         return
     args = message.command[1:]
     if not args:
@@ -1116,7 +1116,7 @@ async def authorize_cmd(client, message):
 async def deauth_cmd(client, message):
     """Owner: remove a user's authorization in a group."""
     if not message.from_user: return
-    if message.from_user.id != Config.OWNER_ID:
+    if message.from_user.id != next(iter(Config.OWNER_IDS)):
         return
     target = None
     args = message.command[1:]
@@ -1139,7 +1139,7 @@ async def deauth_cmd(client, message):
 async def groupaccess_cmd(client, message):
     """Owner: toggle group access ON/OFF for regular users."""
     global GROUP_ACCESS_ENABLED
-    if not message.from_user or message.from_user.id != int(Config.OWNER_ID): return
+    if not message.from_user or message.from_user.id not in Config.OWNER_IDS: return
     GROUP_ACCESS_ENABLED = not GROUP_ACCESS_ENABLED
     status = "✅ ON" if GROUP_ACCESS_ENABLED else "❌ OFF"
     await message.reply_text(
@@ -1200,13 +1200,152 @@ async def authhelp_cmd(client, message):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "Group mein @Ali ko allow karna:\n"
         "<code>/authorize @Ali</code>\n\n"
-        "Ali ke message pe reply karke:\n"
-        "<code>/authorize</code> (as reply)\n\n"
+        "Reply karke (Ali ke msg pe reply):\n"
+        "<code>/authorize</code>\n\n"
         "User ID se:\n"
         "<code>/authorize 987654321</code>\n\n"
         "Group access band karna:\n"
-        "<code>/groupaccess</code>"
+        "<code>/groupaccess</code>\n\n"
+        "Puri command list ke liye:\n"
+        "<code>/cmds</code>"
     )
+
+
+
+@app.on_message(filters.command(["cmds","commands","bothelp"]))
+async def cmds_cmd(client, message):
+    """Full command list with examples."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    is_owner = uid in Config.OWNER_IDS
+
+    msg = (
+        "📖 <b>SERENA BOT — Full Command Guide</b>\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📦 <b>ARCHIVE COMMANDS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🔓 <b>/unzip</b> — Extract ZIP/RAR/7z\n"
+        "   <i>Reply to any archive file</i>\n"
+        "   → <code>/unzip</code> (shows files list)\n\n"
+
+        "📦 <b>/zq</b> or <b>/zipqueue</b> — Batch extract up to 100 ZIPs\n"
+        "   → <code>/zq</code> (start queue mode)\n"
+        "   → Send ZIP files one by one or all at once\n"
+        "   → Press ▶️ Process button\n\n"
+
+        "🔑 <b>/zqpass</b> — Set password for queued ZIPs\n"
+        "   → <code>/zqpass mypassword123</code>\n\n"
+
+        "🛑 <b>/cancelqueue</b> — Cancel active ZIP queue\n"
+        "   → <code>/cancelqueue</code>\n\n"
+
+        "📋 <b>/zip</b> — Create a new ZIP file\n"
+        "   → <code>/zip</code> then send files\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🎬 <b>VIDEO COMMANDS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🗜 <b>/compress</b> — Compress video (reduce size)\n"
+        "   <i>Reply to any video</i>\n"
+        "   → <code>/compress</code>\n\n"
+
+        "📐 <b>/resize</b> — Change video resolution\n"
+        "   → <code>/resize</code> (reply to video)\n\n"
+
+        "💧 <b>/watermark</b> — Add text watermark\n"
+        "   → <code>/watermark My Channel</code> (reply to video)\n\n"
+
+        "✂️ <b>/split</b> — Split video into parts\n"
+        "   → <code>/split 00:01:30</code> (reply to video, split at 1m30s)\n\n"
+
+        "🎵 <b>/audio</b> — Extract audio from video\n"
+        "   → <code>/audio</code> (reply to video)\n\n"
+
+        "🖼 <b>/screenshot</b> — Take screenshot at timestamp\n"
+        "   → <code>/screenshot 00:02:15</code> (reply to video)\n\n"
+
+        "🔀 <b>/merge</b> — Merge multiple videos\n"
+        "   → <code>/merge</code> then send videos one by one\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📥 <b>DOWNLOAD COMMANDS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌐 <b>/ytdl</b> — Download from any URL\n"
+        "   → <code>/ytdl https://instagram.com/reel/...</code>\n"
+        "   → <code>/ytdl https://youtube.com/watch?v=...</code>\n"
+        "   → <code>/ytdl https://twitter.com/...</code>\n"
+        "   → <code>/ytdl https://tiktok.com/...</code>\n\n"
+        "   <b>Supported:</b> Instagram, YouTube, Twitter/X,\n"
+        "   TikTok, Facebook, Pinterest aur 1000+ sites\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🛠 <b>FILE UTILITIES</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "✏️ <b>/rename</b> — Rename any file\n"
+        "   → <code>/rename NewFileName.mp4</code> (reply to file)\n\n"
+
+        "ℹ️ <b>/info</b> — File details (size, codec, duration)\n"
+        "   → <code>/info</code> (reply to any file)\n\n"
+
+        "📄 <b>/subs</b> — Extract subtitles from video\n"
+        "   → <code>/subs</code> (reply to video with subs)\n\n"
+
+        "📑 <b>/pdf</b> — PDF tools\n"
+        "   → <code>/pdf</code> (reply to PDF)\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "👤 <b>USER COMMANDS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🚀 <b>/start</b> — Welcome message\n"
+        "❓ <b>/help</b> — Quick help\n"
+        "📊 <b>/mystats</b> — Your usage stats\n"
+        "⭐ <b>/premium</b> — Premium info\n"
+        "👥 <b>/refer</b> — Referral link\n"
+        "⚙️ <b>/settings</b> — Personal settings (DM only)\n"
+        "❌ <b>/cancel</b> — Cancel current task\n"
+    )
+
+    if is_owner:
+        msg += (
+            "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👑 <b>OWNER COMMANDS</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔐 <b>/groupaccess</b> — Toggle group access ON/OFF\n"
+            "   → <code>/groupaccess</code> (toggle in group)\n\n"
+
+            "✅ <b>/authorize</b> — Allow user to use bot in group\n"
+            "   → <code>/authorize @username</code>\n"
+            "   → <code>/authorize 123456789</code>\n"
+            "   → Reply to user\'s message + <code>/authorize</code>\n\n"
+
+            "🚫 <b>/deauth</b> — Remove user authorization\n"
+            "   → <code>/deauth @username</code>\n"
+            "   → <code>/deauth 123456789</code>\n\n"
+
+            "▶️ <b>/continue</b> — Resume queue after bot restart\n"
+            "   → <code>/continue</code>\n\n"
+
+            "🔨 <b>/ban</b> — Ban user from bot\n"
+            "   → <code>/ban 123456789 reason</code>\n\n"
+
+            "✅ <b>/unban</b> — Unban user\n"
+            "   → <code>/unban 123456789</code>\n\n"
+
+            "📢 <b>/broadcast</b> — Message all users\n"
+            "   → <code>/broadcast Hello everyone!</code>\n\n"
+
+            "💎 <b>/premium</b> — Give premium to user\n"
+            "   → <code>/premium 123456789 30</code> (30 days)\n\n"
+
+            "📊 <b>/status</b> — Bot statistics\n"
+            "   → <code>/status</code>\n\n"
+
+            "🔐 <b>/authhelp</b> — Permission system guide\n"
+            "   → <code>/authhelp</code>"
+        )
+
+    await message.reply_text(msg)
 
 
 # ════════════════════════════════════════════════════════════════════════════
