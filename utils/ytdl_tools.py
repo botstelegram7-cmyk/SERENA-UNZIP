@@ -463,3 +463,118 @@ def get_site_name(url: str) -> str:
         if domain in u:
             return name
     return "Video"
+
+
+# ── Direct download URL detection ─────────────────────────────────────────────
+_DIRECT_EXTS = {
+    ".mp4",".mkv",".avi",".mov",".webm",".flv",".ts",
+    ".mp3",".m4a",".aac",".flac",".ogg",".opus",".wav",
+    ".zip",".rar",".7z",".tar",".gz",".pdf",
+    ".jpg",".jpeg",".png",".gif",".webp",
+    ".apk",".exe",".dmg",".iso",
+}
+_DIRECT_PATTERNS = [
+    "drive.usercontent.google.com/download",
+    "drive.google.com/uc?export=download",
+    "?dl=1",         # Dropbox
+    "?download=1",
+    "/download?",
+    "cdn.discordapp.com/attachments",
+    "media.discordapp.net/attachments",
+    "github.com/releases/download",
+    "objects.githubusercontent.com",
+]
+
+def is_direct_download_url(url: str) -> bool:
+    """True if URL is a direct file link (not a webpage to scrape)."""
+    url_lower = url.lower().split("?")[0]
+    # Check extension
+    for ext in _DIRECT_EXTS:
+        if url_lower.endswith(ext):
+            return True
+    # Check known CDN/download patterns
+    for pat in _DIRECT_PATTERNS:
+        if pat in url.lower():
+            return True
+    return False
+
+# --- Direct download URL support ---
+_DIRECT_EXTS = (
+    ".mp4",".mkv",".avi",".mov",".webm",
+    ".mp3",".m4a",".aac",".flac",".ogg",".wav",
+    ".zip",".rar",".7z",".tar",".gz",".pdf",
+    ".jpg",".jpeg",".png",".gif",".webp",".apk",
+)
+_DIRECT_HOSTS = (
+    "drive.usercontent.google.com",
+    "drive.google.com/uc",
+    "cdn.discordapp.com/attachments",
+    "github.com/releases/download",
+    "dl.dropboxusercontent.com",
+)
+
+def is_direct_download_url(url: str) -> bool:
+    u = url.lower()
+    base = u.split("?")[0].split("#")[0]
+    for ext in _DIRECT_EXTS:
+        if base.endswith(ext): return True
+    for host in _DIRECT_HOSTS:
+        if host in u: return True
+    if "?dl=1" in u or "?download=1" in u or "/download?id=" in u: return True
+    return False
+
+
+async def download_direct(url: str, output_dir: str) -> str:
+    import re as _re, aiohttp
+    from urllib.parse import urlparse, unquote as uq
+    os.makedirs(output_dir, exist_ok=True)
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Accept": "*/*"}
+    async with aiohttp.ClientSession(headers=hdrs) as s:
+        async with s.get(url, allow_redirects=True,
+                         timeout=aiohttp.ClientTimeout(total=600)) as r:
+            if r.status not in (200, 206):
+                raise RuntimeError(f"HTTP {r.status}: {url}")
+            cd = r.headers.get("Content-Disposition", "")
+            fname = None
+            m = _re.search(r"filename[*]\s*=\s*[^']*'[^']*'([^;\r\n]+)", cd, _re.I)
+            if m: fname = uq(m.group(1)).strip().strip("'\"")
+            if not fname:
+                m2 = _re.search(r'filename\s*=\s*"?([^";\r\n]+)"?', cd, _re.I)
+                if m2: fname = m2.group(1).strip().strip("'\"")
+            if not fname:
+                fname = uq(Path(urlparse(url).path).name) or "download"
+            ct = r.headers.get("Content-Type", "")
+            if "." not in fname:
+                for ck, ce in [("video/mp4",".mp4"),("audio/mpeg",".mp3"),
+                                ("application/zip",".zip"),("application/pdf",".pdf"),
+                                ("image/jpeg",".jpg"),("image/png",".png")]:
+                    if ck in ct: fname += ce; break
+            out = os.path.join(output_dir, fname)
+            with open(out, "wb") as fh:
+                async for chunk in r.content.iter_chunked(65536):
+                    fh.write(chunk)
+    return out
+
+
+async def search_and_download_audio(query: str, output_dir: str) -> str:
+    os.makedirs(output_dir, exist_ok=True)
+    out_tmpl = os.path.join(output_dir, "%(title).80s.%(ext)s")
+    cmd = [
+        "yt-dlp", "ytsearch1:" + query,
+        "--format", "bestaudio/best",
+        "--extract-audio", "--audio-format", "mp3",
+        "--audio-quality", "192K",
+        "--embed-thumbnail", "--add-metadata",
+        "--output", out_tmpl, "--no-playlist", "--quiet",
+    ]
+    ret, _, err = await _run(cmd, timeout=180)
+    if ret != 0:
+        raise RuntimeError(_clean_err(err) or "Song not found")
+    files = sorted(
+        [p for p in Path(output_dir).iterdir()
+         if p.suffix.lower() in (".mp3",".m4a",".ogg",".aac",".flac")],
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not files:
+        raise RuntimeError("Audio file not found after download")
+    return str(files[-1])
