@@ -813,7 +813,16 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     sess = ZIP_QUEUE_SESSIONS.get(uid)
     if not sess or not sess["files"]: return
     USER_TASKS[uid] = asyncio.current_task()
-    sorted_files = sorted(sess["files"], key=lambda f: f.get("msg_id", 0))
+    # Sort by Telegram message ID (always sequential).
+    # Fallback: queue_position (insertion order = order user added files)
+    # This ensures exact send-order even if msg_id is missing.
+    sorted_files = sorted(
+        sess["files"],
+        key=lambda f: (
+            f.get("msg_id") or 0,
+            f.get("queue_position", 0)
+        )
+    )
     total = len(sorted_files)
     # Mark ONLY new files as pending — preserve "done"/"failed" status for resume
     for f in sorted_files:
@@ -1462,13 +1471,15 @@ async def on_file(client, message):
                 )
                 return
             # ── Store message.id for correct sequence sorting ──
+            _qpos = len(sess["files"])   # insertion order = send order
             sess["files"].append({
-                "file_id":       media.file_id,
-                "file_name":     fname,
-                "size":          getattr(media, "file_size", 0) or 0,
-                "password":      sess.get("default_password"),
-                "msg_id":        message.id,        # sequence key
-                "source_chat_id": message.chat.id,  # for file reference refresh
+                "file_id":        media.file_id,
+                "file_name":      fname,
+                "size":           getattr(media, "file_size", 0) or 0,
+                "password":       sess.get("default_password"),
+                "msg_id":         message.id,        # Telegram sequence ID
+                "queue_position": _qpos,              # fallback order
+                "source_chat_id": message.chat.id,
             })
             n = len(sess["files"])
             total_mb = sum(f["size"] for f in sess["files"]) / 1048576
@@ -1856,11 +1867,17 @@ async def callbacks(client, cq: CallbackQuery):
         if not sess: await cq.answer("Queue nahi mili.", show_alert=True); return
         files = sess["files"]
         if not files: await cq.answer("Queue empty hai!", show_alert=True); return
-        lines = [f"📦 <b>Queue ({len(files)} ZIPs):</b>"]
-        for i, f in enumerate(files, 1):
+        # Show in correct send-order (same order as processing)
+        sorted_list = sorted(
+            files,
+            key=lambda f: (f.get("msg_id") or 0, f.get("queue_position", 0))
+        )
+        lines = [f"📦 <b>Queue ({len(files)} ZIPs) — Send Order:</b>"]
+        for i, f in enumerate(sorted_list, 1):
             mb = f["size"]/1048576
             pw = "🔐" if f.get("password") or sess.get("default_password") else ""
-            lines.append(f"  {i}. <code>{f['file_name']}</code> ({mb:.1f} MB) {pw}")
+            status = {"done":"✅","failed":"❌","pending":"⏳"}.get(f.get("status","pending"),"⏳")
+            lines.append(f"  {status} {i}. <code>{f['file_name']}</code> ({mb:.1f} MB) {pw}")
         total_mb = sum(f["size"] for f in files)/1048576
         lines.append(f"\n💾 <b>Total: {total_mb:.1f} MB</b>")
         try: await cq.message.reply_text("\n".join(lines))
