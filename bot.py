@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pyrogram import Client, enums, filters, idle
-from pyrogram.errors import FloodWait, MessageNotModified
+from pyrogram.errors import FileReferenceExpired, FloodWait, MessageNotModified
 from pyrogram.types import (
     CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message,
 )
@@ -889,10 +889,39 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 if tgt > 0: _rtotal[0] = tgt
                 await progress_for_pyrogram(cur, _rtotal[0], _s, _sd, _fn,
                     direction="Downloading", known_total=_rtotal[0])
-            dl = await client.download_media(
-                finfo["file_id"], file_name=str(item_root),
-                progress=_dlp,
-            )
+            try:
+                dl = await client.download_media(
+                    finfo["file_id"], file_name=str(item_root),
+                    progress=_dlp,
+                )
+            except FileReferenceExpired:
+                # File reference expired (bot was restarted) — refresh from original message
+                src_chat = finfo.get("source_chat_id", chat_id)
+                src_msg  = finfo.get("msg_id")
+                if not src_msg:
+                    raise RuntimeError(
+                        "❌ File reference expired and original message ID not stored.\n"
+                        "Please re-send the ZIP file."
+                    )
+                try:
+                    await _safe_edit(st,
+                        f"🔄 <b>[{i}/{total}]</b> Refreshing file reference…\n"
+                        f"<code>{fname}</code>"
+                    )
+                    orig_msg = await client.get_messages(src_chat, src_msg)
+                    fresh = orig_msg.document or orig_msg.video or orig_msg.audio
+                    if not fresh:
+                        raise RuntimeError("Original message has no media attachment")
+                    finfo["file_id"] = fresh.file_id   # update for future use
+                    dl = await client.download_media(
+                        fresh.file_id, file_name=str(item_root),
+                        progress=_dlp,
+                    )
+                except FileReferenceExpired:
+                    raise RuntimeError(
+                        "❌ File reference expired permanently.\n"
+                        "Re-send the ZIP file aur dobara /zq karo."
+                    )
             if not dl: raise RuntimeError("Download failed")
             if sess.get("cancelled"): break
             await _safe_edit(st, f"🔓 <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
@@ -1434,11 +1463,12 @@ async def on_file(client, message):
                 return
             # ── Store message.id for correct sequence sorting ──
             sess["files"].append({
-                "file_id":    media.file_id,
-                "file_name":  fname,
-                "size":       getattr(media, "file_size", 0) or 0,
-                "password":   sess.get("default_password"),
-                "msg_id":     message.id,   # ← sequence key
+                "file_id":       media.file_id,
+                "file_name":     fname,
+                "size":          getattr(media, "file_size", 0) or 0,
+                "password":      sess.get("default_password"),
+                "msg_id":        message.id,        # sequence key
+                "source_chat_id": message.chat.id,  # for file reference refresh
             })
             n = len(sess["files"])
             total_mb = sum(f["size"] for f in sess["files"]) / 1048576
