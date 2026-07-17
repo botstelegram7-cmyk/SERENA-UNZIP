@@ -103,7 +103,9 @@ from utils.pdf_tools import (
     parse_page_ranges, split_pdf, split_pdf_by_range,
 )
 from utils.progress import human_bytes, human_time, make_progress_message, progress_for_pyrogram
-from utils.ytdl_tools import download_video as ytdl_download, get_formats, is_supported_url, _download_instagram_photos, _is_instagram_url
+from utils.ytdl_tools import (download_video as ytdl_download, get_formats,
+    is_supported_url, _download_instagram_photos, _is_instagram_url,
+    is_direct_download_url, download_direct, search_and_download_audio)
 from utils.zip_creator import create_archive
 
 # ── Client ──────────────────────────────────────────────────────────────────
@@ -813,21 +815,36 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     USER_TASKS[uid] = asyncio.current_task()
     sorted_files = sorted(sess["files"], key=lambda f: f.get("msg_id", 0))
     total = len(sorted_files)
-    # Mark each file as pending for resume tracking
+    # Mark ONLY new files as pending — preserve "done"/"failed" status for resume
     for f in sorted_files:
-        f.setdefault("status", "pending")
-    ok = fail = 0
-    # ── Save initial state to DB (enables /continue after bot restart) ──
+        if "status" not in f:
+            f["status"] = "pending"
+    # Restore counts from saved state (critical for /continue resume)
+    ok   = sum(1 for f in sorted_files if f.get("status") == "done")
+    fail = sum(1 for f in sorted_files if f.get("status") == "failed")
+    is_resume = (ok + fail) > 0
+    # Save/update state in DB
     await save_queue_state(uid, {
         "uid": uid, "chat_id": chat_id, "reply_to": reply_to,
         "thread_id": thread_id, "files": sorted_files,
-        "current_index": 0, "ok": 0, "fail": 0, "status": "paused",
+        "current_index": ok + fail, "ok": ok, "fail": fail, "status": "paused",
         "started_at": __import__("datetime").datetime.utcnow().isoformat(),
     })
+    if is_resume:
+        resume_msg = (
+            f"▶️ <b>Queue Resumed!</b>\n\n"
+            f"📦 Total: <b>{total}</b> ZIPs\n"
+            f"✅ Already done: <b>{ok}</b> | ❌ Failed: <b>{fail}</b>\n"
+            f"⏳ Remaining: <b>{total - ok - fail}</b> ZIPs\n\n"
+            f"<i>Skipping already-extracted files…</i>"
+        )
+    else:
+        resume_msg = (
+            f"🚀 <b>ZIP Queue Processing Start!</b>\n"
+            f"📦 Total: <b>{total}</b> ZIPs | Sequence preserved ✅"
+        )
     header = await client.send_message(
-        chat_id,
-        f"🚀 <b>ZIP Queue Processing Start!</b>\n📦 Total: <b>{total}</b> ZIPs\n"
-        f"📋 Sequence: sorted by send order ✅",
+        chat_id, resume_msg,
         reply_to_message_id=reply_to,
         message_thread_id=thread_id,
     )
@@ -836,8 +853,12 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
         await client.delete_messages(chat_id, [reply_to])
     except Exception:
         pass
-    for i, finfo in enumerate(sorted_files, 1):
+    # enumerate with actual position (1-based), skip done/failed
+    for idx, finfo in enumerate(sorted_files, 1):
         if sess.get("cancelled"): break
+        if finfo.get("status") in ("done", "failed"):
+            continue   # ← KEY FIX: skip already processed files on resume
+        i = idx   # use actual position for display [i/total]
         fname = finfo["file_name"]
         st = await client.send_message(
             chat_id,
@@ -2775,3 +2796,57 @@ async def main():
 
 if __name__=="__main__":
     asyncio.run(main())
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# /song — Search & download song by name via YouTube
+# ════════════════════════════════════════════════════════════════════════════
+@app.on_message(filters.command(["song", "music", "audio"]))
+async def song_cmd(client, message):
+    if not message.from_user: return
+    uid = message.from_user.id
+    if await is_banned(uid): return
+    if not await check_force_sub(client, message): return
+    await get_or_create_user(uid)
+    query = " ".join(message.command[1:]).strip()
+    if not query:
+        await _safe_reply(message,
+            "🎵 <b>Song Search</b>\n\n"
+            "Usage: <code>/song song name artist</code>\n\n"
+            "Examples:\n"
+            "• <code>/song Tere Bina Arijit Singh</code>\n"
+            "• <code>/song Kesariya Brahmastra</code>\n"
+            "• <code>/song Bohemian Rhapsody Queen</code>"
+        ); return
+    if not await check_rate_limit(uid, message): return
+    if not await _check_disk_space_ok(message): return
+    temp_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
+    temp_root.mkdir(parents=True, exist_ok=True)
+    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
+    status = await _safe_reply(message,
+        f"🔍 Searching: <b>{query}</b>\n⏳ Downloading audio…"
+    )
+    try:
+        audio_path = await search_and_download_audio(query, str(temp_root))
+        fname = Path(audio_path).name
+        cap = await build_caption(uid, fname)
+        start_u = time.time()
+        if status:
+            try: await status.edit_text(f"📤 Uploading: <code>{fname}</code>…")
+            except: pass
+        sent = await client.send_audio(
+            message.chat.id, audio_path, caption=cap,
+            reply_to_message_id=message.id,
+        )
+        if status:
+            try: await status.delete()
+            except: pass
+        await log_output(client, message.from_user, sent, f"song: {query}")
+        await update_user_stats(uid, Path(audio_path).stat().st_size / 1048576)
+    except Exception as e:
+        err = str(e)[:300]
+        if status:
+            try: await status.edit_text(f"❌ Failed: <code>{err}</code>")
+            except: pass
+    finally:
+        _safe_cleanup(str(temp_root))
