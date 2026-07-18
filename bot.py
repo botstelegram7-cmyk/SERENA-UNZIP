@@ -832,6 +832,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     ok   = sum(1 for f in sorted_files if f.get("status") == "done")
     fail = sum(1 for f in sorted_files if f.get("status") == "failed")
     is_resume = (ok + fail) > 0
+    failed_files: dict = {}   # fname → error msg, for end summary
     # Save/update state in DB
     await save_queue_state(uid, {
         "uid": uid, "chat_id": chat_id, "reply_to": reply_to,
@@ -1033,12 +1034,69 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            try: await st.edit_text(
-                f"❌ <b>[{i}/{total}]</b> Failed: <code>{fname}</code>\n"
-                f"<code>{str(e)[:250]}</code>")
-            except: pass
-            await mark_queue_file_done(uid, i-1, "failed")
-            fail += 1
+            # ── Auto-retry once before marking failed ──
+            _retry_success = False
+            try:
+                await asyncio.sleep(3)   # brief wait before retry
+                await _safe_edit(st,
+                    f"🔄 <b>[{i}/{total}]</b> Retrying: <code>{fname}</code>…\n"
+                    f"<i>Error: {str(e)[:100]}</i>"
+                )
+                # Retry: re-download and extract
+                item_root2 = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
+                item_root2.mkdir(parents=True, exist_ok=True)
+                dl2 = await client.download_media(
+                    finfo.get("file_id"), file_name=str(item_root2)
+                )
+                if dl2:
+                    extract_dir2 = item_root2 / "extracted"
+                    result2 = extract_archive(
+                        dl2, str(extract_dir2),
+                        password=finfo.get("password") or sess.get("default_password")
+                    )
+                    rel_files2 = sorted(result2["files"], key=str.lower)
+                    for rel2 in rel_files2:
+                        if sess.get("cancelled"): break
+                        full2 = extract_dir2 / rel2
+                        if not full2.is_file(): continue
+                        try:
+                            if is_video_path(rel2):
+                                dur2 = await _get_video_duration(str(full2))
+                                th2  = await choose_thumbnail(uid, str(full2))
+                                cap2 = await build_caption(uid, Path(rel2).name)
+                                await client.send_video(chat_id, str(full2), caption=cap2,
+                                    thumb=th2, duration=dur2, reply_to_message_id=reply_to,
+                                    message_thread_id=thread_id)
+                            elif is_image_file(rel2):
+                                await client.send_photo(chat_id, str(full2),
+                                    caption=Path(rel2).name, reply_to_message_id=reply_to,
+                                    message_thread_id=thread_id)
+                            else:
+                                await client.send_document(chat_id, str(full2),
+                                    caption=rel2, reply_to_message_id=reply_to,
+                                    message_thread_id=thread_id)
+                        except Exception: pass
+                        await asyncio.sleep(0.5)
+                    import shutil as _sh2
+                    _sh2.rmtree(str(item_root2), ignore_errors=True)
+                    _retry_success = True
+                    await _safe_edit(st,
+                        f"✅ <b>[{i}/{total}]</b> Retry successful: <code>{fname}</code>")
+                    await mark_queue_file_done(uid, i-1, "done")
+                    ok += 1
+                    failed_files.pop(fname, None)   # remove from failed list
+            except Exception as retry_err:
+                pass   # retry also failed — mark as failed below
+            if not _retry_success:
+                err_short = str(e)[:200]
+                try: await st.edit_text(
+                    f"⏭ <b>[{i}/{total}]</b> Skipped (2 attempts failed):\n"
+                    f"<code>{fname}</code>\n"
+                    f"<code>{err_short}</code>")
+                except: pass
+                await mark_queue_file_done(uid, i-1, "failed")
+                failed_files[fname] = err_short   # track for summary
+                fail += 1
             await update_queue_progress(uid, i, ok, fail)
         finally:
             # ✅ Cache delete immediately after each ZIP
@@ -1049,16 +1107,28 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     cancelled = sess.get("cancelled", False)
     ZIP_QUEUE_SESSIONS.pop(uid, None)
     await delete_queue_state(uid)   # cleanup DB after successful completion
+    # Build failed files summary
+    fail_summary = ""
+    if failed_files:
+        fail_lines = ["\n\n❌ <b>Failed ZIPs:</b>"]
+        for fname_f, err_f in list(failed_files.items())[:10]:
+            fail_lines.append(f"  • <code>{fname_f}</code>\n    <i>{err_f[:80]}</i>")
+        if len(failed_files) > 10:
+            fail_lines.append(f"  … aur {len(failed_files)-10} files")
+        fail_summary = "\n".join(fail_lines)
+
     try:
         if cancelled:
             await header.edit_text(
                 f"🛑 <b>Queue Cancelled!</b>\n"
-                f"✅ Processed: {ok} | ❌ Failed: {fail} | ⏭ Skipped: {total-ok-fail}")
+                f"✅ Done: {ok} | ❌ Failed: {fail} | ⏭ Skipped: {total-ok-fail}"
+                + fail_summary)
         else:
             await header.edit_text(
                 f"🎉 <b>Queue Complete!</b>\n\n"
-                f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>\n\n"
-                f"🗑 Cache cleared after each ZIP!")
+                f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>\n"
+                f"🗑 Cache cleared after each ZIP!"
+                + fail_summary)
             # ── End animation (QUEUE_END_GIF from Render env) ──
             if Config.QUEUE_END_GIF:
                 try:
@@ -1093,22 +1163,57 @@ async def continue_cmd(client, message):
     if uid not in Config.OWNER_IDS:
         await _safe_reply(message, "❌ Sirf owner use kar sakta hai."); return
 
+    # Show ALL saved sessions — user picks which to continue/delete
+    all_sessions = await get_all_paused_queues()
+
+    # Filter: owner sees all, regular user sees only their own
+    is_owner = uid in Config.OWNER_IDS
+    if not is_owner:
+        all_sessions = [s for s in all_sessions if s.get("uid") == uid]
+
+    if not all_sessions:
+        await _safe_reply(message,
+            "✅ <b>Koi saved queue nahi hai!</b>\n\n"
+            "Bot theek chal raha hai — koi task interrupt nahi hua.\n"
+            "Naya queue start karne ke liye /zq use karo."
+        ); return
+
+    # Build session list with Continue + Delete buttons
+    lines = ["💾 <b>Saved Queue Sessions</b>\n"]
+    buttons = []
+    for idx, s in enumerate(all_sessions[:10]):
+        s_uid   = s.get("uid", 0)
+        files   = s.get("files", [])
+        ok      = s.get("ok", 0)
+        fail    = s.get("fail", 0)
+        total   = len(files)
+        pending = total - ok - fail
+        paused_at = s.get("paused_at", "")[:10]
+        size_mb = sum(f.get("size", 0) for f in files) / 1048576
+
+        lines.append(
+            f"{'─'*24}\n"
+            f"📦 <b>Session {idx+1}</b>"
+            + (f" (User <code>{s_uid}</code>)" if is_owner and s_uid != uid else "") + "\n"
+            f"  Files : {total} ZIPs | 💾 {size_mb:.1f} MB\n"
+            f"  ✅ Done: {ok} | ❌ Failed: {fail} | ⏳ Left: {pending}\n"
+            f"  📅 Saved: {paused_at}"
+        )
+        buttons.append([
+            _btn(f"▶️ Continue Session {idx+1}", f"sess_cont|{s_uid}", "success"),
+            _btn(f"🗑 Delete Session {idx+1}",   f"sess_del|{s_uid}",  "danger"),
+        ])
+
+    buttons.append([_btn("🗑 Delete ALL Sessions", "sess_del_all", "danger")])
+
+    await _safe_reply(
+        message,
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+    return
+
     state = await get_queue_state(uid)
-    if not state:
-        all_paused = await get_all_paused_queues()
-        if not all_paused:
-            await _safe_reply(message,
-                "✅ <b>Koi paused queue nahi hai!</b>\n\n"
-                "Bot theek chal raha hai — koi task interrupt nahi hua.\n"
-                "Naya queue start karne ke liye /zq use karo."
-            ); return
-        # Show paused queues
-        lines = ["⏸ <b>Paused Queues:</b>\n"]
-        for s in all_paused[:5]:
-            n_done = s.get("ok", 0) + s.get("fail", 0)
-            n_total = len(s.get("files", []))
-            lines.append(f"• User <code>{s.get('uid')}</code> — {n_done}/{n_total} done")
-        await _safe_reply(message, "\n".join(lines)); return
 
     files   = state.get("files", [])
     start_i = state.get("current_index", 0)
@@ -1935,6 +2040,73 @@ async def callbacks(client, cq: CallbackQuery):
         except: pass
         await cq.answer("Queue cancel!")
         return
+    if data.startswith("sess_cont|"):
+        target_uid = int(data.split("|",1)[1])
+        # Only owner can continue other users' sessions
+        if cq.from_user.id != target_uid and cq.from_user.id not in Config.OWNER_IDS:
+            await cq.answer("Permission nahi hai!", show_alert=True); return
+        state = await get_queue_state(target_uid)
+        if not state:
+            await cq.answer("Session nahi mila — shayad already delete ho gayi.", show_alert=True)
+            try: await cq.message.edit_text("❌ Session not found.")
+            except: pass
+            return
+        files   = state.get("files", [])
+        ok      = state.get("ok", 0)
+        fail    = state.get("fail", 0)
+        pending = [f for f in files if f.get("status") not in ("done","failed")]
+        if not pending:
+            await delete_queue_state(target_uid)
+            await cq.answer("Saari files already process ho chuki hain!", show_alert=True)
+            return
+        ZIP_QUEUE_SESSIONS[target_uid] = {
+            "files": files, "chat_id": state.get("chat_id", cq.message.chat.id),
+            "reply_to": state.get("reply_to", cq.message.id),
+            "thread_id": state.get("thread_id"),
+            "cancelled": False, "processing": True,
+            "default_password": state.get("default_password"),
+            "created_at": time.time(),
+        }
+        try: await cq.message.edit_text(
+            f"▶️ <b>Resuming Session!</b>\n"
+            f"📦 Total: {len(files)} | ✅ Done: {ok} | ⏳ Left: {len(pending)}"
+        )
+        except: pass
+        await cq.answer("Queue resume ho rahi hai!")
+        task = asyncio.create_task(_process_zip_queue(
+            client, target_uid,
+            state.get("chat_id", cq.message.chat.id),
+            state.get("reply_to", cq.message.id),
+            thread_id=state.get("thread_id"),
+        ))
+        USER_TASKS[target_uid] = task
+        return
+
+    if data.startswith("sess_del|"):
+        if cq.from_user.id not in Config.OWNER_IDS:
+            await cq.answer("Sirf owner delete kar sakta hai!", show_alert=True); return
+        target_uid = int(data.split("|",1)[1])
+        await delete_queue_state(target_uid)
+        ZIP_QUEUE_SESSIONS.pop(target_uid, None)
+        try: await cq.message.edit_text(
+            f"🗑 Session <code>{target_uid}</code> deleted!"
+        )
+        except: pass
+        await cq.answer("Session deleted!"); return
+
+    if data == "sess_del_all":
+        if cq.from_user.id not in Config.OWNER_IDS:
+            await cq.answer("Sirf owner delete kar sakta hai!", show_alert=True); return
+        all_sess = await get_all_paused_queues()
+        for s in all_sess:
+            await delete_queue_state(s.get("uid"))
+            ZIP_QUEUE_SESSIONS.pop(s.get("uid"), None)
+        try: await cq.message.edit_text(
+            f"🗑 <b>All {len(all_sess)} sessions deleted!</b>"
+        )
+        except: pass
+        await cq.answer(f"{len(all_sess)} sessions deleted!"); return
+
     if data=="noop": await cq.answer(); return
     await cq.answer()
 
