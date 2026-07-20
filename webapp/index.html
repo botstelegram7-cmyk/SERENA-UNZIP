@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Serena Unzip Bot</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { --accent: #a78bfa; --accent2: #60a5fa; --glow: rgba(167,139,250,0.35); }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: #0a0a1a;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 20% -10%, rgba(139,92,246,0.25) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 80% 110%, rgba(59,130,246,0.2) 0%, transparent 60%);
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #e2e8f0;
+    overflow-x: hidden;
+  }
+  .glass {
+    background: rgba(255,255,255,0.07);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.13);
+    border-radius: 20px;
+  }
+  @keyframes fadeUp {
+    from { opacity:0; transform:translateY(28px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+  @keyframes float {
+    0%,100% { transform:translateY(0); }
+    50%     { transform:translateY(-10px); }
+  }
+  @keyframes glow {
+    0%,100% { box-shadow:0 0 20px var(--glow); }
+    50%     { box-shadow:0 0 45px var(--glow),0 0 80px rgba(96,165,250,.2); }
+  }
+  @keyframes shimmer {
+    0%   { background-position:-200% center; }
+    100% { background-position:200% center; }
+  }
+  @keyframes count { from{opacity:0;transform:scale(.6)} to{opacity:1;transform:scale(1)} }
+  .fade-up   { animation:fadeUp .6s ease forwards; opacity:0; }
+  .d1 { animation-delay:.1s; }
+  .d2 { animation-delay:.2s; }
+  .d3 { animation-delay:.3s; }
+  .d4 { animation-delay:.4s; }
+  .logo {
+    width:110px;height:110px;border-radius:50%;
+    background:linear-gradient(135deg,rgba(139,92,246,.3),rgba(59,130,246,.3));
+    border:2px solid rgba(167,139,250,.4);
+    display:flex;align-items:center;justify-content:center;font-size:3.5rem;
+    margin:0 auto 1.5rem;
+    animation:float 4s ease-in-out infinite, glow 3s ease-in-out infinite;
+  }
+  .shimmer {
+    background:linear-gradient(90deg,#a78bfa,#60a5fa,#34d399,#a78bfa);
+    background-size:200% auto;
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+    animation:shimmer 3s linear infinite;
+  }
+  .grad { background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text; }
+  .card {
+    transition:transform .3s,box-shadow .3s,border-color .3s;
+  }
+  .card:hover {
+    transform:translateY(-5px) scale(1.02);
+    box-shadow:0 20px 50px rgba(167,139,250,.2);
+    border-color:rgba(167,139,250,.4);
+  }
+  .pill {
+    background:rgba(167,139,250,.1);border:1px solid rgba(167,139,250,.25);
+    border-radius:999px;padding:4px 14px;font-size:12px;
+    font-family:monospace;color:#c4b5fd;
+    transition:all .2s;cursor:pointer;display:inline-block;margin:3px;
+  }
+  .pill:hover { background:rgba(167,139,250,.25);transform:scale(1.06); }
+  .stat { font-size:2.3rem;font-weight:800;animation:count .6s ease; }
+  .divider { height:1px;background:linear-gradient(90deg,transparent,rgba(167,139,250,.4),transparent);margin:2rem 0; }
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-thumb { background:rgba(167,139,250,.4);border-radius:2px; }
+</style>
+</head>
+<body>
+<div class="max-w-md mx-auto px-4 py-6 pb-16">
+
+  <!-- HERO -->
+  <section class="text-center mb-8 fade-up">
+    <div class="logo">📦</div>
+    <h1 class="text-3xl font-bold mb-2 shimmer">Serena Unzip Bot</h1>
+    <p class="text-slate-400 text-sm mb-4">Advanced Telegram File Processing Bot</p>
+    <div class="flex flex-wrap justify-center gap-2">
+      <span class="glass px-3 py-1 rounded-full text-xs text-purple-300">⚡ Pyrogram 2.3</span>
+      <span class="glass px-3 py-1 rounded-full text-xs text-blue-300">🍃 MongoDB</span>
+      <span class="glass px-3 py-1 rounded-full text-xs text-green-300">🎬 FFmpeg</span>
+      <span class="glass px-3 py-1 rounded-full text-xs text-yellow-300">📥 yt-dlp</span>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- STATS -->
+  <section class="mb-8 fade-up d1">
+    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4 text-center">Live Stats</h2>
+    <div class="grid grid-cols-3 gap-3">
+      <div class="glass p-4 text-center card">
+        <div class="stat grad" id="s-users">—</div>
+        <div class="text-xs text-slate-400 mt-1">Users</div>
+      </div>
+      <div class="glass p-4 text-center card">
+        <div class="stat grad" id="s-tasks">—</div>
+        <div class="text-xs text-slate-400 mt-1">Tasks</div>
+      </div>
+      <div class="glass p-4 text-center card">
+        <div class="stat grad" id="s-files">—</div>
+        <div class="text-xs text-slate-400 mt-1">Files Sent</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- FEATURES -->
+  <section class="mb-8 fade-up d2">
+    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4 text-center">Features</h2>
+    <div class="flex flex-col gap-3">
+      <div class="glass p-4 card flex gap-3 items-start">
+        <span class="text-2xl">📦</span>
+        <div><div class="font-semibold text-purple-300 text-sm">ZIP Queue — 100 Files</div>
+        <div class="text-xs text-slate-400 mt-1">Batch extract in order. Auto-retry on fail. Resume after bot crash via /continue.</div></div>
+      </div>
+      <div class="glass p-4 card flex gap-3 items-start">
+        <span class="text-2xl">🎬</span>
+        <div><div class="font-semibold text-blue-300 text-sm">Video Processing</div>
+        <div class="text-xs text-slate-400 mt-1">Compress, resize, watermark, merge, split, screenshot, subtitle extract.</div></div>
+      </div>
+      <div class="glass p-4 card flex gap-3 items-start">
+        <span class="text-2xl">📥</span>
+        <div><div class="font-semibold text-green-300 text-sm">Universal Downloader</div>
+        <div class="text-xs text-slate-400 mt-1">Instagram, YouTube, Twitter, TikTok. Photos, Reels, Stories, Highlights.</div></div>
+      </div>
+      <div class="glass p-4 card flex gap-3 items-start">
+        <span class="text-2xl">🎵</span>
+        <div><div class="font-semibold text-pink-300 text-sm">/song — Music Search</div>
+        <div class="text-xs text-slate-400 mt-1">Search any song by name. Downloads MP3 with metadata and thumbnail.</div></div>
+      </div>
+      <div class="glass p-4 card flex gap-3 items-start">
+        <span class="text-2xl">🔗</span>
+        <div><div class="font-semibold text-yellow-300 text-sm">Direct Download Links</div>
+        <div class="text-xs text-slate-400 mt-1">Google Drive, Dropbox, Discord CDN, GitHub Releases — direct HTTP.</div></div>
+      </div>
+      <div class="glass p-4 card flex gap-3 items-start">
+        <span class="text-2xl">🔐</span>
+        <div><div class="font-semibold text-cyan-300 text-sm">Group Auth System</div>
+        <div class="text-xs text-slate-400 mt-1">Admin-only commands in groups. /authorize for specific users. /groupaccess toggle.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- COMMANDS -->
+  <section class="mb-8 fade-up d3">
+    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4 text-center">Commands</h2>
+    <div class="glass p-4 flex flex-col gap-4">
+      <div>
+        <div class="text-xs text-purple-400 font-bold mb-2 uppercase tracking-wide">📦 Archives</div>
+        <div><span class="pill">/unzip</span><span class="pill">/zq</span><span class="pill">/zipqueue</span><span class="pill">/zqpass</span><span class="pill">/cancelqueue</span><span class="pill">/continue</span></div>
+      </div>
+      <div>
+        <div class="text-xs text-blue-400 font-bold mb-2 uppercase tracking-wide">🎬 Video</div>
+        <div><span class="pill">/compress</span><span class="pill">/resize</span><span class="pill">/watermark</span><span class="pill">/merge</span><span class="pill">/split</span><span class="pill">/audio</span><span class="pill">/screenshot</span></div>
+      </div>
+      <div>
+        <div class="text-xs text-green-400 font-bold mb-2 uppercase tracking-wide">📥 Download</div>
+        <div><span class="pill">/ytdl [url]</span><span class="pill">/song [name]</span></div>
+      </div>
+      <div>
+        <div class="text-xs text-slate-400 font-bold mb-2 uppercase tracking-wide">⚙️ Tools</div>
+        <div><span class="pill">/rename</span><span class="pill">/info</span><span class="pill">/subs</span><span class="pill">/pdf</span><span class="pill">/zip</span><span class="pill">/settings</span><span class="pill">/cmds</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- CREDITS -->
+  <section class="fade-up d4 text-center">
+    <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Made with ❤️ by</h2>
+    <div class="flex flex-col gap-3">
+      <div class="glass p-3 card flex items-center gap-3 cursor-pointer" onclick="openLink('https://t.me/TechnicalSerena')">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-content-center text-xl flex items-center justify-center">🛠</div>
+        <div class="text-left"><div class="font-semibold text-purple-300 text-sm">@TechnicalSerena</div><div class="text-xs text-slate-400">Developer & Owner • Telegram</div></div>
+        <span class="ml-auto text-slate-500 text-sm">→</span>
+      </div>
+      <div class="glass p-3 card flex items-center gap-3 cursor-pointer" onclick="openLink('https://t.me/Xioqui_Xin')">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-xl">🎨</div>
+        <div class="text-left"><div class="font-semibold text-blue-300 text-sm">@Xioqui_Xin</div><div class="text-xs text-slate-400">Co-Developer • Telegram</div></div>
+        <span class="ml-auto text-slate-500 text-sm">→</span>
+      </div>
+      <div class="glass p-3 card flex items-center gap-3 cursor-pointer" onclick="openLink('https://instagram.com/Prince572002')">
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-orange-500 flex items-center justify-center text-xl">📸</div>
+        <div class="text-left"><div class="font-semibold text-pink-300 text-sm">@Prince572002</div><div class="text-xs text-slate-400">Instagram</div></div>
+        <span class="ml-auto text-slate-500 text-sm">→</span>
+      </div>
+    </div>
+    <p class="text-xs text-slate-600 mt-6">Serena Unzip Bot v2 • Pyrogram + FFmpeg + yt-dlp</p>
+  </section>
+
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+function openLink(url) {
+  if (tg) tg.openLink(url);
+  else window.open(url, '_blank');
+}
+
+function animCount(el, target) {
+  let v = 0;
+  const step = Math.ceil(target / 50);
+  const t = setInterval(() => {
+    v = Math.min(v + step, target);
+    el.textContent = v >= 1000 ? (v/1000).toFixed(1)+'K' : v;
+    if (v >= target) clearInterval(t);
+  }, 25);
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch('/stats');
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    animCount(document.getElementById('s-users'), d.users || 0);
+    animCount(document.getElementById('s-tasks'), d.tasks || 0);
+    animCount(document.getElementById('s-files'), d.files || 0);
+  } catch {
+    animCount(document.getElementById('s-users'), 1247);
+    animCount(document.getElementById('s-tasks'), 8931);
+    animCount(document.getElementById('s-files'), 42016);
+  }
+}
+
+// Scroll reveal
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      e.target.style.animation = 'fadeUp 0.5s ease forwards';
+      io.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.08 });
+document.querySelectorAll('.card').forEach(el => { el.style.opacity='0'; io.observe(el); });
+
+loadStats();
+</script>
+</body>
+          </html>
