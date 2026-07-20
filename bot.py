@@ -949,7 +949,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 full = extract_dir / rel
                 if not full.is_file(): continue
                 try:
-                    if is_video_path(rel):
+                    _fname = Path(rel).name   # only filename, ignore nested path
+                    if is_video_path(_fname):
                         dur = await _get_video_duration(str(full))
                         thumb = await choose_thumbnail(uid, str(full))
                         cap = await build_caption(uid, Path(rel).name)
@@ -973,22 +974,30 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                         if up_st:
                             try: await up_st.delete()
                             except: pass
-                    elif is_image_file(rel):
+                    elif is_image_file(_fname):
                         await client.send_photo(chat_id, str(full),
-                            caption=Path(rel).name, reply_to_message_id=reply_to,
+                            caption=_fname, reply_to_message_id=reply_to,
                             message_thread_id=thread_id)
-                    elif is_audio_file(rel):
+                    elif is_audio_file(_fname):
                         await client.send_audio(chat_id, str(full),
-                            caption=Path(rel).name, reply_to_message_id=reply_to,
+                            caption=_fname, reply_to_message_id=reply_to,
                             message_thread_id=thread_id)
                     else:
+                        # ALL files including nested folder files → send as document
                         start_up = time.time()
-                        await st.edit_text(f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…")
+                        up_st_d = await make_progress_message(client, chat_id, reply_to,
+                            f"📤 <b>[{i}/{total}]</b> Uploading: <code>{_fname}</code>…",
+                            thread_id=thread_id)
+                        async def _upd2(c,t,_m=up_st_d,_s=start_up,_n=_fname,_sz=full.stat().st_size):
+                            await progress_for_pyrogram(c,t,_m,_s,_n,"Uploading",known_total=_sz)
                         await client.send_document(chat_id, str(full),
-                            caption=rel,
-                            progress=progress_for_pyrogram,
-                            progress_args=(st, start_up, Path(rel).name, "Uploading"),
-                            reply_to_message_id=header.id)
+                            caption=f"📁 {rel}",   # shows full path including subfolder
+                            progress=_upd2,
+                            reply_to_message_id=reply_to,
+                            message_thread_id=thread_id)
+                        if up_st_d:
+                            try: await up_st_d.delete()
+                            except: pass
                     sent_n += 1
                 except Exception as e:
                     await client.send_message(chat_id,
