@@ -62,6 +62,23 @@ async def _safe_edit(msg, text: str, **kwargs):
     except Exception:
         pass
 
+
+async def _check_disk_space_ok(message) -> bool:
+    """Return True if enough disk space available, else send warning."""
+    try:
+        import psutil
+        usage = psutil.disk_usage(Config.TEMP_DIR)
+        free_gb = usage.free / (1024**3)
+        if free_gb < 0.5:   # less than 500MB free
+            await _safe_reply(message,
+                f"⚠️ <b>Low disk space!</b> Only {free_gb:.1f} GB free.\n"
+                "Try again in a few minutes."
+            )
+            return False
+    except Exception:
+        pass
+    return True
+
 async def _safe_reply(msg, text: str, **kwargs):
     """Reply with FloodWait retry."""
     try:
