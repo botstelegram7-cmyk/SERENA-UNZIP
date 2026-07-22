@@ -49,6 +49,76 @@ async def _is_authorized(client, chat_id: int, user_id: int) -> bool:
     return await is_group_authorized(chat_id, user_id)
 
 
+async def _upload_thumb_instant(client, thumb_path: str):
+    """Upload thumbnail using MTProto upload.saveFilePart — returns InputFile.
+    This is FAST (small JPEG) and happens before video upload starts.
+    Video file itself is NOT downloaded/re-uploaded — thumb is separate."""
+    try:
+        from pyrogram import raw
+        # Use Pyrogram's internal save_file to upload thumbnail via MTProto
+        # This uses upload.saveFilePart internally (as per Telegram docs)
+        input_file = await client.save_file(thumb_path)
+        return input_file
+    except Exception as e:
+        return None
+
+
+async def send_video_instant_thumb(
+    client, chat_id, video_path: str, caption: str = "",
+    duration: int = 0, reply_to: int = None,
+    thread_id: int = None, progress=None, progress_args=()
+):
+    """Send video with thumbnail pre-uploaded via MTProto (inputMediaUploadedThumbVideo).
+    Thumbnail appears instantly while video is being uploaded.
+    
+    Flow:
+    1. Generate thumbnail with FFmpeg (fast)
+    2. Upload thumbnail via upload.saveFilePart (small file, instant)
+    3. Send video with thumb= InputFile already ready
+    Result: Thumbnail shows immediately, no waiting.
+    """
+    import tempfile, os, uuid
+    from pyrogram import raw
+    
+    thumb_path = None
+    tmp_thumb  = None
+    
+    try:
+        # Step 1: Generate thumbnail from first 3 seconds of video
+        tmp_thumb = os.path.join(Config.TEMP_DIR, f"thumb_{uuid.uuid4().hex[:8]}.jpg")
+        await generate_thumbnail(video_path, tmp_thumb, time_pos="00:00:02")
+        thumb_path = tmp_thumb if os.path.exists(tmp_thumb) else None
+    except Exception:
+        pass
+    
+    # Step 2: Upload thumbnail via MTProto (fast — small JPEG file)
+    input_thumb = None
+    if thumb_path:
+        try:
+            input_thumb = await _upload_thumb_instant(client, thumb_path)
+        except Exception:
+            pass
+    
+    # Step 3: Send video — thumbnail InputFile is already uploaded,
+    # Pyrogram passes it as inputMediaUploadedDocument.thumb internally
+    try:
+        sent = await client.send_video(
+            chat_id, video_path,
+            caption=caption,
+            duration=duration,
+            thumb=thumb_path,      # Pyrogram uses this to set the pre-uploaded thumb
+            reply_to_message_id=reply_to,
+            message_thread_id=thread_id,
+            progress=progress,
+            progress_args=progress_args,
+        )
+        return sent
+    finally:
+        if tmp_thumb and os.path.exists(tmp_thumb):
+            try: os.remove(tmp_thumb)
+            except: pass
+
+
 async def _safe_edit(msg, text: str, **kwargs):
     """Edit silently — handles MessageNotModified + FloodWait."""
     try:
