@@ -821,8 +821,8 @@ async def zipqueue_cmd(client, message):
             f"💾 Total size  : <b>{total_mb:.1f} MB</b>\n\n"
             "Aur ZIPs bhejo ya neeche process karo ⬇️",
             reply_markup=InlineKeyboardMarkup([
-                [_btn(f"▶️ Process All ({n} ZIPs)", f"zq_start|{uid}", "success")],
-                [_btn("📋 List Queue", f"zq_list|{uid}", "primary"),
+                [_btn(f"➜ Process All ({n} ZIPs)", f"zq_start|{uid}", "success")],
+                [_btn("◉ List Queue", f"zq_list|{uid}", "primary"),
                  _btn("🗑 Clear", f"zq_cancel|{uid}", "danger")],
             ])
         ); return
@@ -854,8 +854,8 @@ async def zipqueue_cmd(client, message):
         + group_note,
         reply_markup=InlineKeyboardMarkup([
             [_btn("▶️ Process Queue (0 ZIPs)", f"zq_start|{uid}", "success")],
-            [_btn("📋 List Queue", f"zq_list|{uid}", "primary"),
-             _btn("🗑 Cancel Queue", f"zq_cancel|{uid}", "danger")],
+            [_btn("◉ List Queue", f"zq_list|{uid}", "primary"),
+             _btn("✦ Cancel Queue", f"zq_cancel|{uid}", "danger")],
         ])
     )
 
@@ -937,7 +937,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
         )
     else:
         resume_msg = (
-            f"🚀 <b>ZIP Queue Processing Start!</b>\n"
+            f"◈ <b>Queue Processing</b>\n"
             f"📦 Total: <b>{total}</b> ZIPs | Sequence preserved ✅"
         )
     header = await client.send_message(
@@ -959,7 +959,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
         fname = finfo["file_name"]
         st = await client.send_message(
             chat_id,
-            f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
+            f"➜ <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
             reply_to_message_id=header.id
         )
         item_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
@@ -971,7 +971,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             try:
                 st2 = await make_progress_message(
                     client, chat_id, header.id,
-                    f"📥 <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
+                    f"➜ <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
                     thread_id=thread_id,
                 )
                 if st2:
@@ -1021,7 +1021,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     )
             if not dl: raise RuntimeError("Download failed")
             if sess.get("cancelled"): break
-            await _safe_edit(st, f"🔓 <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
+            await _safe_edit(st, f"◈ <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
             extract_dir = item_root / "extracted"
             result = extract_archive(dl, str(extract_dir), password=finfo.get("password"))
             rel_files = sorted(result["files"], key=str.lower)
@@ -1045,7 +1045,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                         up_sz = full.stat().st_size
                         up_st = await make_progress_message(
                             client, chat_id, reply_to,
-                            f"📤 <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…",
+                            f"➤ <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…",
                             thread_id=thread_id,
                         )
                         async def _up_v_prog(cur, tot,
@@ -1073,7 +1073,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                         # ALL files including nested folder files → send as document
                         start_up = time.time()
                         up_st_d = await make_progress_message(client, chat_id, reply_to,
-                            f"📤 <b>[{i}/{total}]</b> Uploading: <code>{_fname}</code>…",
+                            f"➤ <b>[{i}/{total}]</b> Uploading: <code>{_fname}</code>…",
                             thread_id=thread_id)
                         async def _upd2(c,t,_m=up_st_d,_s=start_up,_n=_fname,_sz=full.stat().st_size):
                             await progress_for_pyrogram(c,t,_m,_s,_n,"Uploading",known_total=_sz)
@@ -1094,7 +1094,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 await asyncio.sleep(0.8)  # 0.8s gap prevents FloodWait
             try:
                 await st.edit_text(
-                    f"✅ <b>[{i}/{total}]</b> Done: <code>{fname}</code>\n"
+                    f"✔ <b>[{i}/{total}]</b> Done <code>{fname}</code>\n"
                     f"📁 {sent_n}/{len(rel_files)} files sent.")
                 await asyncio.sleep(1.5)
                 try: await st.delete()   # ← delete status message after done
@@ -1135,7 +1135,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             try:
                 await asyncio.sleep(3)   # brief wait before retry
                 await _safe_edit(st,
-                    f"🔄 <b>[{i}/{total}]</b> Retrying: <code>{fname}</code>…\n"
+                    f"✧ <b>[{i}/{total}]</b> Retrying: <code>{fname}</code>…\n"
                     f"<i>Error: {str(e)[:100]}</i>"
                 )
                 # Retry: re-download and extract
@@ -1186,7 +1186,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             if not _retry_success:
                 err_short = str(e)[:200]
                 try: await st.edit_text(
-                    f"⏭ <b>[{i}/{total}]</b> Skipped (2 attempts failed):\n"
+                    f"▣ <b>[{i}/{total}]</b> Skipped (2 attempts failed):\n"
                     f"<code>{fname}</code>\n"
                     f"<code>{err_short}</code>")
                 except: pass
@@ -1216,12 +1216,12 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     try:
         if cancelled:
             await header.edit_text(
-                f"🛑 <b>Queue Cancelled!</b>\n"
+                f"✦ <b>Queue Cancelled</b>\n"
                 f"✅ Done: {ok} | ❌ Failed: {fail} | ⏭ Skipped: {total-ok-fail}"
                 + fail_summary)
         else:
             await header.edit_text(
-                f"🎉 <b>Queue Complete!</b>\n\n"
+                f"✔ <b>Queue Complete</b>\n\n"
                 f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>\n"
                 f"🗑 Cache cleared after each ZIP!"
                 + fail_summary)
@@ -1275,7 +1275,7 @@ async def continue_cmd(client, message):
         ); return
 
     # Build session list with Continue + Delete buttons
-    lines = ["💾 <b>Saved Queue Sessions</b>\n"]
+    lines = ["◈ <b>Saved Sessions</b>\n"]
     buttons = []
     for idx, s in enumerate(all_sessions[:10]):
         s_uid   = s.get("uid", 0)
@@ -1296,11 +1296,11 @@ async def continue_cmd(client, message):
             f"  📅 Saved: {paused_at}"
         )
         buttons.append([
-            _btn(f"▶️ Continue Session {idx+1}", f"sess_cont|{s_uid}", "success"),
-            _btn(f"🗑 Delete Session {idx+1}",   f"sess_del|{s_uid}",  "danger"),
+            _btn(f"➜ Continue {idx+1}", f"sess_cont|{s_uid}", "success"),
+            _btn(f"✦ Delete {idx+1}",   f"sess_del|{s_uid}",  "danger"),
         ])
 
-    buttons.append([_btn("🗑 Delete ALL Sessions", "sess_del_all", "danger")])
+    buttons.append([_btn("✦ Delete All", "sess_del_all", "danger")])
 
     await _safe_reply(
         message,
@@ -1325,7 +1325,7 @@ async def continue_cmd(client, message):
         await _safe_reply(message, "✅ Queue already complete thi — state clean kar di."); return
 
     await _safe_reply(message,
-        f"▶️ <b>Resuming Queue!</b>\n\n"
+        f"➜ <b>Resuming Queue</b>\n\n"
         f"📦 Total files: {len(files)}\n"
         f"✅ Already done: {ok}\n"
         f"⏳ Remaining: {len(pending)}\n\n"
@@ -1687,14 +1687,14 @@ async def on_file(client, message):
             remaining = MAX_QUEUE - n
             await _safe_reply(
                 message,
-                f"✅ <b>ZIP #{n} added!</b>  (Slot {n}/{MAX_QUEUE})\n"
+                f"◆ <b>ZIP #{n} added</b>  (Slot {n}/{MAX_QUEUE})\n"
                 f"📄 <code>{fname}</code>\n"
                 f"💾 Total: {total_mb:.1f} MB  |  🆓 Remaining slots: {remaining}\n\n"
                 f"Aur ZIPs bhejo ya process dabao ⬇️",
                 reply_markup=InlineKeyboardMarkup([
-                    [_btn(f"▶️ Process All {n} ZIPs", f"zq_start|{uid}", "success")],
-                    [InlineKeyboardButton("📋 List", callback_data=f"zq_list|{uid}"),
-                     _btn("🗑 Cancel", f"zq_cancel|{uid}", "danger")],
+                    [_btn(f"➜ Process All {n} ZIPs", f"zq_start|{uid}", "success")],
+                    [InlineKeyboardButton("◉ List", callback_data=f"zq_list|{uid}"),
+                     _btn("✦ Cancel", f"zq_cancel|{uid}", "danger")],
                 ])
             )
             return
@@ -2096,7 +2096,7 @@ async def callbacks(client, cq: CallbackQuery):
             "Phir ▶️ Process dabao.",
             reply_markup=InlineKeyboardMarkup([
                 [_btn("▶️ Process Queue", f"zq_start|{cq.from_user.id}", "success")],
-                [_btn("🗑 Cancel Queue", f"zq_cancel|{cq.from_user.id}", "danger")],
+                [_btn("✦ Cancel Queue", f"zq_cancel|{cq.from_user.id}", "danger")],
             ]))
         except: pass
         return
