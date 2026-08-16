@@ -26,6 +26,10 @@ class Config:
     START_PIC = os.getenv("START_PIC", None)
     TEMP_DIR  = os.getenv("TEMP_DIR", "downloads")
 
+    # ── Web App (Telegram Mini App) ───────────────────────────────
+    # Set this in Render env vars: RENDER_EXTERNAL_URL=https://yourbot.onrender.com
+    RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+
     # ── Rate limits ───────────────────────────────────────────────
     PROGRESS_UPDATE_INTERVAL = int(os.getenv("PROGRESS_UPDATE_INTERVAL", "5"))
     AUTO_DELETE_DEFAULT_MIN  = int(os.getenv("AUTO_DELETE_DEFAULT_MIN", "30"))

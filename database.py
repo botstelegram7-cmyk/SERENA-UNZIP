@@ -398,3 +398,44 @@ async def is_group_authorized(chat_id: int, user_id: int) -> bool:
             _mem_group_auth[key] = True
             return True
     return False
+
+
+# ── Unzip Task Persistence (survive bot restarts) ─────────────────────────────
+if USE_DB:
+    unzip_tasks_col = db["unzip_tasks"]
+else:
+    unzip_tasks_col = None
+
+_mem_unzip_tasks: Dict[str, Dict[str, Any]] = {}
+
+
+async def save_unzip_task(tid: str, data: Dict[str, Any]) -> None:
+    """Persist an unzip task so it survives bot restarts."""
+    _mem_unzip_tasks[tid] = data
+    if USE_DB:
+        await _safe_db(unzip_tasks_col.update_one(
+            {"tid": tid},
+            {"$set": {**data, "tid": tid,
+                      "saved_at": datetime.datetime.utcnow().isoformat()}},
+            upsert=True,
+        ))
+
+
+async def get_unzip_task(tid: str) -> Optional[Dict[str, Any]]:
+    """Retrieve an unzip task — checks memory first, then MongoDB."""
+    if tid in _mem_unzip_tasks:
+        return _mem_unzip_tasks[tid]
+    if USE_DB:
+        doc = await _safe_db(unzip_tasks_col.find_one({"tid": tid}))
+        if doc:
+            doc.pop("_id", None)
+            _mem_unzip_tasks[tid] = doc
+            return doc
+    return None
+
+
+async def delete_unzip_task(tid: str) -> None:
+    """Clean up task from memory and DB after all files are sent."""
+    _mem_unzip_tasks.pop(tid, None)
+    if USE_DB:
+        await _safe_db(unzip_tasks_col.delete_one({"tid": tid}))

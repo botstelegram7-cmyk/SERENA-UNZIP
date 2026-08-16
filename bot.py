@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pyrogram import Client, enums, filters, idle
 from pyrogram.errors import FileReferenceExpired, FloodWait, MessageNotModified
 from pyrogram.types import (
-    CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message,
+    CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo,
 )
 
 # ── Safe colored button helper (works with pyrofork; graceful fallback for plain pyrogram) ──
@@ -170,6 +170,7 @@ from database import (
     is_banned, is_group_authorized, mark_queue_file_done, save_queue_state,
     update_queue_progress,
     register_referral, register_temp_path, save_user_settings, set_ban,
+    save_unzip_task, get_unzip_task, delete_unzip_task,
     set_premium, update_user_stats,
 )
 from utils.cleanup import cleanup_worker
@@ -204,6 +205,10 @@ app = Client(
     in_memory=True,
     sleep_threshold=60,   # ← auto-sleep on FloodWait ≤60s (no crash)
 )
+
+# ── Bandwidth / Resource Guard (Render 512MB) ────────────────────────────────
+# Max 3 concurrent heavy operations — prevents RAM overflow
+GLOBAL_SEMAPHORE = asyncio.Semaphore(3)
 
 VIDEO_EXT_SET = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts"}
 IMAGE_EXT_SET = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -2266,74 +2271,163 @@ async def handle_unzip_from_password(client, msg, info, password):
 async def run_unzip_task(client, msg, password, reply_msg=None):
     if not msg.from_user: return
     uid=msg.from_user.id; lock=get_lock(uid); dest=reply_msg or msg
-    if lock.locked(): await dest.reply_text("⏳ Ek task chal raha hai."); return
+    if lock.locked(): await dest.reply_text("⏳ A task is already running. Please wait."); return
+    # Capture thread_id from the ORIGINAL message (for forum/topic support)
+    origin_thread_id = getattr(msg, "message_thread_id", None)
     async with lock:
-        user_cancelled[uid]=False
-        doc=msg.document; fname=doc.file_name or "archive"
-        size_mb=(doc.file_size or 0)/(1024*1024)
-        await get_or_create_user(uid)
-        temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
-        temp_root.mkdir(parents=True,exist_ok=True)
-        await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-        status=await dest.reply_text("📥 Downloading archive…"); start=time.time()
-        try:
-            dl=await client.download_media(doc,file_name=str(temp_root),progress=progress_for_pyrogram,
-                progress_args=(status,start,fname,"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-        if not dl: await status.edit_text("❌ Download failed."); return
-        if user_cancelled.get(uid): await status.edit_text("❌ Cancelled."); return
-        if not password and detect_encrypted(dl):
-            await status.edit_text("🔐 Archive encrypted hai!\nUse <b>With Password</b> ya <b>Auto-Try</b>."); return
-        await status.edit_text("📦 Extracting…")
-        extract_dir=temp_root/"extracted"
-        try: result=extract_archive(dl,str(extract_dir),password=password)
-        except Exception as e: await status.edit_text(f"❌ Extract error:\n<code>{e}</code>"); return
-        if user_cancelled.get(uid): await status.edit_text("❌ Cancelled mid-way."); return
-        stats=result["stats"]; files=sorted(result["files"],key=lambda p:p.lower())
-        links_map=extract_links_from_folder(str(extract_dir))
-        tid=uuid.uuid4().hex
-        tasks[tid]={"type":"unzip","user_id":uid,"base_dir":str(extract_dir),"files":files,"archive_name":os.path.basename(dl)}
-        summary=(f"✅ <b>Extraction Done!</b>\n\n📁 <code>{os.path.basename(dl)}</code>\n"
-                 f"📊 Files: <b>{stats['total_files']}</b>  Folders: <b>{stats['folders']}</b>\n"
-                 f"🎬 Videos: <b>{stats['videos']}</b>  📄 PDFs: <b>{stats['pdf']}</b>  "
-                 f"📱 APKs: <b>{stats['apk']}</b>\n"
-                 f"📝 TXT: <b>{stats['txt']}</b>  📺 M3U8: <b>{stats['m3u']}</b>  "
-                 f"Others: <b>{stats['others']}</b>\n")
-        tl=sum(len(v) for v in links_map.values())
-        if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
-        rows=[[_btn("❌ Cancel", f"ucancel|{tid}", "danger")],
-              [_btn("🚀 Send ALL", f"sendall|{tid}", "success")]]
-        for idx,rel in enumerate(files[:25]):
-            short=rel if len(rel)<=42 else "…"+rel[-39:]
-            rows.append([_btn(short, f"sendone|{tid}|{idx}", "success")])
-        if tl:
-            all_links=[l for v in links_map.values() for l in v]
-            LINK_SESSIONS[(status.chat.id,status.id)]={"links":all_links,"content":"\n".join(all_links)}
-            rows.append([_btn(f"⬇️ Download {tl} links", f"links|download_all|{status.chat.id}|{status.id}", "success")])
-        await status.edit_text(summary,reply_markup=InlineKeyboardMarkup(rows))
-        await update_user_stats(uid,size_mb)
+        async with GLOBAL_SEMAPHORE:
+            user_cancelled[uid]=False
+            doc=msg.document; fname=doc.file_name or "archive"
+            size_mb=(doc.file_size or 0)/(1024*1024)
+            await get_or_create_user(uid)
+            temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
+            temp_root.mkdir(parents=True,exist_ok=True)
+            await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
+            status=await dest.reply_text("📥 Downloading archive…"); start=time.time()
+            try:
+                dl=await client.download_media(doc,file_name=str(temp_root),progress=progress_for_pyrogram,
+                    progress_args=(status,start,fname,"to server"))
+            except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+            if not dl: await status.edit_text("❌ Download failed."); return
+            if user_cancelled.get(uid): await status.edit_text("❌ Cancelled."); return
+            if not password and detect_encrypted(dl):
+                await status.edit_text("🔐 Archive is encrypted!\nUse <b>With Password</b> or <b>Auto-Try</b>."); return
+            await status.edit_text("📦 Extracting…")
+            extract_dir=temp_root/"extracted"
+            try: result=extract_archive(dl,str(extract_dir),password=password)
+            except Exception as e: await status.edit_text(f"❌ Extract error:\n<code>{e}</code>"); return
+            # Free archive file from disk immediately after extraction
+            try: os.remove(dl)
+            except: pass
+            if user_cancelled.get(uid): await status.edit_text("❌ Cancelled mid-way."); return
+            stats=result["stats"]; files=sorted(result["files"],key=lambda p:p.lower())
+            links_map=extract_links_from_folder(str(extract_dir))
+            tid=uuid.uuid4().hex
+            task_data={
+                "type":"unzip","user_id":uid,"base_dir":str(extract_dir),
+                "files":files,"archive_name":fname,
+                "chat_id":status.chat.id,"reply_to":status.id,
+                "thread_id":origin_thread_id,   # ← stored for send_all / send_one
+            }
+            tasks[tid]=task_data
+            # ── Persist to MongoDB so task survives bot restart ──
+            try: await save_unzip_task(tid, task_data)
+            except Exception: pass
+            summary=(f"✅ <b>Extraction Complete!</b>\n\n📁 <code>{fname}</code>\n"
+                     f"📊 Files: <b>{stats['total_files']}</b>  Folders: <b>{stats['folders']}</b>\n"
+                     f"🎬 Videos: <b>{stats['videos']}</b>  📄 PDFs: <b>{stats['pdf']}</b>  "
+                     f"📱 APKs: <b>{stats['apk']}</b>\n"
+                     f"📝 TXT: <b>{stats['txt']}</b>  📺 M3U8: <b>{stats['m3u']}</b>  "
+                     f"Others: <b>{stats['others']}</b>\n")
+            tl=sum(len(v) for v in links_map.values())
+            if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
+            rows=[[_btn("❌ Cancel", f"ucancel|{tid}", "danger")],
+                  [_btn("🚀 Send ALL", f"sendall|{tid}", "success")]]
+            # ── Web App "Select Files" button ────────────────────────────────
+            webapp_url = Config.RENDER_EXTERNAL_URL
+            if webapp_url:
+                select_url = f"{webapp_url.rstrip('/')}/select?tid={tid}"
+                rows.insert(1, [InlineKeyboardButton(
+                    f"🗂 Select Files ({stats['total_files']})",
+                    web_app=WebAppInfo(url=select_url)
+                )])
+            # ── Per-file buttons (first 20 files) ────────────────────────────
+            for idx,rel in enumerate(files[:20]):
+                short=rel if len(rel)<=42 else "…"+rel[-39:]
+                rows.append([_btn(short, f"sendone|{tid}|{idx}", "success")])
+            if len(files)>20:
+                rows.append([_btn(f"… and {len(files)-20} more — use Select Files ☝️", "noop", "secondary")])
+            if tl:
+                all_links=[l for v in links_map.values() for l in v]
+                LINK_SESSIONS[(status.chat.id,status.id)]={"links":all_links,"content":"\n".join(all_links)}
+                rows.append([_btn(f"⬇️ Download {tl} links", f"links|download_all|{status.chat.id}|{status.id}", "success")])
+            await status.edit_text(summary,reply_markup=InlineKeyboardMarkup(rows))
+            await update_user_stats(uid,size_mb)
 
 async def handle_send_all(client, cq, tid):
+    # Try in-memory first, then restore from MongoDB if bot restarted
     info=tasks.get(tid)
-    if not info: await cq.answer("Task expired.",show_alert=True); return
+    if not info:
+        try: info = await get_unzip_task(tid)
+        except Exception: info = None
+    if not info:
+        await cq.answer("Task expired or not found. Please extract the archive again.",show_alert=True); return
+    tasks[tid]=info  # restore to memory
     user=cq.from_user
-    if user.id!=info["user_id"]: await cq.answer("Ye tumhara task nahi.",show_alert=True); return
+    if user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
     await cq.answer(); await cq.message.edit_text("📤 Sending all files…")
     base=Path(info["base_dir"]); files=info["files"]
     chat_id=cq.message.chat.id; reply_to=cq.message.id
+    thread_id=info.get("thread_id")  # ← Fixed: get from stored task dict
     is_priv=cq.message.chat.type==enums.ChatType.PRIVATE; pinned=False
     if is_priv:
         try: await client.pin_chat_message(chat_id,reply_to); pinned=True
         except: pass
-    for rel in files:
-        if user_cancelled.get(user.id): break
-        full=base/rel
-        if not full.is_file(): continue
+    async with GLOBAL_SEMAPHORE:
+        for rel in files:
+            if user_cancelled.get(user.id): break
+            full=base/rel
+            if not full.is_file(): continue
+            try:
+                if is_video_path(rel):
+                    name=Path(rel).name; cap=await build_caption(user.id,name)
+                    thumb=await choose_thumbnail(user.id,str(full))
+                    st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to,
+                        message_thread_id=thread_id)
+                    start_u=time.time()
+                    dur=await _get_video_duration(str(full))
+                    sent=await client.send_video(chat_id,str(full),caption=cap,thumb=thumb,duration=dur,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),
+                        reply_to_message_id=reply_to,message_thread_id=thread_id)
+                    try: await st.delete()
+                    except: pass
+                else:
+                    st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,
+                        message_thread_id=thread_id)
+                    start_u=time.time()
+                    sent=await client.send_document(chat_id,str(full),caption=rel,
+                        progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),
+                        reply_to_message_id=reply_to,message_thread_id=thread_id)
+                    try: await st.delete()
+                    except: pass
+                try: await log_output(client,user,sent,f"send_all {info.get('archive_name','?')}")
+                except: pass
+            except: pass
+            await asyncio.sleep(0.4)
+    if is_priv and pinned:
+        try: await client.unpin_chat_message(chat_id,reply_to)
+        except: pass
+    await client.send_message(chat_id,"✅ All files sent!",reply_to_message_id=reply_to,
+        message_thread_id=thread_id)
+    # Clean up task from DB after full send
+    try: await delete_unzip_task(tid)
+    except: pass
+
+async def handle_send_one(client, cq, tid, index):
+    # Try in-memory first, then restore from MongoDB if bot restarted
+    info=tasks.get(tid)
+    if not info:
+        try: info = await get_unzip_task(tid)
+        except Exception: info = None
+    if not info:
+        await cq.answer("Task expired or not found. Please extract the archive again.",show_alert=True); return
+    tasks[tid]=info  # restore to memory
+    user=cq.from_user
+    if user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
+    files=info["files"]
+    if index<0 or index>=len(files): await cq.answer("Invalid index.",show_alert=True); return
+    await cq.answer()
+    base=Path(info["base_dir"]); rel=files[index]; full=base/rel
+    thread_id=info.get("thread_id")  # ← Fixed: get from stored task dict
+    if not full.is_file(): await cq.message.reply_text("File not found on server. Try sending the archive again."); return
+    chat_id=cq.message.chat.id; reply_to=cq.message.id
+    async with GLOBAL_SEMAPHORE:
         try:
             if is_video_path(rel):
                 name=Path(rel).name; cap=await build_caption(user.id,name)
                 thumb=await choose_thumbnail(user.id,str(full))
-                st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to)
+                st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to,
+                    message_thread_id=thread_id)
                 start_u=time.time()
                 dur=await _get_video_duration(str(full))
                 sent=await client.send_video(chat_id,str(full),caption=cap,thumb=thumb,duration=dur,
@@ -2342,54 +2436,17 @@ async def handle_send_all(client, cq, tid):
                 try: await st.delete()
                 except: pass
             else:
-                st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,message_thread_id=thread_id)
+                st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,
+                    message_thread_id=thread_id)
                 start_u=time.time()
                 sent=await client.send_document(chat_id,str(full),caption=rel,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),
                     reply_to_message_id=reply_to,message_thread_id=thread_id)
                 try: await st.delete()
                 except: pass
-            try: await log_output(client,user,sent,f"send_all {info.get('archive_name','?')}")
+            try: await log_output(client,user,sent,f"send_one {info.get('archive_name','?')}")
             except: pass
         except: pass
-        await asyncio.sleep(0.4)
-    if is_priv and pinned:
-        try: await client.unpin_chat_message(chat_id,reply_to)
-        except: pass
-    await client.send_message(chat_id,"✅ All files sent!",reply_to_message_id=reply_to)
-
-async def handle_send_one(client, cq, tid, index):
-    info=tasks.get(tid)
-    if not info: await cq.answer("Task expired.",show_alert=True); return
-    user=cq.from_user
-    if user.id!=info["user_id"]: await cq.answer("Ye tumhara task nahi.",show_alert=True); return
-    files=info["files"]
-    if index<0 or index>=len(files): await cq.answer("Invalid.",show_alert=True); return
-    await cq.answer()
-    base=Path(info["base_dir"]); rel=files[index]; full=base/rel
-    if not full.is_file(): await cq.message.reply_text("File missing."); return
-    chat_id=cq.message.chat.id; reply_to=cq.message.id
-    try:
-        if is_video_path(rel):
-            name=Path(rel).name; cap=await build_caption(user.id,name)
-            thumb=await choose_thumbnail(user.id,str(full))
-            st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to)
-            start_u=time.time()
-            dur=await _get_video_duration(str(full))
-            sent=await client.send_video(chat_id,str(full),caption=cap,thumb=thumb,duration=dur,
-                progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except: pass
-        else:
-            st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to)
-            start_u=time.time()
-            sent=await client.send_document(chat_id,str(full),caption=rel,
-                progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except: pass
-        try: await log_output(client,user,sent,f"send_one {info.get('archive_name','?')}")
-        except: pass
-    except: pass
 
 # ════════════════════════════════════════════════════════════════════════════
 # AUDIO EXTRACT
