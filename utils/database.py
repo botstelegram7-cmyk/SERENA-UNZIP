@@ -296,29 +296,22 @@ async def save_queue_state(uid: int, state: Dict[str, Any]):
     """Save full queue state — called at queue start and after each ZIP."""
     state["uid"] = uid
     _mem_queue_states[uid] = state
-    if USE_DB and queue_state_col is not None:
-        try:
-            await queue_state_col.update_one(
-                {"uid": uid}, {"$set": state}, upsert=True
-            )
-        except Exception:
-            pass
+    if USE_DB:
+        await _safe_db(queue_state_col.update_one(
+            {"uid": uid}, {"$set": state}, upsert=True
+        ))
 
 
 async def get_queue_state(uid: int) -> Optional[Dict[str, Any]]:
-    """Load saved queue state for a user.
-    FIX: Use Motor find_one directly (not wrapped in _safe_db)."""
+    """Load saved queue state for a user."""
     if uid in _mem_queue_states:
         return _mem_queue_states[uid]
-    if USE_DB and queue_state_col is not None:
-        try:
-            doc = await queue_state_col.find_one({"uid": uid})
-            if doc:
-                doc.pop("_id", None)
-                _mem_queue_states[uid] = doc
-                return doc
-        except Exception:
-            pass
+    if USE_DB:
+        doc = await _safe_db(queue_state_col.find_one({"uid": uid}))
+        if doc:
+            doc.pop("_id", None)
+            _mem_queue_states[uid] = doc
+            return doc
     return None
 
 
@@ -328,16 +321,13 @@ async def update_queue_progress(uid: int, current_index: int, ok: int, fail: int
     state.update({"current_index": current_index, "ok": ok, "fail": fail,
                   "status": "paused", "paused_at": datetime.datetime.utcnow().isoformat()})
     _mem_queue_states[uid] = state
-    if USE_DB and queue_state_col is not None:
-        try:
-            await queue_state_col.update_one(
-                {"uid": uid},
-                {"$set": {"current_index": current_index, "ok": ok, "fail": fail,
-                          "status": "paused", "paused_at": datetime.datetime.utcnow().isoformat()}},
-                upsert=True,
-            )
-        except Exception:
-            pass
+    if USE_DB:
+        await _safe_db(queue_state_col.update_one(
+            {"uid": uid},
+            {"$set": {"current_index": current_index, "ok": ok, "fail": fail,
+                      "status": "paused", "paused_at": datetime.datetime.utcnow().isoformat()}},
+            upsert=True,
+        ))
 
 
 async def mark_queue_file_done(uid: int, index: int, status: str = "done"):
@@ -358,24 +348,19 @@ async def mark_queue_file_done(uid: int, index: int, status: str = "done"):
 async def delete_queue_state(uid: int):
     """Remove queue state after successful completion."""
     _mem_queue_states.pop(uid, None)
-    if USE_DB and queue_state_col is not None:
-        try:
-            await queue_state_col.delete_one({"uid": uid})
-        except Exception:
-            pass
+    if USE_DB:
+        await _safe_db(queue_state_col.delete_one({"uid": uid}))
 
 
 async def get_all_paused_queues() -> List[Dict[str, Any]]:
-    """Get all unfinished queues (for /continue info to owner).
-    FIX: Motor find() is a cursor, NOT a coroutine — iterate directly."""
-    if USE_DB and queue_state_col is not None:
+    """Get all unfinished queues (for /continue info to owner)."""
+    if USE_DB:
         result = []
-        try:
-            async for doc in queue_state_col.find({"status": "paused"}):
+        cursor = await _safe_db(queue_state_col.find({"status": "paused"}))
+        if cursor:
+            async for doc in cursor:
                 doc.pop("_id", None)
                 result.append(doc)
-        except Exception:
-            pass
         return result
     return [s for s in _mem_queue_states.values() if s.get("status") == "paused"]
 
@@ -413,3 +398,44 @@ async def is_group_authorized(chat_id: int, user_id: int) -> bool:
             _mem_group_auth[key] = True
             return True
     return False
+
+
+# ── Unzip Task Persistence (survive bot restarts) ─────────────────────────────
+if USE_DB:
+    unzip_tasks_col = db["unzip_tasks"]
+else:
+    unzip_tasks_col = None
+
+_mem_unzip_tasks: Dict[str, Dict[str, Any]] = {}
+
+
+async def save_unzip_task(tid: str, data: Dict[str, Any]) -> None:
+    """Persist an unzip task so it survives bot restarts."""
+    _mem_unzip_tasks[tid] = data
+    if USE_DB:
+        await _safe_db(unzip_tasks_col.update_one(
+            {"tid": tid},
+            {"$set": {**data, "tid": tid,
+                      "saved_at": datetime.datetime.utcnow().isoformat()}},
+            upsert=True,
+        ))
+
+
+async def get_unzip_task(tid: str) -> Optional[Dict[str, Any]]:
+    """Retrieve an unzip task — checks memory first, then MongoDB."""
+    if tid in _mem_unzip_tasks:
+        return _mem_unzip_tasks[tid]
+    if USE_DB:
+        doc = await _safe_db(unzip_tasks_col.find_one({"tid": tid}))
+        if doc:
+            doc.pop("_id", None)
+            _mem_unzip_tasks[tid] = doc
+            return doc
+    return None
+
+
+async def delete_unzip_task(tid: str) -> None:
+    """Clean up task from memory and DB after all files are sent."""
+    _mem_unzip_tasks.pop(tid, None)
+    if USE_DB:
+        await _safe_db(unzip_tasks_col.delete_one({"tid": tid}))
