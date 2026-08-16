@@ -1028,7 +1028,11 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             if sess.get("cancelled"): break
             await _safe_edit(st, f"◈ <b>[{i}/{total}]</b> Extracting: <code>{fname}</code>…")
             extract_dir = item_root / "extracted"
-            result = extract_archive(dl, str(extract_dir), password=finfo.get("password"))
+            # Use per-file password first, then queue-wide default_password
+            _pw = finfo.get("password") or sess.get("default_password")
+            _extra_pws = sess.get("extra_passwords", [])
+            result = extract_archive(dl, str(extract_dir), password=_pw,
+                                     extra_passwords=_extra_pws)
             rel_files = sorted(result["files"], key=str.lower)
             if sess.get("cancelled"): break
             await st.edit_text(
@@ -1153,7 +1157,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     extract_dir2 = item_root2 / "extracted"
                     result2 = extract_archive(
                         dl2, str(extract_dir2),
-                        password=finfo.get("password") or sess.get("default_password")
+                        password=finfo.get("password") or sess.get("default_password"),
+                        extra_passwords=sess.get("extra_passwords", [])
                     )
                     rel_files2 = sorted(result2["files"], key=str.lower)
                     for rel2 in rel_files2:
@@ -1797,6 +1802,33 @@ async def on_text(client, message):
                 ranges=parse_page_ranges(txt,pi.get("total_pages",999))
                 if not ranges: await message.reply_text("❌ Invalid range. Format: <code>1-5,7,10-15</code>")
                 else: await _do_pdf_split_range(client,message,tid,ranges)
+        elif action=="zq_await_password":
+            # User replied with password(s) for the ZIP queue
+            sess = ZIP_QUEUE_SESSIONS.get(uid)
+            if not sess:
+                await message.reply_text("❌ Queue session expired. Start again with /zq."); return
+            # Support multiple passwords (one per line)
+            raw_lines = [line.strip() for line in txt.splitlines() if line.strip()]
+            if not raw_lines:
+                await message.reply_text("❌ Empty password. Try again or use /cancelqueue."); return
+            primary_pw = raw_lines[0]
+            extra_pws  = raw_lines[1:] if len(raw_lines) > 1 else []
+            sess["default_password"]  = primary_pw
+            sess["extra_passwords"]   = extra_pws  # stored for multi-password support
+            sess["processing"] = True
+            chat_id   = state.get("chat_id",   message.chat.id)
+            reply_to  = state.get("reply_to",  message.id)
+            thread_id = state.get("thread_id")
+            pw_display = f"<tg-spoiler>{primary_pw}</tg-spoiler>"
+            extra_note = f" (+{len(extra_pws)} more)" if extra_pws else ""
+            st = await message.reply_text(
+                f"🔐 Password set{extra_note}: {pw_display}\n"
+                f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…"
+            )
+            task = asyncio.create_task(
+                _process_zip_queue(client, uid, chat_id, st.id, thread_id=thread_id)
+            )
+            USER_TASKS[uid] = task
         return
     if not await check_force_sub(client,message): return
     await get_or_create_user(uid)
@@ -2116,13 +2148,64 @@ async def callbacks(client, cq: CallbackQuery):
             await cq.answer("Queue empty hai! Pehle ZIPs bhejo.", show_alert=True); return
         if sess.get("processing"):
             await cq.answer("Queue already chal rahi hai!", show_alert=True); return
+        await cq.answer()
+
+        # ── Ask for password BEFORE starting queue ───────────────────────────
+        # If password already set via /zqpass, skip prompt and start directly
+        if sess.get("default_password"):
+            # Password already set — show it and start
+            sess["processing"] = True
+            try:
+                await cq.message.edit_text(
+                    f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
+                    f"🔐 Password: <tg-spoiler>{sess['default_password']}</tg-spoiler>"
+                )
+            except: pass
+            sess_thread = sess.get("thread_id")
+            task = asyncio.create_task(
+                _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id, thread_id=sess_thread)
+            )
+            USER_TASKS[uid] = task
+        else:
+            # Ask for password — store state to catch reply
+            n = len(sess["files"])
+            pending_state[uid] = {
+                "action": "zq_await_password",
+                "chat_id": cq.message.chat.id,
+                "reply_to": cq.message.id,
+                "thread_id": sess.get("thread_id"),
+            }
+            try:
+                await cq.message.edit_text(
+                    f"🔐 <b>Password Check</b>\n\n"
+                    f"📦 {n} archive(s) queued.\n\n"
+                    f"Are these archives <b>password-protected</b>?\n"
+                    f"• Send the password now (supports multiple, one per line)\n"
+                    f"• Or tap <b>No Password</b> to start without one",
+                    reply_markup=InlineKeyboardMarkup([[
+                        _btn("▶️ No Password", f"zq_nopass|{uid}", "success"),
+                        _btn("❌ Cancel", f"zq_cancel|{uid}", "danger"),
+                    ]])
+                )
+            except: pass
+        return
+    if data.startswith("zq_nopass|"):
+        uid = int(data.split("|",1)[1])
+        if cq.from_user.id != uid:
+            await cq.answer("Not your queue!", show_alert=True); return
+        sess = ZIP_QUEUE_SESSIONS.get(uid)
+        if not sess:
+            await cq.answer("Queue expired! Start again with /zq.", show_alert=True); return
+        pending_state.pop(uid, None)  # clear any pending password state
         sess["processing"] = True
-        try: await cq.message.edit_text(
-            f"▶️ <b>Queue Processing Shuru!</b> {len(sess['files'])} ZIP(s)…"
-        )
-        except: pass
-        await cq.answer("Queue start ho gayi!")
         sess_thread = sess.get("thread_id")
+        await cq.answer("Starting without password…")
+        try:
+            await cq.message.edit_text(
+                f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
+                f"🔓 No password set"
+            )
+        except: pass
         task = asyncio.create_task(
             _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id, thread_id=sess_thread)
         )
