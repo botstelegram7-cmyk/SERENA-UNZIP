@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Select Files</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --p:#8b5cf6;--p2:#6d28d9;
+  --g:#10b981;--r:#ef4444;
+  --bg:#0a0a14;
+  --card:rgba(255,255,255,0.05);
+  --border:rgba(255,255,255,0.1);
+  --text:#e2e8f0;--muted:#64748b;
+  --check:#8b5cf6;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;
+  overflow-x:hidden;}
+body{padding-bottom:90px;}
+
+/* Header */
+.header{padding:18px 16px 12px;text-align:center;
+  background:linear-gradient(180deg,rgba(139,92,246,.12) 0%,transparent 100%);
+  border-bottom:1px solid var(--border);}
+.header h1{font-size:20px;font-weight:800;
+  background:linear-gradient(135deg,#fff 30%,var(--p));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.header .sub{font-size:13px;color:var(--muted);margin-top:4px;}
+.header .arc{font-size:11px;color:rgba(139,92,246,.8);margin-top:3px;
+  font-weight:600;letter-spacing:.3px;}
+
+/* Search */
+.search-wrap{padding:12px 16px;}
+.search{display:flex;align-items:center;gap:10px;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:14px;padding:10px 14px;}
+.search input{flex:1;background:none;border:none;outline:none;
+  color:var(--text);font-size:15px;}
+.search input::placeholder{color:var(--muted);}
+
+/* File list */
+.list{padding:0 16px;}
+
+/* Folder row */
+.folder{display:flex;align-items:center;gap:10px;
+  padding:11px 12px;margin-bottom:4px;
+  background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.2);
+  border-radius:13px;cursor:pointer;user-select:none;}
+.folder .arrow{font-size:10px;color:var(--muted);transition:transform .2s;width:12px;text-align:center;}
+.folder .arrow.open{transform:rotate(90deg);}
+.folder-name{flex:1;font-size:14px;font-weight:600;color:rgba(139,92,246,.9);}
+.folder-count{font-size:11px;color:var(--muted);background:rgba(255,255,255,.06);
+  padding:2px 8px;border-radius:999px;}
+
+/* File row */
+.file{display:flex;align-items:center;gap:10px;
+  padding:10px 12px;margin-bottom:3px;
+  background:var(--card);border:1px solid var(--border);
+  border-radius:12px;cursor:pointer;transition:background .15s;}
+.file:active{background:rgba(255,255,255,.08);}
+.file.selected{background:rgba(139,92,246,.12);border-color:rgba(139,92,246,.4);}
+.file-icon{font-size:18px;width:22px;text-align:center;flex-shrink:0;}
+.file-name{flex:1;font-size:13px;font-weight:500;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.file-size{font-size:11px;color:var(--muted);flex-shrink:0;}
+.file-check{width:22px;height:22px;border-radius:7px;border:2px solid var(--border);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+  transition:all .15s;font-size:13px;}
+.file.selected .file-check{background:var(--check);border-color:var(--check);color:#fff;}
+
+/* Children (indented under folder) */
+.children{padding-left:24px;display:block;}
+.children.hidden{display:none;}
+
+/* Bottom bar */
+.bottom-bar{position:fixed;bottom:0;left:0;right:0;
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:rgba(10,10,20,.95);backdrop-filter:blur(20px);
+  border-top:1px solid var(--border);
+  display:flex;gap:10px;z-index:100;}
+.btn-toggle{flex:0 0 auto;padding:13px 18px;border-radius:13px;border:none;cursor:pointer;
+  font-size:14px;font-weight:700;
+  background:rgba(255,255,255,.08);color:var(--text);}
+.btn-toggle:active{background:rgba(255,255,255,.14);}
+.btn-send{flex:1;padding:13px;border-radius:13px;border:none;cursor:pointer;
+  font-size:15px;font-weight:800;
+  background:linear-gradient(135deg,var(--p),var(--p2));color:#fff;
+  box-shadow:0 4px 20px rgba(139,92,246,.4);
+  transition:opacity .2s;}
+.btn-send:disabled{opacity:.4;cursor:not-allowed;}
+.btn-send:active:not(:disabled){opacity:.85;}
+
+/* Loading */
+.loading{text-align:center;padding:60px 20px;color:var(--muted);}
+.loading .spinner{width:36px;height:36px;border-radius:50%;
+  border:3px solid rgba(139,92,246,.2);border-top-color:var(--p);
+  animation:spin .8s linear infinite;margin:0 auto 16px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Toast */
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);
+  background:rgba(16,185,129,.9);color:#fff;padding:10px 20px;
+  border-radius:10px;font-size:14px;font-weight:600;
+  opacity:0;transition:opacity .3s;pointer-events:none;z-index:999;}
+.toast.show{opacity:1;}
+.toast.err{background:rgba(239,68,68,.9);}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Select Files to Extract</h1>
+  <div class="sub" id="sub-title">Loading…</div>
+  <div class="arc" id="arc-name"></div>
+</div>
+
+<div class="search-wrap">
+  <div class="search">
+    <span>🔍</span>
+    <input type="text" id="search-input" placeholder="Search files…" oninput="onSearch()">
+  </div>
+</div>
+
+<div class="list" id="file-list">
+  <div class="loading">
+    <div class="spinner"></div>
+    <div>Loading files…</div>
+  </div>
+</div>
+
+<div class="bottom-bar">
+  <button class="btn-toggle" onclick="toggleAll()">Toggle All</button>
+  <button class="btn-send" id="send-btn" onclick="sendSelected()" disabled>
+    Upload Selected (0)
+  </button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+// Parse task ID from URL ?tid=xxx
+const params = new URLSearchParams(window.location.search);
+const TID = params.get('tid') || '';
+
+let ALL_FILES = [];
+let SELECTED = new Set();
+
+// ── Icons per file type ───────────────────────────────────────────────────────
+function iconFor(type, name) {
+  if (type === 'video') return '🎬';
+  if (type === 'pdf')   return '📄';
+  if (type === 'audio') return '🎵';
+  if (type === 'image') return '🖼';
+  const ext = name.split('.').pop().toLowerCase();
+  if (['zip','rar','7z','tar','gz'].includes(ext)) return '🗜';
+  if (['txt','srt','vtt'].includes(ext)) return '📝';
+  if (['apk','xapk'].includes(ext)) return '📱';
+  if (['m3u','m3u8'].includes(ext)) return '📺';
+  return '📁';
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1024/1024).toFixed(1) + ' MB';
+}
+
+// ── Build folder tree ─────────────────────────────────────────────────────────
+function buildTree(files) {
+  const root = {};
+  for (const f of files) {
+    const parts = f.path.replace(/\\/g, '/').split('/');
+    let cur = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const d = parts[i];
+      if (!cur[d]) cur[d] = { __files: [], __dirs: {} };
+      cur = cur[d].__dirs || (cur[d].__dirs = {});
+    }
+    // file node in the parent dir
+    const parent = parts.slice(0,-1).join('/');
+    const dirObj = getDirObj(root, parts.slice(0,-1));
+    if (dirObj) {
+      if (!dirObj.__files) dirObj.__files = [];
+      dirObj.__files.push(f);
+    } else {
+      if (!root.__files) root.__files = [];
+      root.__files.push(f);
+    }
+  }
+  return root;
+}
+
+function getDirObj(tree, parts) {
+  if (!parts.length) return tree;
+  let cur = tree;
+  for (const p of parts) {
+    if (!cur[p]) return null;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function renderFlat(files, query='') {
+  const el = document.getElementById('file-list');
+  const filtered = query
+    ? files.filter(f => f.name.toLowerCase().includes(query.toLowerCase()))
+    : files;
+
+  if (!filtered.length) {
+    el.innerHTML = '<div class="loading"><div style="font-size:32px;margin-bottom:12px">🔍</div><div>No files match</div></div>';
+    return;
+  }
+
+  el.innerHTML = filtered.map(f => `
+    <div class="file${SELECTED.has(f.index)?'  selected':''}" id="row-${f.index}" onclick="toggle(${f.index})">
+      <span class="file-icon">${iconFor(f.type, f.name)}</span>
+      <span class="file-name" title="${f.path}">${f.name}</span>
+      <span class="file-size">${fmtSize(f.size)}</span>
+      <span class="file-check">${SELECTED.has(f.index)?'✓':''}</span>
+    </div>
+  `).join('');
+}
+
+function renderTree(files) {
+  // Group files by folder
+  const groups = {};
+  for (const f of files) {
+    const parts = f.path.replace(/\\/g,'/').split('/');
+    const folder = parts.length > 1 ? parts.slice(0,-1).join('/') : '';
+    if (!groups[folder]) groups[folder] = [];
+    groups[folder].push(f);
+  }
+
+  const el = document.getElementById('file-list');
+  let html = '';
+
+  // Root files first
+  const rootFiles = groups[''] || [];
+  html += rootFiles.map(f => fileRow(f)).join('');
+
+  // Folders
+  const folders = Object.keys(groups).filter(k => k !== '').sort();
+  for (const folder of folders) {
+    const ffiles = groups[folder];
+    const folderName = folder.split('/').pop();
+    const allSel = ffiles.every(f => SELECTED.has(f.index));
+    html += `
+      <div class="folder" onclick="toggleFolder('${folder}')">
+        <span class="arrow" id="arrow-${CSS.escape(folder)}">▶</span>
+        <span style="font-size:16px">📁</span>
+        <span class="folder-name">${folderName}</span>
+        <span class="folder-count">${ffiles.length}</span>
+      </div>
+      <div class="children hidden" id="ch-${CSS.escape(folder)}">
+        ${ffiles.map(f => fileRow(f)).join('')}
+      </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function fileRow(f) {
+  const sel = SELECTED.has(f.index);
+  return `<div class="file${sel?' selected':''}" id="row-${f.index}" onclick="toggle(${f.index})">
+    <span class="file-icon">${iconFor(f.type, f.name)}</span>
+    <span class="file-name" title="${f.path}">${f.name}</span>
+    <span class="file-size">${fmtSize(f.size)}</span>
+    <span class="file-check">${sel?'✓':''}</span>
+  </div>`;
+}
+
+function toggle(idx) {
+  if (SELECTED.has(idx)) SELECTED.delete(idx);
+  else SELECTED.add(idx);
+  const row = document.getElementById(`row-${idx}`);
+  if (row) {
+    row.classList.toggle('selected', SELECTED.has(idx));
+    const chk = row.querySelector('.file-check');
+    if (chk) chk.textContent = SELECTED.has(idx) ? '✓' : '';
+  }
+  updateButton();
+}
+
+function toggleFolder(folder) {
+  const ch = document.getElementById(`ch-${CSS.escape(folder)}`);
+  const arrow = document.getElementById(`arrow-${CSS.escape(folder)}`);
+  if (!ch) return;
+  const open = !ch.classList.contains('hidden');
+  ch.classList.toggle('hidden', open);
+  if (arrow) arrow.classList.toggle('open', !open);
+}
+
+function updateButton() {
+  const btn = document.getElementById('send-btn');
+  const n = SELECTED.size;
+  btn.textContent = `Upload Selected (${n})`;
+  btn.disabled = n === 0;
+}
+
+function toggleAll() {
+  if (SELECTED.size === ALL_FILES.length) {
+    SELECTED.clear();
+  } else {
+    ALL_FILES.forEach(f => SELECTED.add(f.index));
+  }
+  renderTree(ALL_FILES);
+  updateButton();
+}
+
+function onSearch() {
+  const q = document.getElementById('search-input').value;
+  if (q) renderFlat(ALL_FILES, q);
+  else renderTree(ALL_FILES);
+}
+
+// ── Send selected ─────────────────────────────────────────────────────────────
+async function sendSelected() {
+  if (!SELECTED.size) return;
+  const btn = document.getElementById('send-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending…';
+
+  const uid = tg?.initDataUnsafe?.user?.id || 0;
+  const chatId = tg?.initDataUnsafe?.chat?.id || tg?.initDataUnsafe?.user?.id || 0;
+
+  try {
+    const res = await fetch('/api/send_selected', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        tid: TID,
+        indices: Array.from(SELECTED),
+        chat_id: chatId,
+        user_id: uid,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      showToast(`✅ ${data.queued} file(s) queued to send!`);
+      setTimeout(() => tg ? tg.close() : window.close(), 1500);
+    } else {
+      showToast(data.detail || 'Send failed', true);
+      btn.disabled = false;
+      updateButton();
+    }
+  } catch(e) {
+    showToast('Network error', true);
+    btn.disabled = false;
+    updateButton();
+  }
+}
+
+function showToast(msg, err=false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (err ? ' err' : '');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ── Load files ────────────────────────────────────────────────────────────────
+async function loadFiles() {
+  if (!TID) {
+    document.getElementById('file-list').innerHTML =
+      '<div class="loading"><div style="font-size:32px;margin-bottom:12px">❌</div><div>No task ID provided</div></div>';
+    return;
+  }
+  try {
+    const res = await fetch(`/api/files/${TID}`);
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    ALL_FILES = data.files;
+
+    document.getElementById('sub-title').textContent =
+      `${data.total} file${data.total!==1?'s':''} found`;
+    document.getElementById('arc-name').textContent = data.archive_name || '';
+
+    // Select all by default
+    ALL_FILES.forEach(f => SELECTED.add(f.index));
+    renderTree(ALL_FILES);
+    updateButton();
+  } catch(e) {
+    document.getElementById('file-list').innerHTML =
+      `<div class="loading"><div style="font-size:32px;margin-bottom:12px">❌</div><div>${e.message}</div></div>`;
+  }
+}
+
+loadFiles();
+</script>
+</body>
+</html>
