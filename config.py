@@ -72,6 +72,12 @@ class Config:
     # datacenter IPs are walled (errno 140), so this is what makes
     # TeraBox downloads work reliably from a server.
     TERABOX_COOKIE     = os.getenv("TERABOX_COOKIE", "")
+
+    # Optional HTTP/SOCKS proxy for TeraBox. TeraBox withholds signed
+    # download links from datacenter IPs even when the cookie is valid and
+    # the share lists fine, so a residential proxy is the only reliable
+    # fix. Example: http://user:pass@host:port  or  socks5://host:1080
+    TERABOX_PROXY      = os.getenv("TERABOX_PROXY", "").strip()
     YTDL_MAX_SIZE_MB   = int(os.getenv("YTDL_MAX_SIZE_MB", "2000"))
     YTDL_TIMEOUT_SEC   = int(os.getenv("YTDL_TIMEOUT_SEC", "600"))   # 10 min max per download
     COOKIE_FILE_PATH   = "/tmp/yt_cookies.txt"

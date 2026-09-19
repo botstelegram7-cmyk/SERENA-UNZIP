@@ -34,7 +34,7 @@ import json
 import os
 import re
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import aiohttp
 
@@ -294,11 +294,18 @@ def _wall_message() -> str:
 _LAST_TRANSPORT_ERROR: Dict[str, str] = {"v": ""}
 
 
+def _proxy() -> Optional[str]:
+    """Configured proxy, if any. Only http(s):// is usable by aiohttp."""
+    px = (Config.TERABOX_PROXY or "").strip()
+    return px or None
+
+
 async def _get_json(session: aiohttp.ClientSession, url: str,
                     referer: str = "") -> Optional[Dict]:
     try:
         async with session.get(url, headers=_headers(referer),
                                timeout=aiohttp.ClientTimeout(total=25),
+                               proxy=_proxy(),
                                allow_redirects=True) as r:
             if r.status != 200:
                 _LAST_TRANSPORT_ERROR["v"] = f"HTTP {r.status}"
@@ -330,6 +337,7 @@ async def _warm_up(session: aiohttp.ClientSession, mirror: str,
                  f"https://{mirror}/sharing/link?surl={surl}"):
         try:
             async with session.get(path, headers=_headers(),
+                                   proxy=_proxy(),
                                    timeout=aiohttp.ClientTimeout(total=25)) as r:
                 html = await r.text()
                 token = token or _find_js_token(html)
@@ -410,18 +418,23 @@ async def list_files(url: str) -> List[Dict]:
                 files = await _flatten(session, mirror, surl, token, entries)
                 if files:
                     if not any(f.get("dlink") for f in files):
-                        # The share lists fine, but TeraBox withheld every
-                        # signed download URL — that is the anonymous/IP
-                        # wall again, not a missing or broken file.
+                        # /share/list often omits dlink even when the share
+                        # lists fine. Mint the links explicitly before
+                        # giving up — that path frequently works when the
+                        # listing one does not.
+                        await _mint_dlinks(session, mirror, surl, token, files)
+                    if not any(f.get("dlink") for f in files):
                         names = ", ".join(f["name"][:40] for f in files[:2])
                         raise TeraboxError(
                             "🔒 <b>File mil gayi, par TeraBox download link "
                             "nahi de raha.</b>\n\n"
                             f"📄 <i>{names}</i>\n\n"
                             + ("Cookie set hai lekin TeraBox ne phir bhi mana "
-                               "kiya — ya to wo expire ho gayi hai, ya file "
-                               "restricted hai.\n\n✅ Browser se fresh "
-                               "<code>ndus</code> cookie lo."
+                               "kiya. Aksar wajah: file adult/restricted flag "
+                               "wali hai, ya cookie expire ho gayi.\n\n"
+                               "✅ Browser se fresh <code>ndus</code> cookie lo, "
+                               "ya <code>TERABOX_PROXY</code> set karo "
+                               "(residential proxy) — IP block ka yahi pakka fix hai."
                                if has_cookie() else
                                "Iske liye login zaroori hai.\n\n"
                                "✅ <code>TERABOX_COOKIE</code> me apni "
@@ -455,6 +468,93 @@ async def list_files(url: str) -> List[Dict]:
         + (f"\n\n<i>errno: {seen_errno}</i>" if seen_errno else "")
         + (f"\n<i>{transport}</i>" if transport else "")
         + "\n\n<i>Owner: <code>/tbtest</code> chala kar mirrors ka status dekho.</i>")
+
+
+async def _share_meta(session: aiohttp.ClientSession, mirror: str,
+                      surl: str, token: Optional[str]) -> Dict:
+    """Fetch sign/timestamp/shareid/uk, needed to mint download links."""
+    referer = f"https://{mirror}/sharing/link?surl={surl}"
+    for variant in ("1" + surl, surl):
+        url = (f"https://{mirror}/api/shorturlinfo?app_id={APP_ID}"
+               f"&shorturl={variant}&root=1")
+        if token:
+            url += f"&jsToken={token}"
+        data = await _get_json(session, url, referer)
+        if data and int(data.get("errno", -1) or 0) == 0 and data.get("sign"):
+            return data
+    return {}
+
+
+async def _mint_dlinks(session: aiohttp.ClientSession, mirror: str, surl: str,
+                       token: Optional[str], files: List[Dict]) -> None:
+    """Populate `dlink` on entries that came back without one.
+
+    /share/list frequently omits dlink. The signed /share/download call
+    mints a fresh one, so try that (and the signed list, which sometimes
+    includes dlinks the unsigned one hides) before declaring failure.
+    Mutates `files` in place; never raises.
+    """
+    referer = f"https://{mirror}/sharing/link?surl={surl}"
+    meta = await _share_meta(session, mirror, surl, token)
+    if not meta:
+        return
+
+    sign = meta.get("sign")
+    ts = meta.get("timestamp")
+    shareid = meta.get("shareid")
+    uk = meta.get("uk")
+    sekey = meta.get("randsk") or ""
+    if not (sign and ts and shareid and uk):
+        return
+
+    sig = f"&sign={sign}&timestamp={ts}&shareid={shareid}&uk={uk}"
+
+    # 1) Signed listing — cheapest, covers every file at once.
+    for variant in (surl, "1" + surl):
+        url = (f"https://{mirror}/share/list?app_id={APP_ID}"
+               f"&shorturl={variant}&root=1{sig}")
+        if token:
+            url += f"&jsToken={token}"
+        data = await _get_json(session, url, referer)
+        if not data or int(data.get("errno", -1) or 0) != 0:
+            continue
+        by_id = {str(e.get("fs_id")): e.get("dlink")
+                 for e in (data.get("list") or []) if e.get("dlink")}
+        if by_id:
+            for f in files:
+                if not f.get("dlink"):
+                    f["dlink"] = by_id.get(f.get("fs_id"), "") or f.get("dlink", "")
+            if all(f.get("dlink") for f in files):
+                return
+
+    # 2) Per-file /share/download, plus the data.* REST twin as a backup.
+    for f in files:
+        if f.get("dlink") or not f.get("fs_id"):
+            continue
+        fid = quote(f'[{f["fs_id"]}]')
+        candidates = [
+            (f"https://{mirror}/share/download?app_id={APP_ID}"
+             f"&channel=chunlei&clienttype=0&web=1{sig}&fid_list={fid}"
+             + (f"&sekey={sekey}" if sekey else "")
+             + (f"&jsToken={token}" if token else "")),
+            (f"https://{mirror}/api/download?app_id={APP_ID}"
+             f"&channel=chunlei&clienttype=0&web=1{sig}&fid_list={fid}"
+             + (f"&jsToken={token}" if token else "")),
+        ]
+        for url in candidates:
+            data = await _get_json(session, url, referer)
+            if not data or int(data.get("errno", -1) or 0) != 0:
+                continue
+            link = data.get("dlink")
+            if isinstance(link, list) and link:
+                link = (link[0] or {}).get("dlink") if isinstance(link[0], dict) else link[0]
+            if not link:
+                info = data.get("info") or []
+                if info and isinstance(info[0], dict):
+                    link = info[0].get("dlink")
+            if link:
+                f["dlink"] = link
+                break
 
 
 async def _flatten(session: aiohttp.ClientSession, mirror: str, surl: str,
@@ -511,7 +611,7 @@ async def download_file(entry: Dict, output_dir: str,
                 h = dict(headers)
                 if have > 1024:
                     h["Range"] = f"bytes={have}-"
-                async with session.get(dlink, headers=h,
+                async with session.get(dlink, headers=h, proxy=_proxy(),
                                        allow_redirects=True) as r:
                     if r.status in (403, 410):
                         return None          # signed link expired
@@ -564,6 +664,8 @@ async def diagnose(url: str = "") -> str:
         m = re.search(r"ndus=([^;]+)", ck, re.I)
         val = m.group(1) if m else ""
         out.append(f"🍪 Cookie: ✅ set (ndus, {len(val)} chars)")
+    px = _proxy()
+    out.append(f"🌐 Proxy: {'✅ ' + px.split('@')[-1][:32] if px else '❌ not set'}")
     if url:
         out.append(f"🔗 surl: <code>{extract_surl(url) or 'not parsed'}</code>")
     out.append("")
@@ -579,7 +681,22 @@ async def diagnose(url: str = "") -> str:
             entries, errno = await _list_on_mirror(session, mirror,
                                                    surl or "", token)
             if entries is not None:
-                out.append(f"✅ {mirror}: {len(entries)} entries")
+                line = f"✅ {mirror}: {len(entries)} entries"
+                # Listing working is only half the job — report whether a
+                # download link can actually be minted, which is the step
+                # that fails on a walled IP.
+                try:
+                    files = await _flatten(session, mirror, surl, token, entries)
+                    if files:
+                        have = sum(1 for f in files if f.get("dlink"))
+                        if not have:
+                            await _mint_dlinks(session, mirror, surl, token, files)
+                            have = sum(1 for f in files if f.get("dlink"))
+                        line += (f" · dlink {have}/{len(files)} "
+                                 + ("✅" if have else "❌ withheld"))
+                except Exception:
+                    pass
+                out.append(line)
             elif not surl:
                 # No link given: reaching the API at all is the useful signal
                 out.append(f"{'✅' if token else '⚠️'} {mirror}: reachable"
@@ -591,7 +708,10 @@ async def diagnose(url: str = "") -> str:
                        400210: "verification required"}.get(errno, f"errno {errno}")
                 out.append(f"⚠️ {mirror}: {tag}"
                            + (f" (jsToken {'✅' if token else '❌'})"))
-    out += ["", "<i>IP walled / download refused = TeraBox is server ko "
-            "mana kar raha hai. Cookie se list to milti hai, par download "
-            "link tab bhi rok sakta hai.</i>"]
+    out += ["", "<i>Listing ✅ lekin dlink ❌ = TeraBox file dikhata hai par "
+            "download link rok raha hai. Ye IP-level block hai — cookie se "
+            "theek nahi hota.</i>"]
+    if not _proxy():
+        out.append("<i>✅ Fix: residential proxy laga kar "
+                   "<code>TERABOX_PROXY</code> set karo.</i>")
     return "\n".join(out)

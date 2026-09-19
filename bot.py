@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.7.1"
-BOT_CODENAME = "Honest Errors"
+BOT_VERSION  = "v2.8.0"
+BOT_CODENAME = "Dlink Minting"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.8.0": [
+        "🔑 <b>TeraBox dlink minting</b> — ab signed list + <code>/share/download</code> se download link banane ki koshish hoti hai, pehle bina try kiye haar maan leta tha",
+        "🌐 <code>TERABOX_PROXY</code> support — IP block ka asli fix (residential proxy)",
+        "🩺 <code>/tbtest</code> ab dlink status bhi dikhata hai: <code>dlink 1/1 ✅</code> ya <code>❌ withheld</code>",
+        "🎨 Button colours: pyrofork ke MTProto layer me abhi possible nahi — 16 raw button types check kiye, kisi me colour flag nahi",
+    ],
     "v2.7.1": [
         "🚫 <code>/profile</code> aur <code>/story</code> ab jhoota auto-retry nahi dikhate — saaf batate hain ki IP block hai",
         "🩺 <code>/tbtest</code> bina link ke ab 'invalid link' nahi bolta — reachability test karta hai",
