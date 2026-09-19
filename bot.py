@@ -218,7 +218,9 @@ from utils.cleanup import cleanup_worker
 from utils.cloud_upload import smart_upload, upload_to_gofile, upload_to_catbox
 from utils.extractors import detect_encrypted, extract_archive
 from utils.file_splitter import split_file, human_size
-from utils.gdrive import get_gdrive_direct_link
+from utils.gdrive import (GDriveError, download_gdrive_file,
+                          download_gdrive_folder, gdrive_kind,
+                          get_gdrive_direct_link, list_gdrive_folder)
 from utils.http_downloader import download_file
 from utils.link_parser import (classify_link, extract_links_from_folder,
                                find_links_in_text, probe_link_kind)
@@ -251,11 +253,20 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.5.0"
-BOT_CODENAME = "Universal Links"
+BOT_VERSION  = "v2.5.1"
+BOT_CODENAME = "Drive Folders"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.5.1": [
+        "📂 <b>Google Drive folder links ab kaam karte hain</b> — pehle sirf single file support thi, folder seedha fail hota tha",
+        "📱 Mobile ke nested folder links (<code>/drive/mobile/folders/a/b/c</code>) se sahi folder pick hota hai",
+        "🔐 Bade files ka 'virus scan' confirm token handle hota hai (gdown se)",
+        "💬 Drive errors ab asli wajah batate hain: private hai, quota khatam, ya link galat",
+        "🧩 Folder ki saari files ek-ek karke upload hoti hain, progress ke saath",
+        "🩹 Fail hone par bhi jo files download ho chuki hain wo deliver hoti hain",
+        "🌐 Fix: <code>HEAD /</code> par 405 aata tha — uptime monitors ab theek se ping kar payenge",
+    ],
     "v2.5.0": [
         "🎬 <b>YouTube ab kaam karta hai!</b> Pehle wo 'unknown' tha aur HTML page download kar raha tha",
         "🌍 88 sites ka fast-path: TikTok, Twitter/X, FB, Spotify, SoundCloud, Pinterest, LinkedIn, Rumble, Hotstar, JioCinema, ShareChat aur bahut kuch",
@@ -3968,6 +3979,112 @@ async def handle_m3u8_quality_choice(client, cq, tid, idx):
         except Exception: pass
     M3U8_TASKS.pop(tid,None)
 
+async def _upload_one_file(client, uid, fp, chat_id, reply_to, status,
+                           label="") -> bool:
+    """Upload a single downloaded file with the right Telegram media type."""
+    try:
+        if not fp or not os.path.exists(fp) or os.path.getsize(fp) == 0:
+            return False
+        bn = os.path.basename(fp)
+        size = os.path.getsize(fp)
+        await _safe_edit(status, f"📤 Uploading{label}: {bn[:45]}")
+        start_u = time.time()
+        if is_video_path(bn):
+            cap = await build_caption(uid, bn)
+            thumb = await choose_thumbnail(uid, fp)
+            sent = await client.send_video(
+                chat_id, fp, caption=cap, thumb=thumb,
+                duration=await _get_video_duration(fp), supports_streaming=True,
+                progress=progress_for_pyrogram,
+                progress_args=(status, start_u, bn, "to Telegram"),
+                reply_to_message_id=reply_to)
+        elif is_audio_file(bn):
+            sent = await client.send_audio(
+                chat_id, fp, caption=bn,
+                progress=progress_for_pyrogram,
+                progress_args=(status, start_u, bn, "to Telegram"),
+                reply_to_message_id=reply_to)
+        else:
+            sent = await client.send_document(
+                chat_id, fp, caption=bn,
+                progress=progress_for_pyrogram,
+                progress_args=(status, start_u, bn, "to Telegram"),
+                reply_to_message_id=reply_to)
+        await update_user_stats(uid, size / 1048576)
+        return bool(sent)
+    except Exception:
+        return False
+
+
+async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
+                              reply_to, status):
+    """Download a Drive link — file OR folder — and upload the contents.
+
+    Folder links (including nested /drive/mobile/folders/... paths) used to
+    fail outright because only file ids were parsed. Returns (ok, failed).
+    """
+    kind = gdrive_kind(url)
+    dest_dir = Path(temp_root)/f"gdrive_{uuid.uuid4().hex[:8]}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if kind == "unknown":
+        raise GDriveError(
+            "❌ <b>Ye Google Drive link samajh nahi aaya.</b>\n\n"
+            "Supported:\n"
+            "• <code>/file/d/&lt;id&gt;/view</code>\n"
+            "• <code>/drive/folders/&lt;id&gt;</code>\n"
+            "• <code>?id=&lt;id&gt;</code>")
+
+    # ── Single file ──
+    if kind == "file":
+        await _safe_edit(status, "☁️ Drive file download ho rahi hai…")
+        fp = await download_gdrive_file(url, str(dest_dir))
+        good = await _upload_one_file(client, uid, fp, chat_id, reply_to, status)
+        if good:
+            try: await log_output(client, user, None, f"gdrive file: {url}")
+            except Exception: pass
+        return (1, 0) if good else (0, 1)
+
+    # ── Folder ──
+    await _safe_edit(status, "📂 Folder ka content check kar raha hoon…")
+    try:
+        listing = await list_gdrive_folder(url)
+    except GDriveError:
+        listing = []          # listing can fail even when download works
+
+    if listing:
+        await _safe_edit(
+            status,
+            f"📂 <b>{len(listing)} files</b> mili — download shuru…\n"
+            "<i>Bade folders me time lag sakta hai.</i>")
+    else:
+        await _safe_edit(status, "📂 Folder download ho raha hai…")
+
+    files = await download_gdrive_folder(url, str(dest_dir))
+    if not files:
+        raise GDriveError(
+            "❌ <b>Folder se koi file nahi mili.</b>\n\n"
+            "Folder khali hai, ya uske andar sirf sub-folders hain jo "
+            "share nahi kiye gaye.")
+
+    ok = failed = 0
+    for i, fp in enumerate(files, 1):
+        if user_cancelled.get(uid):
+            break
+        if await _upload_one_file(client, uid, fp, chat_id, reply_to, status,
+                                  label=f" {i}/{len(files)}"):
+            ok += 1
+        else:
+            failed += 1
+        await asyncio.sleep(0.4)
+
+    try:
+        await log_output(client, user, None, f"gdrive folder: {url} ({ok} files)")
+    except Exception:
+        pass
+    return ok, failed
+
+
 async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
                                 reply_to, status) -> bool:
     """Download a link with yt-dlp and upload whatever it produces.
@@ -4136,25 +4253,22 @@ async def handle_links_download_all(client, cq, original_msg):
         await asyncio.sleep(0.4)
     for url in gdrives:
         if user_cancelled.get(uid): break
-        du=get_gdrive_direct_link(url)
-        if not du: fail+=1; continue
-        base=f"gdrive_{uuid.uuid4().hex[:8]}"; dest=str(temp_root/base)
+        st=None
         try:
-            st=await client.send_message(chat_id,f"☁️ GDrive: {url[:50]}…",reply_to_message_id=reply_to)
-            fp=await download_file(du,dest,status_message=st,file_name=base,direction="to server")
-            bn=os.path.basename(fp); await st.edit_text(f"📤 Uploading: {bn}")
-            start_u=time.time()
-            if is_video_path(bn):
-                cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
-                sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
-            else:
-                sent=await client.send_document(chat_id,fp,caption=bn,
-                    progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
-            try: await st.delete()
-            except Exception: pass
-            ok+=1; await log_output(client,user,sent,f"gdrive: {url}")
-        except Exception: fail+=1
+            st=await client.send_message(chat_id,f"☁️ GDrive: {url[:50]}…",
+                                         reply_to_message_id=reply_to)
+            sent_n, failed_n = await _handle_gdrive_link(
+                client, uid, user, url, temp_root, chat_id, reply_to, st)
+            ok += sent_n; fail += failed_n
+            if sent_n:
+                try: await st.delete()
+                except Exception: pass
+        except GDriveError as e:
+            fail+=1
+            if st: await _safe_edit(st, str(e))
+        except Exception as e:
+            fail+=1
+            if st: await _safe_edit(st, f"❌ GDrive failed:\n<code>{str(e)[:200]}</code>")
         await asyncio.sleep(0.4)
     # ── Video-site links (YouTube, TikTok, file hosts, unidentified) ──
     for url in ytdls:

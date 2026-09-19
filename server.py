@@ -33,12 +33,16 @@ async def on_shutdown():
     print("Serena Unzip Bot v3 stopped")
 
 
-@fastapi_app.get("/", response_class=PlainTextResponse)
+# Uptime monitors (UptimeRobot, Render health checks) often probe with HEAD.
+# Registering GET only made those return "405 Method Not Allowed".
+@fastapi_app.api_route("/", methods=["GET", "HEAD"],
+                       response_class=PlainTextResponse)
 async def root():
     return "Serena Unzip Bot v3 is running ✅"
 
 
-@fastapi_app.get("/health", response_class=PlainTextResponse)
+@fastapi_app.api_route("/health", methods=["GET", "HEAD"],
+                       response_class=PlainTextResponse)
 async def health():
     return "OK"
 
