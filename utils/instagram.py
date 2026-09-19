@@ -1056,6 +1056,240 @@ def build_description_messages(meta: Dict, url: str = "") -> List[str]:
     return out
 
 
+# ── Profile & stories ────────────────────────────────────────────────────────
+
+def extract_username(text: str) -> Optional[str]:
+    """Pull a username from '@name', 'name', or a profile URL."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    m = re.search(r"instagram\.com/([A-Za-z0-9_.]+)", t)
+    if m:
+        name = m.group(1)
+        if name.lower() in ("p", "reel", "reels", "tv", "stories", "s", "explore", "share"):
+            return None
+        return name
+    t = t.lstrip("@").strip("/")
+    return t if re.fullmatch(r"[A-Za-z0-9_.]{1,30}", t) else None
+
+
+async def _profile_info(session: aiohttp.ClientSession, username: str) -> Dict:
+    """Fetch a profile's web_profile_info payload."""
+    headers = _base_headers()
+    jar = cookies_as_dict()
+    if jar.get("csrftoken"):
+        headers["X-CSRFToken"] = jar["csrftoken"]
+    url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+    async with session.get(url, headers=headers,
+                           timeout=aiohttp.ClientTimeout(total=30)) as r:
+        if r.status == 404:
+            raise InstagramError(f"❌ <b>@{username}</b> nahi mila.")
+        if r.status in (401, 403):
+            raise InstagramError(_friendly_error("profile"))
+        if r.status == 429:
+            raise InstagramError(
+                "⏳ Instagram ne rate-limit kar diya. Thodi der baad try karo.")
+        if r.status != 200:
+            raise InstagramError(f"❌ Instagram ne HTTP {r.status} diya.")
+        data = await r.json(content_type=None)
+    user = (data.get("data") or {}).get("user")
+    if not user:
+        raise InstagramError(_friendly_error("profile"))
+    return user
+
+
+async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict], Dict]:
+    """Return (list of {shortcode,url,is_video,caption}, profile info)."""
+    username = (username or "").lstrip("@")
+    jar = cookies_as_dict()
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+        if jar:
+            session.cookie_jar.update_cookies(
+                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+        user = await _profile_info(session, username)
+
+    if user.get("is_private") and not user.get("followed_by_viewer"):
+        raise InstagramError(
+            f"🔒 <b>@{username}</b> private hai aur aap follow nahi karte.")
+
+    edges = ((user.get("edge_owner_to_timeline_media") or {}).get("edges")) or []
+    posts: List[Dict] = []
+    for edge in edges[: max(1, min(limit, 50))]:
+        node = edge.get("node") or {}
+        sc = node.get("shortcode")
+        if not sc:
+            continue
+        cap = ""
+        cap_edges = ((node.get("edge_media_to_caption") or {}).get("edges")) or []
+        if cap_edges:
+            cap = _clean_text(((cap_edges[0] or {}).get("node") or {}).get("text") or "")
+        posts.append({
+            "shortcode": sc,
+            "url": f"https://www.instagram.com/p/{sc}/",
+            "is_video": bool(node.get("is_video")),
+            "caption": cap,
+        })
+
+    info = {
+        "username": user.get("username") or username,
+        "full_name": _clean_text(user.get("full_name") or ""),
+        "biography": _clean_text(user.get("biography") or ""),
+        "followers": ((user.get("edge_followed_by") or {}).get("count")) or 0,
+        "posts_total": ((user.get("edge_owner_to_timeline_media") or {}).get("count")) or 0,
+        "is_private": bool(user.get("is_private")),
+        "profile_pic": user.get("profile_pic_url_hd") or user.get("profile_pic_url") or "",
+    }
+    return posts, info
+
+
+async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
+    """Return (media items, info) for a user's currently active stories."""
+    username = (username or "").lstrip("@")
+    if not has_cookies():
+        raise InstagramError(
+            "🔒 Stories ke liye login zaroori hai.\n\n"
+            "✅ <b>Fix:</b> <code>INSTAGRAM_COOKIES</code> set karo.")
+
+    jar = cookies_as_dict()
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+        if jar:
+            session.cookie_jar.update_cookies(
+                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+        user = await _profile_info(session, username)
+        uid = user.get("id")
+        if not uid:
+            raise InstagramError(f"❌ <b>@{username}</b> ki ID nahi mili.")
+
+        headers = _base_headers()
+        if jar.get("csrftoken"):
+            headers["X-CSRFToken"] = jar["csrftoken"]
+        url = ("https://i.instagram.com/api/v1/feed/reels_media/"
+               f"?reel_ids={uid}")
+        async with session.get(url, headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status in (401, 403):
+                raise InstagramError(_friendly_error("story"))
+            if r.status != 200:
+                raise InstagramError(f"❌ Stories fetch failed (HTTP {r.status}).")
+            data = await r.json(content_type=None)
+
+    reels = data.get("reels") or data.get("reels_media") or {}
+    node = reels.get(str(uid)) if isinstance(reels, dict) else None
+    if isinstance(reels, list) and reels:
+        node = reels[0]
+    items_raw = (node or {}).get("items") or []
+    if not items_raw:
+        raise InstagramError(f"📭 <b>@{username}</b> ki koi active story nahi hai.")
+
+    items: List[Dict] = []
+    for i, it in enumerate(items_raw, 1):
+        vids = it.get("video_versions") or []
+        if vids:
+            u = _pick_best(vids)
+            if u:
+                items.append(_item(u, True, i))
+                continue
+        imgs = (it.get("image_versions2") or {}).get("candidates") or []
+        u = _pick_best(imgs)
+        if u:
+            items.append(_item(u, False, i))
+
+    info = {"username": user.get("username") or username,
+            "full_name": _clean_text(user.get("full_name") or ""),
+            "count": len(items)}
+    return items, info
+
+
+async def download_media_items(items: List[Dict], output_dir: str,
+                               prefix: str = "story") -> List[str]:
+    """Download pre-resolved media items to disk."""
+    os.makedirs(output_dir, exist_ok=True)
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=4)) as session:
+        results = await asyncio.gather(
+            *[_download_one(session, it, output_dir, prefix) for it in items],
+            return_exceptions=True,
+        )
+    saved = [r for r in results if isinstance(r, str) and r]
+    saved.sort(key=lambda p: os.path.basename(p))
+    return saved
+
+
+# ── Cookie health ────────────────────────────────────────────────────────────
+
+# Cached result so we do not hammer Instagram: (ok, detail, checked_at)
+_COOKIE_HEALTH: Dict[str, object] = {"ok": None, "detail": "", "ts": 0.0}
+
+
+async def validate_cookies(force: bool = False) -> Tuple[bool, str]:
+    """Check whether the configured Instagram cookies still authenticate.
+
+    Returns (ok, human_readable_detail). Result is cached for 30 minutes
+    unless `force` is set, so this is cheap to call on a schedule.
+    """
+    now = time.time()
+    if (not force and _COOKIE_HEALTH["ok"] is not None
+            and now - float(_COOKIE_HEALTH["ts"] or 0) < 1800):
+        return bool(_COOKIE_HEALTH["ok"]), str(_COOKIE_HEALTH["detail"])
+
+    jar = cookies_as_dict()
+    if not jar:
+        result = (False, "No cookies configured (INSTAGRAM_COOKIES is empty).")
+        _COOKIE_HEALTH.update({"ok": False, "detail": result[1], "ts": now})
+        return result
+
+    if not jar.get("sessionid"):
+        result = (False, "Cookies present but `sessionid` is missing — re-export them.")
+        _COOKIE_HEALTH.update({"ok": False, "detail": result[1], "ts": now})
+        return result
+
+    ok, detail = False, "Could not reach Instagram."
+    try:
+        cookie_jar = aiohttp.CookieJar(unsafe=True)
+        async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+            session.cookie_jar.update_cookies(
+                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+            headers = _base_headers()
+            if jar.get("csrftoken"):
+                headers["X-CSRFToken"] = jar["csrftoken"]
+            async with session.get(
+                "https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram",
+                headers=headers, timeout=aiohttp.ClientTimeout(total=20),
+            ) as r:
+                if r.status == 200:
+                    try:
+                        data = await r.json(content_type=None)
+                    except Exception:
+                        data = {}
+                    if (data.get("data") or {}).get("user"):
+                        ok, detail = True, "Cookies are valid and logged in."
+                    else:
+                        ok, detail = False, "Instagram returned an empty profile — session likely expired."
+                elif r.status in (401, 403):
+                    ok, detail = False, f"Instagram rejected the session (HTTP {r.status}) — cookies expired."
+                elif r.status == 429:
+                    # Rate limiting is not a cookie problem; do not cry wolf.
+                    ok, detail = True, "Rate-limited (HTTP 429) — cookies presumed valid."
+                else:
+                    ok, detail = False, f"Unexpected response from Instagram (HTTP {r.status})."
+    except Exception as e:
+        ok, detail = False, f"Cookie check failed: {str(e)[:120]}"
+
+    _COOKIE_HEALTH.update({"ok": ok, "detail": detail, "ts": now})
+    return ok, detail
+
+
+def cookie_status_line() -> str:
+    """Short status string for /version — uses the cached result only."""
+    if not has_cookies():
+        return "not set"
+    state = _COOKIE_HEALTH["ok"]
+    if state is None:
+        return "set (not yet checked)"
+    return "valid" if state else "EXPIRED"
+
+
 def _friendly_error(kind: str) -> str:
     if has_cookies():
         return (

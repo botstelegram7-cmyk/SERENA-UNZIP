@@ -216,12 +216,12 @@ async def _probe_video(input_path):
     parts = line.split(",")
     try:
         w, h = int(parts[0]), int(parts[1])
-    except:
+    except Exception:
         w, h = 1920, 1080
     try:
         fn, fd = parts[2].split("/")
         fps = round(int(fn) / int(fd), 2)
-    except:
+    except Exception:
         fps = 30.0
     return w, h, fps
 

@@ -31,7 +31,8 @@ def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButt
 
 async def _is_group_admin(client, chat_id: int, user_id: int) -> bool:
     """True if user is bot owner, group owner, or group admin."""
-    if user_id == next(iter(Config.OWNER_IDS)):
+    # NOTE: must not use next(iter(...)) — raises StopIteration when unset.
+    if user_id in Config.OWNER_IDS:
         return True
     try:
         m = await client.get_chat_member(chat_id, user_id)
@@ -117,7 +118,7 @@ async def send_video_instant_thumb(
     finally:
         if tmp_thumb and os.path.exists(tmp_thumb):
             try: os.remove(tmp_thumb)
-            except: pass
+            except Exception: pass
 
 
 async def _safe_edit(msg, text: str, **kwargs):
@@ -132,6 +133,44 @@ async def _safe_edit(msg, text: str, **kwargs):
         except Exception: pass
     except Exception:
         pass
+
+
+async def _safe_send(client, chat_id, text_or_method=None, *, text=None, **kwargs):
+    """Send a message with FloodWait retry.
+
+    Telegram enforces per-chat rate limits; without this, bulk operations
+    (profile downloads, carousels) die partway through.
+    """
+    body = text if text is not None else text_or_method
+    for attempt in range(3):
+        try:
+            return await client.send_message(chat_id, body, **kwargs)
+        except FloodWait as e:
+            wait = min(int(getattr(e, "value", 5)), 60)
+            await asyncio.sleep(wait + 1)
+        except Exception:
+            return None
+    return None
+
+
+async def _with_floodwait(coro_factory, retries: int = 3):
+    """Await a Telegram call, transparently retrying on FloodWait.
+
+    `coro_factory` must be a zero-arg callable returning a fresh coroutine,
+    because a coroutine object cannot be awaited twice.
+    """
+    last_exc = None
+    for _ in range(retries):
+        try:
+            return await coro_factory()
+        except FloodWait as e:
+            await asyncio.sleep(min(int(getattr(e, "value", 5)), 60) + 1)
+            last_exc = e
+        except Exception as e:
+            raise e
+    if last_exc:
+        raise last_exc
+    return None
 
 
 async def _check_disk_space_ok(message) -> bool:
@@ -166,6 +205,7 @@ async def _safe_reply(msg, text: str, **kwargs):
 from config import Config
 from database import (
     authorize_group_user, count_users, delete_queue_state, deauth_group_user,
+    ig_cache_clear, ig_cache_get, ig_cache_put, ig_cache_stats,
     get_all_paused_queues, get_all_users, get_or_create_user, get_premium_until,
     get_queue_state, get_referral_count, get_user_settings, has_been_referred,
     is_banned, is_group_authorized, mark_queue_file_done, save_queue_state,
@@ -206,6 +246,37 @@ app = Client(
     in_memory=True,
     sleep_threshold=60,   # ← auto-sleep on FloodWait ≤60s (no crash)
 )
+
+# ── Version & changelog ──────────────────────────────────────────────────────
+# Bump BOT_VERSION on every user-visible release and add its entry to
+# CHANGELOG. /version renders this, so users always know what they are on.
+BOT_VERSION  = "v2.3.0"
+BOT_CODENAME = "Instagram Overhaul"
+BOT_RELEASED = "19 Sep 2026"
+
+CHANGELOG = {
+    "v2.3.0": [
+        "🔐 Owner IDs moved to the <code>OWNER_IDS</code> env var (no longer in the code)",
+        "🐞 Fixed a crash in group admin checks when no owner was configured",
+        "🧯 Replaced all 103 bare <code>except:</code> blocks so <code>/cancel</code> works reliably",
+        "🍪 Automatic Instagram cookie health checks + owner alerts when they expire",
+        "⚡ Repeat links are served from cache — instant, no re-download",
+        "👤 <code>/profile</code> — bulk-download a profile's latest posts",
+        "📲 <code>/story</code> — download someone's active stories",
+        "🌊 Global FloodWait protection on every send",
+        "🧩 <code>/version</code> now shows the changelog and live health",
+    ],
+    "v2.2.0": [
+        "🔗 Plain links work without <code>/insta</code> or <code>/ytdl</code>",
+        "🧵 Fixed handlers below <code>asyncio.run()</code> never registering (<code>/song</code> was dead)",
+        "🔍 Links pasted without <code>https://</code> are now detected",
+    ],
+    "v2.1.0": [
+        "📝 Reel descriptions in expandable quotes, with styled fonts",
+        "🖼 Fixed <code>PHOTO_EXT_INVALID</code> by converting WebP/HEIC to JPEG",
+        "🎠 Carousels always delivered as albums",
+    ],
+}
 
 # ── Bandwidth / Resource Guard (Render 512MB) ────────────────────────────────
 # Max 3 concurrent heavy operations — prevents RAM overflow
@@ -332,7 +403,7 @@ async def choose_thumbnail(uid, vpath):
     mode=await _get_thumb_mode(uid); pos="00:00:00.200" if mode=="original" else "00:00:02"
     tp=vpath+".jpg"
     try: await generate_thumbnail(vpath,tp,time_pos=pos); return tp
-    except: return None
+    except Exception: return None
 
 async def build_caption(uid, default):
     cfg=await get_user_settings(uid)
@@ -355,7 +426,7 @@ async def _log_target(client, user):
         try:
             c=await client.get_chat(Config.LOG_CHANNEL_ID)
             log_chat_info=c; log_is_forum=bool(getattr(c,"is_forum",False))
-        except: return None,None
+        except Exception: return None,None
     cid=log_chat_info.id
     if not log_is_forum: return cid,None
     if user.id in user_log_topics: return cid,user_log_topics[user.id]
@@ -364,11 +435,11 @@ async def _log_target(client, user):
         try:
             t=await client.create_forum_topic(cid,name=f"{user.first_name or 'User'} | {user.id}")
             root=getattr(t,"id",None) or getattr(t,"message_id",None)
-        except: pass
+        except Exception: pass
     if root:
         user_log_topics[user.id]=root
         try: await client.send_message(cid,f"👤 {user.first_name} | {user.id}",reply_to_message_id=root)
-        except: pass
+        except Exception: pass
     return cid,root
 
 async def log_input(client, message, ctx):
@@ -378,7 +449,7 @@ async def log_input(client, message, ctx):
     cap=f"🔹 INPUT\n• {user.first_name} (@{user.username or 'N/A'})\n• ID: {user.id}\n• {ctx}"
     kw={"reply_to_message_id":root} if root else {}
     try: await client.send_message(cid,cap,**kw)
-    except: pass
+    except Exception: pass
 
 async def log_output(client, user, msg, ctx):
     if not Config.LOG_CHANNEL_ID or not user or not msg: return
@@ -387,7 +458,7 @@ async def log_output(client, user, msg, ctx):
     cap=f"✅ OUTPUT\n• {user.first_name} (@{user.username or 'N/A'})\n• ID: {user.id}\n• {ctx}"
     kw={"reply_to_message_id":root} if root else {}
     try: await client.send_message(cid,cap,**kw)
-    except: pass
+    except Exception: pass
 
 # ════════════════════════════════════════════════════════════════════════════
 # KEYBOARDS
@@ -501,8 +572,8 @@ async def start_cmd(client, message):
                 if rc>=Config.REFERRAL_REQUIRED:
                     await set_premium(rid,time.time()+Config.REFERRAL_REWARD_DAYS*86400)
                     try: await client.send_message(rid,f"🎉 {Config.REFERRAL_REQUIRED} referrals! <b>{Config.REFERRAL_REWARD_DAYS} days Premium</b> free mila!")
-                    except: pass
-        except: pass
+                    except Exception: pass
+        except Exception: pass
     name=message.from_user.first_name or "there"
     prem="⭐ Premium" if await is_premium_user(uid) else "Free"
     cap=(f"Hey <b>{name}</b>! 👋\n\nWelcome to <b>{Config.BOT_NAME}</b> [{prem}]\n\n"
@@ -542,7 +613,8 @@ async def help_cmd(client, message):
         "👥 <b>Groups — Reply to file + command:</b>\n"
         "<code>/unzip</code>  <code>/audio</code>  <code>/compress</code>  <code>/info</code>\n"
         "<code>/subs</code>  <code>/rename</code>  <code>/split</code>  <code>/screenshot</code>\n"
-        "<code>/pdf</code>  <code>/watermark</code>  <code>/ytdl</code>  <code>/insta</code>\n\n"
+        "<code>/pdf</code>  <code>/watermark</code>  <code>/ytdl</code>  <code>/insta</code>\n"
+        "<code>/profile</code>  <code>/story</code>  <code>/version</code>\n\n"
         "🛠 <b>Admin</b>: <code>/admin</code>  <code>/status</code>  <code>/broadcast</code>\n"
         "<code>/premium &lt;id&gt; [days]</code>  <code>/ban</code>  <code>/unban</code>"
     )
@@ -649,20 +721,55 @@ async def ytdl_cmd(client, message):
         buttons.append([_btn(f"{f['label']}{sz}", f"ytdlq|{task_id}|{i}", "primary")])
     buttons.append([_btn("❌ Cancel", f"ytdlcancel|{task_id}", "danger")])
     try: await status.edit_text(f"🎬 Quality choose karo:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
-    except: pass
+    except Exception: pass
 
 
-@app.on_message(filters.command(["version", "ver", "build"]))
+@app.on_message(filters.command(["version", "ver", "build", "changelog"]))
 async def version_cmd(client, message):
-    """Show which commit is actually running — makes deploys verifiable."""
+    """Show the running build, what changed in it, and live health."""
     if not message.from_user: return
+    from utils.instagram import cookie_status_line, has_cookies, validate_cookies
+
     handlers = sum(len(v) for v in app.dispatcher.groups.values())
-    await message.reply_text(
-        f"\U0001F9E9 <b>Serena Unzip</b>\n\n"
-        f"\U0001F4E6 Build: <code>{BUILD_VERSION}</code>\n"
-        f"\U0001F50C Handlers: <b>{handlers}</b>\n"
-        f"\U0001F36A Instagram cookies: <b>{'set' if Config.INSTAGRAM_COOKIES.strip() else 'NOT set'}</b>\n\n"
-        f"<i>Plain link paste karke bhi download hota hai — command zaroori nahi.</i>")
+
+    # Refresh cookie health on demand (cached for 30 min inside the helper)
+    if has_cookies():
+        try:
+            await validate_cookies()
+        except Exception:
+            pass
+    cookie_state = cookie_status_line()
+    cookie_icon = {"valid": "✅", "EXPIRED": "❌",
+                   "not set": "⚠️"}.get(cookie_state, "❓")
+    try:
+        cache_n = (await ig_cache_stats()).get("entries", 0)
+    except Exception:
+        cache_n = 0
+
+    lines = [
+        f"🧩 <b>{Config.BOT_NAME}</b>  <code>{BOT_VERSION}</code>",
+        f"<i>{BOT_CODENAME}</i>",
+        "",
+        f"📦 Build: <code>{BUILD_VERSION}</code>",
+        f"📅 Released: <b>{BOT_RELEASED}</b>",
+        f"🔌 Handlers: <b>{handlers}</b>",
+        f"🍪 Instagram cookies: {cookie_icon} <b>{cookie_state}</b>",
+        f"⚡ Cached posts: <b>{cache_n}</b>",
+        "",
+        f"<b>What's new in {BOT_VERSION}</b>",
+    ]
+    for item in CHANGELOG[BOT_VERSION]:
+        lines.append(f"• {item}")
+
+    older = [v for v in CHANGELOG if v != BOT_VERSION]
+    if older:
+        lines += ["", f"<blockquote expandable><b>Previous releases</b>\n" +
+                  "\n\n".join(
+                      f"<b>{v}</b>\n" + "\n".join(f"• {i}" for i in CHANGELOG[v])
+                      for v in older
+                  ) + "</blockquote>"]
+
+    await message.reply_text("\n".join(lines), disable_web_page_preview=True)
 
 
 @app.on_message(filters.command(["insta", "ig", "instagram"]))
@@ -693,6 +800,150 @@ async def insta_cmd(client, message):
         return
     await get_or_create_user(uid)
     await _start_instagram_flow(client, message, url)
+
+
+@app.on_message(filters.command(["clearcache", "cacheclear"]))
+async def clearcache_cmd(client, message):
+    """Owner: drop the Instagram file_id cache."""
+    if not message.from_user or not is_owner(message.from_user.id): return
+    n = await ig_cache_clear()
+    await message.reply_text(f"🧹 Cache cleared — <b>{n}</b> entries removed.")
+
+
+@app.on_message(filters.command(["profile", "igprofile", "bulk"]))
+async def profile_cmd(client, message):
+    """Bulk-download the latest posts from an Instagram profile."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    if await is_banned(uid): return
+    if not await check_force_sub(client, message): return
+    from utils.instagram import (InstagramError, extract_username,
+                                 fetch_profile_posts)
+
+    args = message.command[1:]
+    if not args:
+        await message.reply_text(
+            "👤 <b>Profile Bulk Downloader</b>\n\n"
+            "Usage: <code>/profile &lt;username&gt; [count]</code>\n\n"
+            "Examples:\n"
+            "• <code>/profile natgeo</code> — latest 6 posts\n"
+            "• <code>/profile @natgeo 12</code> — latest 12 posts\n\n"
+            "<i>Max 50. Private accounts ke liye aapka account unhe follow karta ho.</i>")
+        return
+
+    username = extract_username(args[0])
+    if not username:
+        await message.reply_text("❌ Valid username do, e.g. <code>/profile natgeo</code>"); return
+
+    limit = 6
+    if len(args) > 1:
+        try: limit = max(1, min(int(args[1]), 50))
+        except ValueError: pass
+
+    if not await check_rate_limit(uid, message): return
+    await get_or_create_user(uid)
+    status = await message.reply_text(f"🔍 <b>@{username}</b> ke posts fetch kar raha hoon…")
+
+    try:
+        posts, info = await fetch_profile_posts(username, limit)
+    except InstagramError as e:
+        await _safe_edit(status, str(e)); return
+    except Exception as e:
+        await _safe_edit(status, f"❌ Profile fetch failed:\n<code>{str(e)[:300]}</code>"); return
+
+    if not posts:
+        await _safe_edit(status, f"📭 <b>@{username}</b> ka koi public post nahi mila."); return
+
+    await _safe_edit(
+        status,
+        f"👤 <b>{info['full_name'] or info['username']}</b> (@{info['username']})\n"
+        f"👥 {info['followers']:,} followers  •  📸 {info['posts_total']:,} posts\n\n"
+        f"⬇️ <b>{len(posts)}</b> posts download ho rahe hain…")
+
+    done = failed = 0
+    for i, post in enumerate(posts, 1):
+        if user_cancelled.get(uid):
+            await client.send_message(message.chat.id, "🛑 Cancelled.",
+                                      reply_to_message_id=message.id)
+            break
+        try:
+            await _safe_edit(status, f"⬇️ Post <b>{i}/{len(posts)}</b> — @{info['username']}")
+            task_id = uuid.uuid4().hex
+            temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
+            temp_root.mkdir(parents=True, exist_ok=True)
+            await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
+            sub = {"user_id": uid, "url": post["url"], "temp_root": str(temp_root),
+                   "chat_id": message.chat.id, "reply_to": message.id}
+            sent = await _deliver_instagram(client, sub, uid, quiet=True)
+            done += 1 if sent else 0
+            failed += 0 if sent else 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(1.2)          # be gentle with Instagram
+
+    user_cancelled.pop(uid, None)
+    await _safe_edit(
+        status,
+        f"✅ <b>@{info['username']}</b> done!\n\n"
+        f"📥 Downloaded: <b>{done}</b>" + (f"\n⚠️ Failed: <b>{failed}</b>" if failed else ""))
+
+
+@app.on_message(filters.command(["story", "stories", "igstory"]))
+async def story_cmd(client, message):
+    """Download a user's currently active stories."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    if await is_banned(uid): return
+    if not await check_force_sub(client, message): return
+    from utils.instagram import (InstagramError, download_media_items,
+                                 extract_username, fetch_stories)
+
+    args = message.command[1:]
+    if not args:
+        await message.reply_text(
+            "📲 <b>Story Downloader</b>\n\n"
+            "Usage: <code>/story &lt;username&gt;</code>\n"
+            "Example: <code>/story natgeo</code>\n\n"
+            "<i>Cookies zaroori hain. Sirf wahi stories milengi jo aapka "
+            "account dekh sakta hai.</i>")
+        return
+
+    username = extract_username(args[0])
+    if not username:
+        await message.reply_text("❌ Valid username do, e.g. <code>/story natgeo</code>"); return
+
+    if not await check_rate_limit(uid, message): return
+    await get_or_create_user(uid)
+    status = await message.reply_text(f"📲 <b>@{username}</b> ki stories check kar raha hoon…")
+
+    try:
+        items, info = await fetch_stories(username)
+    except InstagramError as e:
+        await _safe_edit(status, str(e)); return
+    except Exception as e:
+        await _safe_edit(status, f"❌ Stories fetch failed:\n<code>{str(e)[:300]}</code>"); return
+
+    task_id = uuid.uuid4().hex
+    temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
+    temp_root.mkdir(parents=True, exist_ok=True)
+    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
+
+    await _safe_edit(status, f"⬇️ <b>{len(items)}</b> stories download ho rahi hain…")
+    try:
+        files = await download_media_items(items, str(temp_root), prefix=username)
+    except Exception as e:
+        await _safe_edit(status, f"❌ Download failed:\n<code>{str(e)[:300]}</code>"); return
+
+    if not files:
+        await _safe_edit(status, "❌ Stories download nahi ho payin."); return
+
+    caption = (f"📲 <b>@{info['username']}</b> stories\n"
+               f"🕐 {len(files)} item{'s' if len(files) != 1 else ''}")
+    total = await _send_instagram_media(client, uid, message.chat.id, message.id,
+                                        files, caption=caption)
+    try: await status.delete()
+    except Exception: pass
+    await update_user_stats(uid, total / 1048576)
 
 
 @app.on_message(filters.command("zip"))
@@ -818,7 +1069,7 @@ async def broadcast_cmd(client, message):
     users=await get_all_users(); sent=failed=0
     for u in users:
         try: await message.reply_to_message.copy(chat_id=u); sent+=1; await asyncio.sleep(0.05)
-        except: failed+=1
+        except Exception: failed+=1
     await message.reply_text(f"📢 Done. Sent: {sent}  Failed: {failed}")
 
 
@@ -828,7 +1079,7 @@ async def premium_cmd(client, message):
     parts=(message.text or "").split()
     if len(parts)<2: await message.reply_text("Usage: /premium <id> [days]"); return
     try: target=int(parts[1])
-    except: await message.reply_text("ID must be integer."); return
+    except Exception: await message.reply_text("ID must be integer."); return
     days=int(parts[2]) if len(parts)>=3 else 30
     await set_premium(target,time.time()+days*86400)
     await message.reply_text(f"⭐ User {target} = Premium for {days} days.")
@@ -841,7 +1092,7 @@ async def ban_cmd(client, message):
     if message.reply_to_message: target=message.reply_to_message.from_user.id
     elif len(message.command)>1:
         try: target=int(message.command[1])
-        except: pass
+        except Exception: pass
     if not target: await message.reply_text("User id ya reply use karo."); return
     await set_ban(target,cmd=="ban")
     await message.reply_text(f"User {target} {'banned' if cmd=='ban' else 'unbanned'}.")
@@ -1030,7 +1281,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 )
                 if st2:
                     try: await st.delete()
-                    except: pass
+                    except Exception: pass
                     st = st2
             except Exception:
                 pass
@@ -1118,7 +1369,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                             message_thread_id=thread_id)
                         if up_st:
                             try: await up_st.delete()
-                            except: pass
+                            except Exception: pass
                     elif is_image_file(_fname):
                         await client.send_photo(chat_id, str(full),
                             caption=_fname, reply_to_message_id=reply_to,
@@ -1142,7 +1393,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                             message_thread_id=thread_id)
                         if up_st_d:
                             try: await up_st_d.delete()
-                            except: pass
+                            except Exception: pass
                     sent_n += 1
                 except Exception as e:
                     await client.send_message(chat_id,
@@ -1156,8 +1407,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     f"📁 {sent_n}/{len(rel_files)} files sent.")
                 await asyncio.sleep(1.5)
                 try: await st.delete()   # ← delete status message after done
-                except: pass
-            except: pass
+                except Exception: pass
+            except Exception: pass
             await mark_queue_file_done(uid, i-1, "done")
             ok += 1
             await update_queue_progress(uid, i, ok, fail)
@@ -1248,7 +1499,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     f"▣ <b>[{i}/{total}]</b> Skipped (2 attempts failed):\n"
                     f"<code>{fname}</code>\n"
                     f"<code>{err_short}</code>")
-                except: pass
+                except Exception: pass
                 await mark_queue_file_done(uid, i-1, "failed")
                 failed_files[fname] = err_short   # track for summary
                 fail += 1
@@ -1303,7 +1554,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                             await client.send_animation(chat_id, gif_url, reply_to_message_id=reply_to)
                 except Exception:
                     pass
-    except: pass
+    except Exception: pass
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1593,7 +1844,12 @@ async def cmds_cmd(client, message):
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📸 <b>/insta</b> — Instagram downloader (photos + carousels + reels)\n"
         "   → <code>/insta https://instagram.com/p/...</code>\n"
-        "   → Ya seedha link paste karo, bot auto-detect karega\n\n"
+        "   → Ya seedha link paste karo, bot auto-detect karega\n"
+        "👤 <b>/profile</b> — profile ke latest posts bulk download\n"
+        "   → <code>/profile natgeo 12</code>\n"
+        "📲 <b>/story</b> — kisi ki active stories\n"
+        "   → <code>/story natgeo</code>\n"
+        "🧩 <b>/version</b> — build, changelog aur health\n\n"
         "🌐 <b>/ytdl</b> — Download from any URL\n"
         "   → <code>/ytdl https://youtube.com/watch?v=...</code>\n"
         "   → <code>/ytdl https://twitter.com/...</code>\n"
@@ -1770,12 +2026,12 @@ async def on_file(client, message):
             content=Path(p).read_text(encoding="utf-8",errors="ignore")
         except Exception as e: await st.edit_text(f"❌ TXT download failed:\n<code>{e}</code>"); return
         try: await st.delete()
-        except: pass
+        except Exception: pass
         await process_links_message(client,message,content); return
     if not media: return
     fsize_mb=(getattr(media,"file_size",0) or 0)/(1024*1024)
     try: await log_input(client,message,f"file: {fname}")
-    except: pass
+    except Exception: pass
     await message.reply_text(
         f"📂 <code>{fname}</code>  (<b>{human_bytes(int(fsize_mb*1024*1024))}</b>)\nChoose action 👇",
         reply_markup=file_action_keyboard(message,fname,fsize_mb))
@@ -1998,7 +2254,7 @@ async def callbacks(client, cq: CallbackQuery):
         if action=="reset":
             await save_user_settings(uid,{})
             try: await cq.message.edit_text("✅ Settings reset.",reply_markup=settings_keyboard())
-            except: pass
+            except Exception: pass
             await cq.answer("Reset!"); return
         if action=="caption":
             pending_state[uid]={"action":"settings_caption"}
@@ -2014,16 +2270,16 @@ async def callbacks(client, cq: CallbackQuery):
             await cq.message.reply_text(f"✅ Thumb mode: <b>{mode}</b>"); await cq.answer(); return
     if data.startswith("unzip|"):
         try: _,cid,mid,mode=data.split("|",3); orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await handle_unzip_button(client,cq,orig,mode); return
     if data.startswith("ucancel|"):
         _,tid=data.split("|",1); tasks.pop(tid,None)
         try: await cq.message.edit_text("❌ Unzip cancelled.")
-        except: pass
+        except Exception: pass
         await cq.answer(); return
     if data.startswith("audio|"):
         try: _,cid,mid=data.split("|",2); orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("Video nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("Video nahi mila.",show_alert=True); return
         await handle_extract_audio(client,cq,orig); return
     if data.startswith("sendall|"):
         _,tid=data.split("|",1); await handle_send_all(client,cq,tid); return
@@ -2032,7 +2288,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("sendas|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer()
         try:
             if orig.document: await client.send_document(cq.message.chat.id,orig.document.file_id,reply_to_message_id=cq.message.id)
@@ -2042,7 +2298,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("rename|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         media=orig.document or orig.video or orig.audio
         fname=(media.file_name if media else None) or "file"
         pending_state[cq.from_user.id]={"action":"rename","chat_id":int(cid),"msg_id":int(mid),"fname":fname}
@@ -2051,19 +2307,19 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("finfo|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer(); await _handle_file_info(client,cq.message,orig); return
     if data.startswith("compress|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid)); return
     if data.startswith("comprq|"):
         _,tid,res=data.split("|",2); await cq.answer(); await _do_compress(client,cq,tid,res); return
     if data.startswith("split|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer()
         media=orig.document or orig.video; fname=(media.file_name if media else None) or "file"
         await _trigger_split(client,cq.message,orig,int(cid),int(mid),fname); return
@@ -2072,7 +2328,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("subs|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer(); await _trigger_subs(client,cq.message,orig); return
     if data.startswith("subsq|"):
         _,tid,sidx=data.split("|",2); await cq.answer()
@@ -2090,7 +2346,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("pdf|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer()
         media=orig.document; fname=(media.file_name if media else None) or "file.pdf"
         await _trigger_pdf_tools(client,cq.message,orig,fname); return
@@ -2103,7 +2359,7 @@ async def callbacks(client, cq: CallbackQuery):
         if action=="cancel":
             zip_sessions.pop(uid,None)
             try: await cq.message.edit_text("❌ ZIP session cancelled.")
-            except: pass
+            except Exception: pass
         elif action=="askpass":
             pending_state[uid]={"action":"zip_password"}
             await cq.message.reply_text("🔐 Password bhejo (ya /cancel):")
@@ -2116,7 +2372,7 @@ async def callbacks(client, cq: CallbackQuery):
         if action=="cancel":
             merge_sessions.pop(uid,None)
             try: await cq.message.edit_text("❌ Merge cancelled.")
-            except: pass
+            except Exception: pass
         elif action=="done": await _do_merge_videos(client,cq,uid)
         return
     if data.startswith("ytdlq|"):
@@ -2124,18 +2380,18 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("ytdlcancel|"):
         _,tid=data.split("|",1); YTDL_TASKS.pop(tid,None)
         try: await cq.message.edit_text("❌ Download cancelled.")
-        except: pass
+        except Exception: pass
         await cq.answer(); return
     if data.startswith("m3q|"):
         try: _,tid,idx=data.split("|",2)
-        except: await cq.answer(); return
+        except Exception: await cq.answer(); return
         await handle_m3u8_quality_choice(client,cq,tid,int(idx)); return
     if data.startswith("links|"):
         parts=data.split("|",3)
         if len(parts)<4: await cq.answer(); return
         _,action,cid,mid=parts
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("Message nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("Message nahi mila.",show_alert=True); return
         key=(orig.chat.id,orig.id); sess=LINK_SESSIONS.get(key)
         content=sess["content"] if sess else (orig.text or orig.caption or "")
         links=sess["links"] if sess else find_links_in_text(content)
@@ -2146,7 +2402,7 @@ async def callbacks(client, cq: CallbackQuery):
         else:
             await cq.answer()
             try: await cq.message.edit_text("⏭ Skipped.")
-            except: pass
+            except Exception: pass
         return
     if data.startswith("cloudopt|"):
         _,cid,mid=data.split("|",2); await cq.answer()
@@ -2159,7 +2415,7 @@ async def callbacks(client, cq: CallbackQuery):
         platform="gofile" if data.startswith("cloudgo|") else "catbox"
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
         await cq.answer(); await _do_cloud_upload(client,cq,orig,platform); return
     if data.startswith("admin:"):
         if not is_owner(cq.from_user.id): await cq.answer("Owner only.",show_alert=True); return
@@ -2195,7 +2451,7 @@ async def callbacks(client, cq: CallbackQuery):
         total_mb = sum(f["size"] for f in files)/1048576
         lines.append(f"\n💾 <b>Total: {total_mb:.1f} MB</b>")
         try: await cq.message.reply_text("\n".join(lines))
-        except: pass
+        except Exception: pass
         await cq.answer()
         return
     if data=="cmd_zipqueue":
@@ -2211,7 +2467,7 @@ async def callbacks(client, cq: CallbackQuery):
                 [_btn("▶️ Process Queue", f"zq_start|{cq.from_user.id}", "success")],
                 [_btn("✦ Cancel Queue", f"zq_cancel|{cq.from_user.id}", "danger")],
             ]))
-        except: pass
+        except Exception: pass
         return
     if data.startswith("zq_start|"):
         uid = int(data.split("|",1)[1])
@@ -2236,7 +2492,7 @@ async def callbacks(client, cq: CallbackQuery):
                     f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
                     f"🔐 Password: <tg-spoiler>{sess['default_password']}</tg-spoiler>"
                 )
-            except: pass
+            except Exception: pass
             sess_thread = sess.get("thread_id")
             task = asyncio.create_task(
                 _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id, thread_id=sess_thread)
@@ -2263,7 +2519,7 @@ async def callbacks(client, cq: CallbackQuery):
                         _btn("❌ Cancel", f"zq_cancel|{uid}", "danger"),
                     ]])
                 )
-            except: pass
+            except Exception: pass
         return
     if data.startswith("zq_nopass|"):
         uid = int(data.split("|",1)[1])
@@ -2281,7 +2537,7 @@ async def callbacks(client, cq: CallbackQuery):
                 f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
                 f"🔓 No password set"
             )
-        except: pass
+        except Exception: pass
         task = asyncio.create_task(
             _process_zip_queue(client, uid, cq.message.chat.id, cq.message.id, thread_id=sess_thread)
         )
@@ -2297,7 +2553,7 @@ async def callbacks(client, cq: CallbackQuery):
         if task and not task.done(): task.cancel()
         ZIP_QUEUE_SESSIONS.pop(uid, None)
         try: await cq.message.edit_text("🗑 <b>Queue Cancel ho gayi!</b>")
-        except: pass
+        except Exception: pass
         await cq.answer("Queue cancel!")
         return
     if data.startswith("sess_cont|"):
@@ -2309,7 +2565,7 @@ async def callbacks(client, cq: CallbackQuery):
         if not state:
             await cq.answer("Session nahi mila — shayad already delete ho gayi.", show_alert=True)
             try: await cq.message.edit_text("❌ Session not found.")
-            except: pass
+            except Exception: pass
             return
         files   = state.get("files", [])
         ok      = state.get("ok", 0)
@@ -2331,7 +2587,7 @@ async def callbacks(client, cq: CallbackQuery):
             f"▶️ <b>Resuming Session!</b>\n"
             f"📦 Total: {len(files)} | ✅ Done: {ok} | ⏳ Left: {len(pending)}"
         )
-        except: pass
+        except Exception: pass
         await cq.answer("Queue resume ho rahi hai!")
         task = asyncio.create_task(_process_zip_queue(
             client, target_uid,
@@ -2351,7 +2607,7 @@ async def callbacks(client, cq: CallbackQuery):
         try: await cq.message.edit_text(
             f"🗑 Session <code>{target_uid}</code> deleted!"
         )
-        except: pass
+        except Exception: pass
         await cq.answer("Session deleted!"); return
 
     if data == "sess_del_all":
@@ -2364,7 +2620,7 @@ async def callbacks(client, cq: CallbackQuery):
         try: await cq.message.edit_text(
             f"🗑 <b>All {len(all_sess)} sessions deleted!</b>"
         )
-        except: pass
+        except Exception: pass
         await cq.answer(f"{len(all_sess)} sessions deleted!"); return
 
     if data=="noop": await cq.answer(); return
@@ -2415,7 +2671,7 @@ async def _auto_try_passwords(client, reply_msg, orig):
             td=str(temp_root/"test_pw")
             extract_archive(dl,td,password=pw)
             found=pw; shutil.rmtree(td,ignore_errors=True); break
-        except: shutil.rmtree(str(temp_root/"test_pw"),ignore_errors=True)
+        except Exception: shutil.rmtree(str(temp_root/"test_pw"),ignore_errors=True)
     if found:
         await status.edit_text(f"✅ Password found: <code>{found}</code>\nExtracting…")
         await run_unzip_task(client,orig,password=found,reply_msg=reply_msg)
@@ -2457,7 +2713,7 @@ async def run_unzip_task(client, msg, password, reply_msg=None):
             except Exception as e: await status.edit_text(f"❌ Extract error:\n<code>{e}</code>"); return
             # Free archive file from disk immediately after extraction
             try: os.remove(dl)
-            except: pass
+            except Exception: pass
             if user_cancelled.get(uid): await status.edit_text("❌ Cancelled mid-way."); return
             stats=result["stats"]; files=sorted(result["files"],key=lambda p:p.lower())
             links_map=extract_links_from_folder(str(extract_dir))
@@ -2521,7 +2777,7 @@ async def handle_send_all(client, cq, tid):
     is_priv=cq.message.chat.type==enums.ChatType.PRIVATE; pinned=False
     if is_priv:
         try: await client.pin_chat_message(chat_id,reply_to); pinned=True
-        except: pass
+        except Exception: pass
     async with GLOBAL_SEMAPHORE:
         for rel in files:
             if user_cancelled.get(user.id): break
@@ -2539,7 +2795,7 @@ async def handle_send_all(client, cq, tid):
                         progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),
                         reply_to_message_id=reply_to,message_thread_id=thread_id)
                     try: await st.delete()
-                    except: pass
+                    except Exception: pass
                 else:
                     st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,
                         message_thread_id=thread_id)
@@ -2548,19 +2804,19 @@ async def handle_send_all(client, cq, tid):
                         progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),
                         reply_to_message_id=reply_to,message_thread_id=thread_id)
                     try: await st.delete()
-                    except: pass
+                    except Exception: pass
                 try: await log_output(client,user,sent,f"send_all {info.get('archive_name','?')}")
-                except: pass
-            except: pass
+                except Exception: pass
+            except Exception: pass
             await asyncio.sleep(0.4)
     if is_priv and pinned:
         try: await client.unpin_chat_message(chat_id,reply_to)
-        except: pass
+        except Exception: pass
     await client.send_message(chat_id,"✅ All files sent!",reply_to_message_id=reply_to,
         message_thread_id=thread_id)
     # Clean up task from DB after full send
     try: await delete_unzip_task(tid)
-    except: pass
+    except Exception: pass
 
 async def handle_send_one(client, cq, tid, index):
     # Try in-memory first, then restore from MongoDB if bot restarted
@@ -2593,7 +2849,7 @@ async def handle_send_one(client, cq, tid, index):
                     progress=progress_for_pyrogram,progress_args=(st,start_u,name,"to Telegram"),
                     reply_to_message_id=reply_to,message_thread_id=thread_id)
                 try: await st.delete()
-                except: pass
+                except Exception: pass
             else:
                 st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,
                     message_thread_id=thread_id)
@@ -2602,10 +2858,10 @@ async def handle_send_one(client, cq, tid, index):
                     progress=progress_for_pyrogram,progress_args=(st,start_u,rel,"to Telegram"),
                     reply_to_message_id=reply_to,message_thread_id=thread_id)
                 try: await st.delete()
-                except: pass
+                except Exception: pass
             try: await log_output(client,user,sent,f"send_one {info.get('archive_name','?')}")
-            except: pass
-        except: pass
+            except Exception: pass
+        except Exception: pass
 
 # ════════════════════════════════════════════════════════════════════════════
 # AUDIO EXTRACT
@@ -2646,9 +2902,9 @@ async def handle_extract_audio(client, cq, msg, reply_to_msg=None):
                 progress=progress_for_pyrogram,progress_args=(status,start_u,f"{base}.m4a","to Telegram"),
                 reply_to_message_id=dest_msg.id)
             try: await status.delete()
-            except: pass
+            except Exception: pass
             try: await log_output(client,user,sent,"audio extracted")
-            except: pass
+            except Exception: pass
         except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2726,7 +2982,7 @@ async def _do_compress(client, cq, tid, res):
                 progress=progress_for_pyrogram,progress_args=(status,start_u,f"compressed_{res}p.mp4","to Telegram"),
                 reply_to_message_id=cq.message.id)
             try: await status.delete()
-            except: pass
+            except Exception: pass
             await log_output(client,cq.from_user,sent,f"compressed {res}p")
         except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
         await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
@@ -2775,10 +3031,10 @@ async def _do_split(client, cq, tid, size_mb):
                 await client.send_document(cq.message.chat.id,pp,caption=pname,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,pname,"to Telegram"),reply_to_message_id=cq.message.id)
                 try: await st.delete()
-                except: pass
+                except Exception: pass
             except Exception as e: await st.edit_text(f"❌ Part {i} failed: <code>{e}</code>")
         try: await status.delete()
-        except: pass
+        except Exception: pass
         await cq.message.reply_text(f"✅ Split done! {len(parts)} parts sent.")
         await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
     SPLIT_TASKS.pop(tid,None)
@@ -2814,7 +3070,7 @@ async def _do_extract_sub(client, cq, tid, sidx):
         except Exception as e: await cq.message.reply_text(f"❌ {sub['label']}: <code>{e}</code>")
     txt=f"✅ All {len(subs)} subs sent!" if sidx=="all" else f"✅ {targets[0]['label'] if targets else 'N/A'} sent!"
     try: await cq.message.edit_text(txt)
-    except: pass
+    except Exception: pass
     SUB_TASKS.pop(tid,None)
 
 # ── Screenshot ───────────────────────────────────────────────────────────────
@@ -2836,7 +3092,7 @@ async def _handle_screenshot_with_time(client, dest, orig, time_str):
     try:
         await client.send_photo(dest.chat.id,ss,caption=f"📸 at <code>{time_str}</code> from <b>{fname}</b>",reply_to_message_id=dest.id)
         try: await status.delete()
-        except: pass
+        except Exception: pass
     except Exception as e: await status.edit_text(f"❌ Send failed:\n<code>{e}</code>")
 
 # ── Watermark ─────────────────────────────────────────────────────────────────
@@ -2864,7 +3120,7 @@ async def _handle_watermark(client, dest, orig, wtext):
         sent=await client.send_video(dest.chat.id,out,caption=cap,thumb=thumb,duration=dur,
             progress=progress_for_pyrogram,progress_args=(status,start_u,fname,"to Telegram"),reply_to_message_id=dest.id)
         try: await status.delete()
-        except: pass
+        except Exception: pass
         await log_output(client,dest.from_user,sent,"watermark added")
     except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
 
@@ -2897,7 +3153,7 @@ async def _do_rename(client, dest, orig, new_name):
             sent=await client.send_document(dest.chat.id,new_path,caption=new_name,
                 progress=progress_for_pyrogram,progress_args=(status,start_u,new_name,"to Telegram"),reply_to_message_id=dest.id)
         try: await status.delete()
-        except: pass
+        except Exception: pass
         await log_output(client,dest.from_user,sent,f"renamed {fname}→{new_name}")
     except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
 
@@ -2916,7 +3172,7 @@ async def _trigger_pdf_tools(client, dest, orig, fname):
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
     except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
     try: pi=get_pdf_info(dl)
-    except: pi={"pages":"?","size_mb":0}
+    except Exception: pi={"pages":"?","size_mb":0}
     PDF_TASKS[tid]={"user_id":uid,"pdf_path":dl,"temp_root":str(temp_root),"fname":fname,"total_pages":pi.get("pages",0),"chat_id":dest.chat.id,"reply_to":status.id}
     await status.edit_text(
         f"📄 <b>{fname}</b>\nPages: <b>{pi['pages']}</b>  Size: <b>{pi['size_mb']} MB</b>\n\nWhat to do?",
@@ -2937,7 +3193,7 @@ async def _do_pdf_action(client, cq, tid, action):
             extract_text_from_pdf(dl,out)
             await client.send_document(cq.message.chat.id,out,caption=f"📝 Text from: <b>{fname}</b>",reply_to_message_id=cq.message.id)
             try: await cq.message.edit_text("✅ Text extracted!")
-            except: pass
+            except Exception: pass
         except Exception as e: await cq.message.reply_text(f"❌ <code>{e}</code>")
     elif action=="split":
         total=info.get("total_pages",0)
@@ -2957,7 +3213,7 @@ async def _do_pdf_split_range(client, dest, tid, ranges):
         for p in parts:
             await client.send_document(dest.chat.id,p,caption=os.path.basename(p),reply_to_message_id=dest.id)
         try: await status.edit_text(f"✅ {len(parts)} PDF parts sent!")
-        except: pass
+        except Exception: pass
     except Exception as e: await status.edit_text(f"❌ PDF split failed:\n<code>{e}</code>")
     PDF_TASKS.pop(tid,None)
 
@@ -2973,14 +3229,14 @@ async def _do_create_zip(client, cq, uid):
             await status.edit_text(f"📥 Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
             p=await client.download_file(f["file_id"],file_name=str(temp_root/f["file_name"]))
             if p: dl_paths.append(str(temp_root/f["file_name"]))
-        except:
+        except Exception:
             # fallback
             try:
                 import tempfile
                 tmp=str(temp_root/f["file_name"])
                 await client.download_media(f["file_id"],file_name=str(temp_root))
                 dl_paths.append(tmp)
-            except: pass
+            except Exception: pass
     if not dl_paths: await status.edit_text("❌ Files download nahi ho payi."); zip_sessions.pop(uid,None); return
     await status.edit_text("🗜 Creating archive…")
     try:
@@ -2992,7 +3248,7 @@ async def _do_create_zip(client, cq, uid):
         sent=await client.send_document(cq.message.chat.id,arc,caption=f"🗜 <code>{arc_name}</code>",
             progress=progress_for_pyrogram,progress_args=(status,start_u,arc_name,"to Telegram"),reply_to_message_id=cq.message.id)
         try: await status.delete()
-        except: pass
+        except Exception: pass
         if sess.get("password"): await cq.message.reply_text(f"🔐 Archive password: <code>{sess['password']}</code>")
         await log_output(client,cq.from_user,sent,"zip created")
     except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
@@ -3012,7 +3268,7 @@ async def _do_merge_videos(client, cq, uid):
             dest_path=str(temp_root/f["file_name"])
             await client.download_media(f["file_id"],file_name=str(temp_root))
             paths.append(dest_path)
-        except: pass
+        except Exception: pass
     if len(paths)<2: await status.edit_text("❌ Videos download nahi ho payi."); merge_sessions.pop(uid,None); return
     out=str(temp_root/"merged_output.mp4")
     await status.edit_text("🔗 Merging videos…")
@@ -3025,15 +3281,29 @@ async def _do_merge_videos(client, cq, uid):
         sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,duration=dur,
             progress=progress_for_pyrogram,progress_args=(status,start_u,"merged_output.mp4","to Telegram"),reply_to_message_id=cq.message.id)
         try: await status.delete()
-        except: pass
+        except Exception: pass
         await log_output(client,cq.from_user,sent,"videos merged")
     except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
     merge_sessions.pop(uid,None)
     await update_user_stats(uid,os.path.getsize(out)/(1024*1024))
 
 # ── Instagram delivery helper ─────────────────────────────────────────────────
+def _file_id_of(msg):
+    """Extract (type, file_id) from a sent message, for caching."""
+    try:
+        if getattr(msg, "photo", None):
+            return {"type": "photo", "file_id": msg.photo.file_id}
+        if getattr(msg, "video", None):
+            return {"type": "video", "file_id": msg.video.file_id}
+        if getattr(msg, "document", None):
+            return {"type": "document", "file_id": msg.document.file_id}
+    except Exception:
+        pass
+    return None
+
+
 async def _send_instagram_media(client, uid, chat_id, reply_to, files,
-                                caption="", status=None):
+                                caption="", status=None, return_messages=False):
     """Send downloaded Instagram media.
 
     Carousels always go out as Telegram albums (chunked in 10s, which is the
@@ -3048,7 +3318,7 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
 
     files = [f for f in files if f and Path(f).exists() and Path(f).stat().st_size > 0]
     if not files:
-        return 0
+        return (0, []) if return_messages else 0
 
     # Trust magic bytes, not filenames — IG serves WebP/HEIC from .jpg URLs and
     # Telegram rejects those with [400 PHOTO_EXT_INVALID].
@@ -3062,7 +3332,7 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
         fixed.append(f)
     files = [f for f in fixed if f and Path(f).exists()]
     if not files:
-        return 0
+        return (0, []) if return_messages else 0
 
     total = sum(Path(f).stat().st_size for f in files)
 
@@ -3093,25 +3363,30 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
     ALBUM_MAX = 10                      # Telegram hard limit per media group
     SIZE_CAP = 50 * 1024 * 1024         # per-item cap inside an album
 
+    sent_ids = []
+
     async def _send_single(fpath, cap_text, index_label=""):
         """Send one file, with a document fallback if Telegram rejects it."""
         fpath = str(fpath)
         kind = _kind(fpath)
         try:
             if kind == "photo":
-                await client.send_photo(chat_id, fpath, caption=cap_text or None,
-                                        reply_to_message_id=reply_to)
-            elif kind == "video":
-                await client.send_video(
+                m = await _with_floodwait(lambda: client.send_photo(
                     chat_id, fpath, caption=cap_text or None,
-                    thumb=await choose_thumbnail(uid, fpath),
-                    duration=await _get_video_duration(fpath),
-                    supports_streaming=True,
-                    reply_to_message_id=reply_to,
-                )
+                    reply_to_message_id=reply_to))
+            elif kind == "video":
+                thumb = await choose_thumbnail(uid, fpath)
+                dur = await _get_video_duration(fpath)
+                m = await _with_floodwait(lambda: client.send_video(
+                    chat_id, fpath, caption=cap_text or None,
+                    thumb=thumb, duration=dur, supports_streaming=True,
+                    reply_to_message_id=reply_to))
             else:
-                await client.send_document(chat_id, fpath, caption=cap_text or None,
-                                           reply_to_message_id=reply_to)
+                m = await _with_floodwait(lambda: client.send_document(
+                    chat_id, fpath, caption=cap_text or None,
+                    reply_to_message_id=reply_to))
+            fid = _file_id_of(m)
+            if fid: sent_ids.append(fid)
             return True
         except Exception as e:
             err = str(e)
@@ -3120,9 +3395,11 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
                      "IMAGE_PROCESS_FAILED", "PHOTO_CROP_SIZE_SMALL",
                      "MEDIA_EMPTY")):
                 try:
-                    await client.send_document(
+                    m = await _with_floodwait(lambda: client.send_document(
                         chat_id, fpath, caption=cap_text or None, force_document=True,
-                        reply_to_message_id=reply_to)
+                        reply_to_message_id=reply_to))
+                    fid = _file_id_of(m)
+                    if fid: sent_ids.append(fid)
                     return True
                 except Exception as e2:
                     err = str(e2)
@@ -3138,7 +3415,7 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
     # ── Single item — no album needed ──
     if len(files) == 1:
         await _send_single(files[0], head, "Item 1/1")
-        return total
+        return (total, sent_ids) if return_messages else total
 
     # ── Album path: keep the carousel grouped, 10 items per group ──
     groupable = [f for f in files
@@ -3167,8 +3444,11 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
                         duration=await _get_video_duration(str(fpath)),
                         supports_streaming=True,
                     ))
-            sent = await client.send_media_group(chat_id, media,
-                                                 reply_to_message_id=reply_to)
+            sent = await _with_floodwait(lambda: client.send_media_group(
+                chat_id, media, reply_to_message_id=reply_to))
+            for m in (sent or []):
+                fid = _file_id_of(m)
+                if fid: sent_ids.append(fid)
             sent_any = True
             try:
                 await log_output(client, await client.get_users(uid),
@@ -3192,77 +3472,155 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
                            f"Item {i + 1}")
         await asyncio.sleep(0.3)
 
-    return total
+    return (total, sent_ids) if return_messages else total
 
 
-async def _run_instagram_download(client, status, info, uid, tid=None):
-    """Download an Instagram link and deliver every media item.
+async def _send_cached_instagram(client, info, cached) -> bool:
+    """Re-send a previously uploaded post using stored file_ids.
 
-    `status` is the progress message that gets edited/deleted as we go.
-    Albums are kept together; captions carry the post description.
+    Avoids downloading the same post twice. Returns False if Telegram
+    rejects the cached ids (e.g. they expired), so the caller can retry
+    with a fresh download.
+    """
+    media = cached.get("media") or []
+    if not media:
+        return False
+    caption = cached.get("caption") or ""
+    chat_id, reply_to = info["chat_id"], info["reply_to"]
+
+    try:
+        if len(media) == 1:
+            m = media[0]
+            kind, fid = m.get("type"), m.get("file_id")
+            if not fid:
+                return False
+            if kind == "photo":
+                await _with_floodwait(lambda: client.send_photo(
+                    chat_id, fid, caption=caption or None, reply_to_message_id=reply_to))
+            elif kind == "video":
+                await _with_floodwait(lambda: client.send_video(
+                    chat_id, fid, caption=caption or None, reply_to_message_id=reply_to))
+            else:
+                await _with_floodwait(lambda: client.send_document(
+                    chat_id, fid, caption=caption or None, reply_to_message_id=reply_to))
+            return True
+
+        # Albums, in chunks of 10
+        for start in range(0, len(media), 10):
+            chunk = media[start:start + 10]
+            group = []
+            for i, m in enumerate(chunk):
+                fid, kind = m.get("file_id"), m.get("type")
+                if not fid:
+                    return False
+                cap = caption if (start == 0 and i == 0) else None
+                group.append(InputMediaVideo(fid, caption=cap) if kind == "video"
+                             else InputMediaPhoto(fid, caption=cap))
+            if len(group) == 1:
+                only = chunk[0]
+                send = client.send_video if only.get("type") == "video" else client.send_photo
+                await _with_floodwait(lambda: send(
+                    chat_id, only["file_id"],
+                    caption=caption if start == 0 else None,
+                    reply_to_message_id=reply_to))
+            else:
+                await _with_floodwait(lambda: client.send_media_group(
+                    chat_id, group, reply_to_message_id=reply_to))
+            await asyncio.sleep(0.4)
+        return True
+    except Exception:
+        return False
+
+
+async def _deliver_instagram(client, info, uid, status=None, quiet=False):
+    """Download one Instagram link and deliver it. Returns True on success.
+
+    Shared by the single-link flow and the /profile bulk downloader.
+    Repeat links are served from cache instead of being re-downloaded.
     """
     from utils.instagram import (InstagramError, build_description_messages,
                                  build_post_caption, caption_overflowed,
-                                 content_kind, download_post)
+                                 download_post)
 
     url = info["url"]
     temp_root = Path(info["temp_root"])
-    kind = content_kind(url)
-    label = {"story": "Story", "highlight": "Highlight",
-             "reel": "Reel", "post": "Post"}.get(kind, "Post")
 
-    async def _fail(text):
-        try: await status.edit_text(text)
-        except Exception: pass
-        if tid: YTDL_TASKS.pop(tid, None)
-
-    try:
-        await status.edit_text(f"📸 Instagram {label} download ho raha hai…")
-    except Exception:
-        pass
+    # ── Cache hit: re-send by file_id, no download at all ──
+    cached = await ig_cache_get(url)
+    if cached:
+        try:
+            ok = await _send_cached_instagram(client, info, cached)
+            if ok:
+                return True
+        except Exception:
+            pass   # cache stale → fall through to a real download
 
     try:
         files, meta = await download_post(url, str(temp_root))
     except InstagramError as e:
-        await _fail(str(e)); return
+        if not quiet and status:
+            await _safe_edit(status, str(e))
+        return False
     except Exception as e:
-        await _fail(f"❌ Instagram download failed:\n<code>{str(e)[:400]}</code>"); return
+        if not quiet and status:
+            await _safe_edit(status, f"❌ Instagram download failed:\n<code>{str(e)[:400]}</code>")
+        return False
 
     if not files:
-        await _fail("❌ Is post mein koi media nahi mila."); return
+        if not quiet and status:
+            await _safe_edit(status, "❌ Is post mein koi media nahi mila.")
+        return False
 
+    if status and not quiet:
+        await _safe_edit(status, f"📤 {len(files)} item upload ho rahe hain…")
+
+    caption = build_post_caption(meta, url)
+    total, sent_msgs = await _send_instagram_media(
+        client, uid, info["chat_id"], info["reply_to"], files,
+        caption=caption, return_messages=True)
+
+    # Cache what we just uploaded so the next request is instant
     try:
-        await status.edit_text(f"📤 {len(files)} item upload ho rahe hain…")
+        await ig_cache_put(url, sent_msgs, caption)
     except Exception:
         pass
 
-    caption = build_post_caption(meta, url)
-    total = await _send_instagram_media(
-        client, uid, info["chat_id"], info["reply_to"], files, caption=caption)
-
     # Reels often carry descriptions far longer than Telegram's 1024-char
-    # caption limit. Send the complete text as follow-up expandable quotes so
-    # nothing is lost.
+    # caption limit. Send the complete text as follow-up expandable quotes.
     try:
         if caption_overflowed(meta, url):
             for msg in build_description_messages(meta, url):
                 try:
-                    await client.send_message(
-                        info["chat_id"], msg,
-                        reply_to_message_id=info["reply_to"],
-                        disable_web_page_preview=True)
+                    await _safe_send(client, info["chat_id"], msg,
+                                     reply_to_message_id=info["reply_to"],
+                                     disable_web_page_preview=True)
                 except Exception:
                     break
                 await asyncio.sleep(0.4)
     except Exception:
         pass
 
-    try:
-        await status.delete()
-    except Exception:
-        pass
     await update_user_stats(uid, total / 1048576)
-    if tid: YTDL_TASKS.pop(tid, None)
+    return True
+
+
+async def _run_instagram_download(client, status, info, uid, tid=None):
+    """Download an Instagram link and deliver every media item."""
+    from utils.instagram import content_kind
+
+    kind = content_kind(info["url"])
+    label = {"story": "Story", "highlight": "Highlight",
+             "reel": "Reel", "post": "Post"}.get(kind, "Post")
+    await _safe_edit(status, f"📸 Instagram {label} download ho raha hai…")
+
+    ok = await _deliver_instagram(client, info, uid, status=status)
+    if ok:
+        try:
+            await status.delete()
+        except Exception:
+            pass
+    if tid:
+        YTDL_TASKS.pop(tid, None)
 
 
 async def _handle_instagram_task(client, cq, info, tid):
@@ -3281,7 +3639,7 @@ async def _do_ytdl_download(client, cq, tid, idx):
     if idx<0 or idx>=len(formats): await cq.message.reply_text("Invalid choice."); return
     fmt=formats[idx]; url=info["url"]; temp_root=Path(info["temp_root"])
     try: await cq.message.edit_text(f"⬇️ Downloading <b>{fmt['label']}</b>…\n<code>{url}</code>")
-    except: pass
+    except Exception: pass
     # ── Instagram handling ──
     # All Instagram links (photos, carousels, reels, stories, highlights) go
     # through the dedicated module, which returns EVERY media item in the post.
@@ -3300,13 +3658,13 @@ async def _do_ytdl_download(client, cq, tid, idx):
             await _handle_instagram_task(client, cq, info, tid)
             return
         try: await cq.message.edit_text(f"❌ Download failed:\n<code>{err_str[:500]}</code>")
-        except: pass
+        except Exception: pass
         YTDL_TASKS.pop(tid, None); return
 
     basename=os.path.basename(dl_path)
     status=cq.message; start_u=time.time()
     try: await status.edit_text(f"📤 Uploading: <code>{basename}</code>")
-    except: pass
+    except Exception: pass
     try:
         # Check if multiple files were downloaded (e.g. Instagram carousel)
         all_files = sorted(Path(info["temp_root"]).rglob("*"), key=lambda p: p.stat().st_mtime)
@@ -3340,7 +3698,7 @@ async def _do_ytdl_download(client, cq, tid, idx):
                         caption=cap_i, reply_to_message_id=info["reply_to"])
                 if i == 0:
                     try: await status.delete()
-                    except: pass
+                    except Exception: pass
                     await log_output(client, cq.from_user, sent, f"ytdl: {url}")
                     await update_user_stats(uid, sum(f.stat().st_size for f in media_files)/(1024*1024))
             except Exception as e:
@@ -3348,7 +3706,7 @@ async def _do_ytdl_download(client, cq, tid, idx):
                     reply_to_message_id=info["reply_to"])
     except Exception as e:
         try: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-        except: pass
+        except Exception: pass
     YTDL_TASKS.pop(tid,None)
 
 # ── Cloud Upload ──────────────────────────────────────────────────────────────
@@ -3401,27 +3759,27 @@ async def handle_m3u8_quality_choice(client, cq, tid, idx):
     chat_id=cq.message.chat.id; uid=cq.from_user.id; reply_to=cq.message.id
     await cq.answer()
     try: await cq.message.edit_text(f"📥 Downloading {name} stream…")
-    except: pass
+    except Exception: pass
     dest=str(temp_root/f"{base}_{name}.mp4")
     try: await download_m3u8_stream(url,dest)
     except Exception as e:
         try: await cq.message.edit_text(f"❌ m3u8 download failed:\n<code>{e}</code>")
-        except: pass
+        except Exception: pass
         M3U8_TASKS.pop(tid,None); return
     cap=await build_caption(uid,f"{base} [{name}]"); thumb=await choose_thumbnail(uid,dest)
     dur=await _get_video_duration(dest)
     try: await cq.message.edit_text("📤 Uploading m3u8 video…")
-    except: pass
+    except Exception: pass
     start_u=time.time()
     try:
         sent=await client.send_video(chat_id,dest,caption=cap,thumb=thumb,duration=dur,
             progress=progress_for_pyrogram,progress_args=(cq.message,start_u,base,"to Telegram"),reply_to_message_id=reply_to)
         try: await cq.message.delete()
-        except: pass
+        except Exception: pass
         await log_output(client,cq.from_user,sent,f"m3u8: {url}")
     except Exception as e:
         try: await cq.message.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
-        except: pass
+        except Exception: pass
     M3U8_TASKS.pop(tid,None)
 
 async def handle_links_download_all(client, cq, original_msg):
@@ -3442,12 +3800,12 @@ async def handle_links_download_all(client, cq, original_msg):
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     try: await cq.message.edit_text(f"⬇️ Direct: {len(candidates)} | GDrive: {len(gdrives)} | m3u8: {len(m3u8s)}\nDownloading…")
-    except: pass
+    except Exception: pass
     ok=fail=0; chat_id=cq.message.chat.id; reply_to=cq.message.id
     is_priv=cq.message.chat.type==enums.ChatType.PRIVATE; pinned=False
     if is_priv:
         try: await client.pin_chat_message(chat_id,reply_to); pinned=True
-        except: pass
+        except Exception: pass
     for url in candidates:
         if user_cancelled.get(uid): break
         base=url.split("?",1)[0].split("#",1)[0].rsplit("/",1)[-1] or f"file_{uuid.uuid4().hex[:8]}"
@@ -3465,9 +3823,9 @@ async def handle_links_download_all(client, cq, original_msg):
                 sent=await client.send_document(chat_id,fp,caption=bn,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
             try: await st.delete()
-            except: pass
+            except Exception: pass
             ok+=1; await log_output(client,user,sent,f"direct link: {url}")
-        except: fail+=1
+        except Exception: fail+=1
         await asyncio.sleep(0.4)
     for url in gdrives:
         if user_cancelled.get(uid): break
@@ -3487,18 +3845,18 @@ async def handle_links_download_all(client, cq, original_msg):
                 sent=await client.send_document(chat_id,fp,caption=bn,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
             try: await st.delete()
-            except: pass
+            except Exception: pass
             ok+=1; await log_output(client,user,sent,f"gdrive: {url}")
-        except: fail+=1
+        except Exception: fail+=1
         await asyncio.sleep(0.4)
     for url in m3u8s:
         if user_cancelled.get(uid): break
         await offer_m3u8_menu(client,cq,uid,url,temp_root)
     try: await cq.message.edit_text(f"✅ Direct/GDrive done.\nSuccess: {ok}  Failed: {fail}\nm3u8: {len(m3u8s)} (quality buttons above)")
-    except: pass
+    except Exception: pass
     if is_priv and pinned:
         try: await client.unpin_chat_message(chat_id,reply_to)
-        except: pass
+        except Exception: pass
         await client.send_message(chat_id,"✅ All link downloads finished!",reply_to_message_id=reply_to)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -3536,21 +3894,21 @@ async def song_cmd(client, message):
         start_u = time.time()
         if status:
             try: await status.edit_text(f"📤 Uploading: <code>{fname}</code>…")
-            except: pass
+            except Exception: pass
         sent = await client.send_audio(
             message.chat.id, audio_path, caption=cap,
             reply_to_message_id=message.id,
         )
         if status:
             try: await status.delete()
-            except: pass
+            except Exception: pass
         await log_output(client, message.from_user, sent, f"song: {query}")
         await update_user_stats(uid, Path(audio_path).stat().st_size / 1048576)
     except Exception as e:
         err = str(e)[:300]
         if status:
             try: await status.edit_text(f"❌ Failed: <code>{err}</code>")
-            except: pass
+            except Exception: pass
     finally:
         _safe_cleanup(str(temp_root))
 
@@ -3575,11 +3933,54 @@ def _build_version() -> str:
 BUILD_VERSION = _build_version()
 
 
+async def _notify_owners(client, text: str):
+    """Send a message to every configured owner (best effort)."""
+    for oid in Config.OWNER_IDS:
+        try:
+            await client.send_message(oid, text, disable_web_page_preview=True)
+        except Exception:
+            pass
+
+
+async def cookie_monitor(client):
+    """Periodically verify Instagram cookies and alert owners when they die.
+
+    Instagram sessions expire silently; without this the bot just starts
+    failing every download with no explanation.
+    """
+    from utils.instagram import has_cookies, validate_cookies
+
+    await asyncio.sleep(30)          # let startup settle
+    last_ok = None
+    while True:
+        try:
+            if has_cookies():
+                ok, detail = await validate_cookies(force=True)
+                if ok is False and last_ok is not False:
+                    await _notify_owners(
+                        client,
+                        "🍪 <b>Instagram cookies problem</b>\n\n"
+                        f"{detail}\n\n"
+                        "Instagram downloads ab fail ho sakte hain.\n"
+                        "✅ <b>Fix:</b> browser se fresh cookies export karke "
+                        "<code>INSTAGRAM_COOKIES</code> update karo.")
+                elif ok and last_ok is False:
+                    await _notify_owners(client, "✅ <b>Instagram cookies working again.</b>")
+                last_ok = ok
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        await asyncio.sleep(6 * 3600)     # re-check every 6 hours
+
+
 async def main():
     asyncio.create_task(cleanup_worker())
     await app.start()
+    asyncio.create_task(cookie_monitor(app))
     handlers = sum(len(v) for v in app.dispatcher.groups.values())
-    print(f"✅ Serena Unzip Bot v2 started. build={BUILD_VERSION} handlers={handlers}")
+    print(f"✅ Serena Unzip Bot {BOT_VERSION} started. "
+          f"build={BUILD_VERSION} handlers={handlers}")
     await idle()
     await app.stop()
 

@@ -213,7 +213,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `API_HASH` | ✅ | Telegram API Hash from [my.telegram.org](https://my.telegram.org) |
 | `BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
-| `OWNER_ID` | ✅ | Your Telegram user ID |
+| `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
 | `FORCE_SUB_CHANNEL` | ⬜ | Channel username users must join |
 | `INSTAGRAM_COOKIES` | ⚠️ | Instagram cookies (Netscape or header format). **Strongly recommended** — Instagram blocks anonymous datacenter IPs. Required for Stories/Highlights. |
@@ -363,6 +363,10 @@ Both formats are accepted:
 /zqpass      — Set queue password
 /cancelqueue — Cancel active queue
 /insta       — Instagram photos, carousels, reels, stories (alias: /ig)
+/profile     — Bulk-download a profile's latest posts (alias: /bulk)
+/story       — Download a user's active stories
+/version     — Build, changelog and live health (alias: /changelog)
+/clearcache  — Owner: drop the Instagram file_id cache
 /ytdl        — Download from Twitter/TikTok/Facebook etc.
 /compress    — Compress video (reply to video)
 /resize      — Resize video

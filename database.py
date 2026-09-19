@@ -17,14 +17,17 @@ if USE_DB:
     files_col    = db["temp_files"]
     settings_col = db["user_settings"]
     referral_col = db["referrals"]
+    igcache_col  = db["ig_cache"]
 else:
     _client = users_col = files_col = settings_col = referral_col = None
+    igcache_col = None
 
 # ── in-memory fallbacks ──────────────────────────────────────────────────────
 _mem_users:    Dict[int, Dict[str, Any]] = {}
 _mem_files:    Dict[str, Dict[str, Any]] = {}
 _mem_settings: Dict[int, Dict[str, Any]] = {}
 _mem_referrals: Dict[int, int] = {}   # user_id -> referrer_id
+_mem_igcache:  Dict[str, Dict[str, Any]] = {}   # url_key -> cached media
 
 
 def _default_user(user_id: int) -> Dict[str, Any]:
@@ -439,3 +442,84 @@ async def delete_unzip_task(tid: str) -> None:
     _mem_unzip_tasks.pop(tid, None)
     if USE_DB:
         await _safe_db(unzip_tasks_col.delete_one({"tid": tid}))
+
+
+# ── Instagram media cache ────────────────────────────────────────────────────
+# Maps a post URL to the Telegram file_ids we already uploaded, so repeat
+# requests are served instantly instead of being downloaded again.
+
+CACHE_TTL_DAYS = 30
+
+
+def _cache_key(url: str) -> str:
+    """Normalise a URL so the same post always hits the same cache row."""
+    u = (url or "").strip().lower()
+    u = u.split("?")[0].split("#")[0].rstrip("/")
+    u = u.replace("://instagram.com", "://www.instagram.com")
+    u = u.replace("http://", "https://")
+    return u
+
+
+async def ig_cache_get(url: str) -> Optional[Dict[str, Any]]:
+    """Return cached media for a post, or None when absent/expired."""
+    key = _cache_key(url)
+    if not key:
+        return None
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=CACHE_TTL_DAYS)
+
+    if not USE_DB:
+        row = _mem_igcache.get(key)
+        if not row:
+            return None
+        if row.get("created_at", datetime.datetime.utcnow()) < cutoff:
+            _mem_igcache.pop(key, None)
+            return None
+        return row
+
+    row = await _safe_db(igcache_col.find_one({"_id": key}))
+    if not row:
+        return None
+    if row.get("created_at") and row["created_at"] < cutoff:
+        await _safe_db(igcache_col.delete_one({"_id": key}))
+        return None
+    return row
+
+
+async def ig_cache_put(url: str, media: List[Dict[str, Any]], caption: str = ""):
+    """Store the file_ids of an uploaded post."""
+    key = _cache_key(url)
+    if not key or not media:
+        return
+    row = {
+        "_id": key,
+        "media": media,              # [{type, file_id}, ...]
+        "caption": caption or "",
+        "created_at": datetime.datetime.utcnow(),
+    }
+    if not USE_DB:
+        _mem_igcache[key] = row
+        if len(_mem_igcache) > 500:          # bound memory when DB is absent
+            for old in sorted(_mem_igcache,
+                              key=lambda k: _mem_igcache[k]["created_at"])[:100]:
+                _mem_igcache.pop(old, None)
+        return
+    await _safe_db(igcache_col.replace_one({"_id": key}, row, upsert=True))
+
+
+async def ig_cache_stats() -> Dict[str, int]:
+    """Cache size, for /version and admin views."""
+    if not USE_DB:
+        return {"entries": len(_mem_igcache)}
+    n = await _safe_db(igcache_col.count_documents({}), 0)
+    return {"entries": int(n or 0)}
+
+
+async def ig_cache_clear() -> int:
+    """Drop the whole cache. Returns how many rows were removed."""
+    if not USE_DB:
+        n = len(_mem_igcache)
+        _mem_igcache.clear()
+        return n
+    stats = await ig_cache_stats()
+    await _safe_db(igcache_col.delete_many({}))
+    return stats.get("entries", 0)

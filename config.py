@@ -5,6 +5,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _parse_owner_ids(raw: str) -> set:
+    """Parse "123,456" into {123, 456}, ignoring junk entries."""
+    ids = set()
+    for piece in (raw or "").replace(";", ",").split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            ids.add(int(piece))
+        except ValueError:
+            print(f"⚠️  OWNER_IDS: ignoring invalid entry {piece!r}")
+    if not ids:
+        print(
+            "⚠️  OWNER_IDS is not set — admin commands are disabled.\n"
+            "    Set it in your environment, e.g. OWNER_IDS=12345678,87654321"
+        )
+    return ids
+
+
 class Config:
     # ── Telegram API ─────────────────────────────────────────────
     API_ID    = int(os.getenv("API_ID", "123456"))
@@ -18,7 +37,10 @@ class Config:
     # ── IDs ──────────────────────────────────────────────────────
     LOG_CHANNEL_ID    = int(os.getenv("LOG_CHANNEL_ID", "-1003286415377"))
     FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "serenaunzipbot")
-    OWNER_IDS         = {6518065496, 1598576202}
+
+    # Owner IDs come from the environment so they are never committed.
+    # Set OWNER_IDS as a comma-separated list, e.g. "12345678,87654321".
+    OWNER_IDS         = _parse_owner_ids(os.getenv("OWNER_IDS", ""))
     OWNER_USERNAME    = os.getenv("OWNER_USERNAME", "technicalserena")
 
     # ── General ──────────────────────────────────────────────────
