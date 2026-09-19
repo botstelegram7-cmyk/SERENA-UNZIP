@@ -253,11 +253,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.6.1"
-BOT_CODENAME = "Cookie Fix"
+BOT_VERSION  = "v2.6.2"
+BOT_CODENAME = "Big Folders"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.6.2": [
+        "🍪 <b>Netscape format cookies ab support hain</b> — pehle poori file <code>ndus=</code> ke aage chipak jati thi (0 chars error)",
+        "📂 <b>Bade Drive folders fix</b> — 86 files wala folder chup-chaap hang ho jata tha, ab file-by-file download hota hai",
+        "📊 Folder download me live progress: kaun si file, kitni ho gayin",
+        "🛑 Folder ke beech me <code>/cancel</code> kaam karta hai",
+        "🩹 Kuch files block hon to baaki phir bhi milti hain",
+        "💬 Google quota block ab saaf batata hai, chup-chaap fail nahi hota",
+    ],
     "v2.6.1": [
         "🐞 <b>Fix:</b> cookie me newline hone par har request crash ho jati thi — devtools se paste karne par ye aam hai",
         "🍪 Cookie ab automatically clean hoti hai (newline, tab, quotes, extra space)",
@@ -4151,12 +4159,30 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
     else:
         await _safe_edit(status, "📂 Folder download ho raha hai…")
 
-    files = await download_gdrive_folder(url, str(dest_dir))
+    # Live progress: a large folder can take minutes, and Google throttles
+    # per file, so the user needs to see it is still working.
+    _last = {"t": 0.0}
+
+    async def _on_progress(idx, total, name, done):
+        now = time.time()
+        if now - _last["t"] < 3 and idx != total:
+            return
+        _last["t"] = now
+        await _safe_edit(
+            status,
+            f"📂 <b>Downloading {idx}/{total}</b>\n"
+            f"📄 {name[:45]}\n"
+            f"✅ {done} ready")
+
+    files = await download_gdrive_folder(
+        url, str(dest_dir),
+        on_progress=_on_progress,
+        should_stop=lambda: bool(user_cancelled.get(uid)))
     if not files:
         raise GDriveError(
             "❌ <b>Folder se koi file nahi mili.</b>\n\n"
-            "Folder khali hai, ya uske andar sirf sub-folders hain jo "
-            "share nahi kiye gaye.")
+            "Folder khali hai, sirf sub-folders hain, ya Google ne "
+            "download quota lagayi hai.")
 
     ok = failed = 0
     for i, fp in enumerate(files, 1):

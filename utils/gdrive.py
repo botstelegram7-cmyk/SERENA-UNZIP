@@ -166,34 +166,101 @@ async def list_gdrive_folder(url: str) -> List[Dict]:
     return out
 
 
-async def download_gdrive_folder(url: str, output_dir: str,
-                                 timeout: int = 3600) -> List[str]:
-    """Download every file in a Drive folder. Returns saved paths."""
+async def download_gdrive_file_by_id(file_id: str, output_dir: str,
+                                     name: str = "") -> Optional[str]:
+    """Download one file by id. Returns None instead of raising."""
     import gdown
 
     os.makedirs(output_dir, exist_ok=True)
 
     def _run():
-        return gdown.download_folder(
-            url=url, output=output_dir, quiet=True,
-            use_cookies=False, resume=True, retries=3)
+        return gdown.download(id=file_id, output=os.path.join(output_dir, ""),
+                              quiet=True, use_cookies=False, resume=True,
+                              retries=2)
+    try:
+        path = await asyncio.to_thread(_run)
+    except Exception:
+        return None
+    return path if path and os.path.exists(path) else None
+
+
+async def download_gdrive_folder(url: str, output_dir: str,
+                                 timeout: int = 3600,
+                                 on_progress=None,
+                                 max_files: int = 0,
+                                 should_stop=None) -> List[str]:
+    """Download a Drive folder file-by-file.
+
+    gdown.download_folder() is one opaque blocking call: on a large folder
+    whose files are rate-limited it simply hangs with no progress and no
+    partial results, which is what made big folders look like a failure.
+
+    Listing first and fetching each file individually means we can report
+    progress, tolerate per-file failures, honour cancellation and still
+    return whatever succeeded.
+    """
+    os.makedirs(output_dir, exist_ok=True)
 
     try:
-        paths = await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout)
-    except asyncio.TimeoutError:
-        # Partial results are still useful — return whatever landed on disk
-        got = _walk_files(output_dir)
-        if got:
-            return got
-        raise GDriveError("⏳ Folder download timeout ho gaya (bahut bada hai).")
-    except Exception as e:
-        got = _walk_files(output_dir)
-        if got:
-            return got
-        raise GDriveError(_friendly(str(e), "folder")) from e
+        items = await list_gdrive_folder(url)
+    except GDriveError:
+        items = []
 
-    files = [p for p in (paths or []) if p and os.path.isfile(p)]
-    return files or _walk_files(output_dir)
+    # No listing (nested/odd folder) → fall back to gdown's own walker
+    if not items:
+        import gdown
+
+        def _run():
+            return gdown.download_folder(url=url, output=output_dir, quiet=True,
+                                         use_cookies=False, resume=True, retries=3)
+        try:
+            paths = await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout)
+            return [p for p in (paths or []) if p and os.path.isfile(p)] \
+                or _walk_files(output_dir)
+        except asyncio.TimeoutError:
+            got = _walk_files(output_dir)
+            if got:
+                return got
+            raise GDriveError("⏳ Folder download timeout ho gaya (bahut bada hai).")
+        except Exception as e:
+            got = _walk_files(output_dir)
+            if got:
+                return got
+            raise GDriveError(_friendly(str(e), "folder")) from e
+
+    if max_files and len(items) > max_files:
+        items = items[:max_files]
+
+    saved: List[str] = []
+    blocked = 0
+    for idx, item in enumerate(items, 1):
+        if should_stop and should_stop():
+            break
+        fid = item.get("id") or ""
+        name = os.path.basename(item.get("path") or "") or f"file_{idx}"
+        if on_progress:
+            try:
+                await on_progress(idx, len(items), name, len(saved))
+            except Exception:
+                pass
+        if not fid:
+            continue
+        path = await download_gdrive_file_by_id(fid, output_dir, name)
+        if path:
+            saved.append(path)
+        else:
+            blocked += 1
+            # Google throttles per-file; a short pause helps the next one
+            await asyncio.sleep(1.0)
+
+    if not saved and blocked:
+        raise GDriveError(
+            f"🚫 <b>Google ne saari {blocked} files block kar di.</b>\n\n"
+            "Ye folder itni baar download ho chuka hai ki Google ne "
+            "quota limit laga di hai (ya files public nahi hain).\n\n"
+            "✅ <b>Fix:</b> folder ko apni Drive me copy karke uska link "
+            "bhejo, ya kuch ghante baad try karo.")
+    return saved
 
 
 def _walk_files(root: str) -> List[str]:

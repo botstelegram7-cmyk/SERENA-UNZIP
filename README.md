@@ -213,7 +213,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `API_HASH` | ✅ | Telegram API Hash from [my.telegram.org](https://my.telegram.org) |
 | `BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
-| `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. |
+| `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. A full Netscape `cookies.txt` export, a `k=v; k=v` string, or the bare `ndus` value are all accepted. |
 | `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
 | `FORCE_SUB_CHANNEL` | ⬜ | Channel username users must join |

@@ -141,9 +141,66 @@ def _clean_cookie(raw: str) -> str:
     return raw.strip("; ").strip()
 
 
+def _parse_netscape(raw: str) -> Dict[str, str]:
+    """Parse a Netscape cookies.txt blob into {name: value}.
+
+    Format is TSV: domain, flag, path, secure, expiry, name, value.
+    People often export this file rather than copying a single value, so
+    it has to be supported — treating it as a header string produced a
+    Cookie header containing the whole file.
+    """
+    jar: Dict[str, str] = {}
+    text = (raw or "").replace("\\n", "\n")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = re.split(r"\t+", line)
+        if len(parts) < 7:
+            parts = re.split(r"\s{2,}|\t", line)
+        if len(parts) >= 7:
+            name, value = parts[5].strip(), parts[6].strip()
+            if name:
+                jar[name] = value
+    return jar
+
+
+def _looks_netscape(raw: str) -> bool:
+    low = (raw or "").lower()
+    if "netscape http cookie file" in low:
+        return True
+    # A TSV line with 7 fields and TRUE/FALSE flags is the giveaway
+    for line in (raw or "").replace("\\n", "\n").splitlines():
+        if line.strip().startswith("#") or not line.strip():
+            continue
+        parts = re.split(r"\t+|\s{2,}", line.strip())
+        if len(parts) >= 7 and parts[1].upper() in ("TRUE", "FALSE"):
+            return True
+    return False
+
+
 def _cookie_header() -> str:
-    """Build a Cookie header from the configured session value."""
-    raw = _clean_cookie(Config.TERABOX_COOKIE or "")
+    """Build a Cookie header from the configured session value.
+
+    Accepts three shapes people actually paste:
+      * a bare ndus value
+      * a browser "k=v; k=v" cookie string
+      * a full Netscape cookies.txt export
+    """
+    raw = (Config.TERABOX_COOKIE or "")
+    if not raw.strip():
+        return ""
+
+    if _looks_netscape(raw):
+        jar = _parse_netscape(raw)
+        if jar:
+            wanted = [f"{k}={v}" for k, v in jar.items()
+                      if k.lower() in ("ndus", "browserid", "csrftoken",
+                                       "lang", "ndut_fmt", "pcsett", "stoken")]
+            pairs = wanted or [f"{k}={v}" for k, v in jar.items()]
+            return _clean_cookie("; ".join(pairs))
+
+    raw = _clean_cookie(raw)
     if not raw:
         return ""
     # Accept either a bare ndus value or a full "k=v; k=v" string
