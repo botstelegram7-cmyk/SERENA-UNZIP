@@ -783,39 +783,125 @@ def normalize_image(path: str) -> str:
         return target
 
 
+# How many times to retry a single media file before giving up.
+_MEDIA_RETRIES = 4
+
+
 async def _download_one(
     session: aiohttp.ClientSession, item: Dict, output_dir: str, shortcode: str
 ) -> Optional[str]:
+    """Download one media file, retrying transient failures.
+
+    Previously a single dropped connection lost the file outright, which is
+    the main reason downloads "mostly failed": Instagram's CDN routinely
+    resets long transfers. We now retry with backoff, resume partial
+    transfers with a Range request, and verify the result.
+    """
     media_url = item["url"]
     ext = _guess_ext(media_url, item["is_video"])
     name = f"{shortcode or 'instagram'}_{item['index']:02d}{ext}"
     dest = os.path.join(output_dir, name)
-    # Ask the CDN for JPEG first — avoids WebP whenever the CDN will honour it
-    headers = {
+    base_headers = {
+        # Ask the CDN for JPEG first — avoids WebP when the CDN will honour it
         "User-Agent": DESKTOP_UA,
         "Referer": "https://www.instagram.com/",
         "Accept": ("video/*,*/*;q=0.8" if item["is_video"]
                    else "image/jpeg,image/png;q=0.9,*/*;q=0.5"),
     }
-    try:
-        async with session.get(
-            media_url, headers=headers, timeout=aiohttp.ClientTimeout(total=600)
-        ) as r:
-            if r.status not in (200, 206):
-                return None
-            with open(dest, "wb") as fh:
-                async for chunk in r.content.iter_chunked(1 << 16):
-                    fh.write(chunk)
-    except Exception:
-        return None
 
-    # Reject truncated / placeholder files
-    if not os.path.exists(dest) or os.path.getsize(dest) < 1024:
+    last_err = ""
+    for attempt in range(1, _MEDIA_RETRIES + 1):
+        headers = dict(base_headers)
+        have = 0
+        # Resume instead of restarting when a previous attempt left bytes
+        if os.path.exists(dest):
+            have = os.path.getsize(dest)
+            if have > 1024:
+                headers["Range"] = f"bytes={have}-"
+            else:
+                have = 0
+
         try:
-            os.remove(dest)
-        except Exception:
-            pass
-        return None
+            # sock_read guards against a CDN that stalls mid-body: without
+            # it a stalled transfer hangs until the total timeout expires.
+            async with session.get(
+                media_url, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=900, sock_read=45,
+                                              sock_connect=30)
+            ) as r:
+                # 403/410 mean the signed CDN URL expired — retrying the same
+                # URL cannot help, so report it for a metadata refresh.
+                if r.status in (403, 410):
+                    return None
+                if r.status == 416:          # range not satisfiable → restart
+                    _unlink(dest)
+                    last_err = "range rejected"
+                    continue
+                if r.status == 429:
+                    note_rate_limit()
+                    last_err = "rate limited"
+                    await asyncio.sleep(min(5 * attempt, 20))
+                    continue
+                if r.status not in (200, 206):
+                    last_err = f"HTTP {r.status}"
+                    await asyncio.sleep(min(2 * attempt, 10))
+                    continue
+
+                # A 200 to a Range request means the server ignored it
+                mode = "ab" if (r.status == 206 and have) else "wb"
+                expected = r.content_length
+                if mode == "ab" and expected is not None:
+                    expected += have
+
+                async def _pump():
+                    with open(dest, mode) as fh:
+                        async for chunk in r.content.iter_chunked(1 << 16):
+                            fh.write(chunk)
+
+                # Hard ceiling so a half-delivered body cannot hang forever
+                await asyncio.wait_for(_pump(), timeout=900)
+
+            size = os.path.getsize(dest) if os.path.exists(dest) else 0
+            # Detect truncation so a half file is never passed off as success
+            if expected and size < expected:
+                last_err = f"truncated {size}/{expected}"
+                await asyncio.sleep(min(2 * attempt, 10))
+                continue
+            if size >= 1024:
+                return await _finalise_media(dest, item)
+            last_err = f"too small ({size} bytes)"
+            _unlink(dest)
+
+        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+            last_err = type(e).__name__
+        except Exception as e:
+            last_err = str(e)[:60]
+
+        if attempt < _MEDIA_RETRIES:
+            await asyncio.sleep(min(1.5 * attempt, 8))
+
+    _log_media_failure(name, last_err)
+    _unlink(dest)
+    return None
+
+
+def _unlink(path: str):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def _log_media_failure(name: str, err: str):
+    try:
+        print(f"[instagram] media failed after {_MEDIA_RETRIES} tries: {name} ({err})")
+    except Exception:
+        pass
+
+
+async def _finalise_media(dest: str, item: Dict) -> Optional[str]:
+    """Post-process a downloaded file and return its final path."""
 
     # Instagram lies about extensions (.jpg URLs serving WebP/HEIC bytes),
     # which makes Telegram reject the upload with PHOTO_EXT_INVALID.
@@ -859,6 +945,10 @@ async def _ytdlp_fallback_with_meta(url: str, output_dir: str) -> Tuple[List[str
     return files, meta
 
 
+# Last error yt-dlp reported, surfaced in messages so a failure explains itself
+_LAST_YTDLP_ERROR: Dict[str, str] = {"v": ""}
+
+
 async def _ytdlp_fallback(url: str, output_dir: str, write_info: bool = False) -> List[str]:
     """Last resort — good for reels, stories and highlights."""
     out_tmpl = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
@@ -870,29 +960,53 @@ async def _ytdlp_fallback(url: str, output_dir: str, write_info: bool = False) -
         "--user-agent", DESKTOP_UA,
         "--add-header", "Accept-Language:en-US,en;q=0.9",
         "--socket-timeout", "30",
-        "--retries", "3",
-        "--fragment-retries", "5",
+        # More persistence: Instagram's CDN drops long transfers often
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--retry-sleep", "exp=1:30",
+        "--file-access-retries", "5",
         "--concurrent-fragments", "4",
-        "--format", "bestvideo*+bestaudio/best",
+        # Prefer a single progressive MP4 (no ffmpeg merge needed), then fall
+        # back to merging. Avoids failures on hosts without ffmpeg.
+        "--format",
+        "best[ext=mp4][vcodec!=none][acodec!=none]/bestvideo*+bestaudio/best",
         "--merge-output-format", "mp4",
         "--output", out_tmpl,
         "--yes-playlist",
         "--ignore-errors",
         "--no-warnings",
+        "--no-abort-on-error",
     ]
     if write_info:
         cmd += ["--write-info-json"]
     cmd += [url]
     before = {p.name for p in Path(output_dir).iterdir()} if Path(output_dir).exists() else set()
+    err = b""
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         _, err = await asyncio.wait_for(proc.communicate(), timeout=Config.YTDL_TIMEOUT_SEC)
     except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        _LAST_YTDLP_ERROR["v"] = "yt-dlp timed out"
         return []
-    except Exception:
+    except FileNotFoundError:
+        _LAST_YTDLP_ERROR["v"] = "yt-dlp is not installed on the server"
         return []
+    except Exception as e:
+        _LAST_YTDLP_ERROR["v"] = str(e)[:200]
+        return []
+
+    if err:
+        text = err.decode("utf-8", "ignore")
+        for line in text.splitlines():
+            if "ERROR" in line or "error" in line.lower():
+                _LAST_YTDLP_ERROR["v"] = line.strip()[:200]
+                break
 
     fresh = [
         str(p)
@@ -1623,6 +1737,7 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
     # user exactly how long is left instead.
     raise_if_rate_limited()
 
+    _LAST_YTDLP_ERROR["v"] = ""       # don't report a previous run's error
     saved: List[str] = []
 
     # ── Path A: direct CDN download via Instagram's own APIs ──
@@ -1632,17 +1747,33 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
         items, meta = [], _empty_meta()
 
     if items:
-        connector = aiohttp.TCPConnector(limit=4)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            results = await asyncio.gather(
-                *[_download_one(session, it, output_dir, shortcode) for it in items],
-                return_exceptions=True,
-            )
-        saved = [r for r in results if isinstance(r, str) and r]
-        saved.sort(key=lambda p: os.path.basename(p))
+        saved = await _download_items(items, output_dir, shortcode)
+
+        # Some items failed: the signed CDN URLs may simply have gone stale
+        # between fetching metadata and downloading. Re-fetch once and retry
+        # only the missing ones rather than losing the whole post.
+        if len(saved) < len(items):
+            try:
+                fresh_items, fresh_meta = await fetch_post(url)
+            except Exception:
+                fresh_items, fresh_meta = [], None
+            if fresh_items and len(fresh_items) == len(items):
+                got = {os.path.basename(p).split("_")[-1].split(".")[0]
+                       for p in saved}
+                missing = [it for it in fresh_items
+                           if f"{it['index']:02d}" not in got]
+                if missing:
+                    more = await _download_items(missing, output_dir, shortcode)
+                    saved = sorted(set(saved) | set(more),
+                                   key=lambda p: os.path.basename(p))
+                if fresh_meta and not meta.get("caption"):
+                    meta = fresh_meta
 
     if saved:
         clear_rate_limit()
+        # Deliver what we have; a partial carousel beats a hard failure.
+        if len(saved) < len(items):
+            meta["partial"] = f"{len(saved)}/{len(items)}"
         return saved, meta
 
     # ── Path B: yt-dlp (reels, stories, highlights) ──
@@ -1653,7 +1784,36 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
                 meta[k] = v
         return saved, meta
 
-    raise InstagramError(_friendly_error(kind))
+    # Nothing worked — include the concrete reason when we have one, so the
+    # user is not left with a generic "blocked" message.
+    detail = _LAST_YTDLP_ERROR.get("v") or ""
+    msg = _friendly_error(kind)
+    if detail:
+        low = detail.lower()
+        if "not installed" in low:
+            msg = ("❌ <b>yt-dlp server par installed nahi hai.</b>\n\n"
+                   "Owner: <code>pip install -U yt-dlp</code> chalao "
+                   "ya requirements.txt se redeploy karo.")
+        elif "login" in low or "rate-limit" in low or "429" in low:
+            pass      # the friendly message already covers this
+        else:
+            msg += f"\n\n<i>Technical: <code>{_esc(detail[:150])}</code></i>"
+    raise InstagramError(msg)
+
+
+async def _download_items(items: List[Dict], output_dir: str,
+                          shortcode: str) -> List[str]:
+    """Download a batch of media items concurrently."""
+    connector = aiohttp.TCPConnector(limit=4, force_close=True)
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=30)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        results = await asyncio.gather(
+            *[_download_one(session, it, output_dir, shortcode) for it in items],
+            return_exceptions=True,
+        )
+    saved = [r for r in results if isinstance(r, str) and r]
+    saved.sort(key=lambda p: os.path.basename(p))
+    return saved
 
 
 async def download_instagram(url: str, output_dir: str) -> List[str]:

@@ -250,11 +250,21 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.3.3"
-BOT_CODENAME = "Story & Diagnostics"
+BOT_VERSION  = "v2.4.0"
+BOT_CODENAME = "Reliable Downloads"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.4.0": [
+        "🔁 Har media file ab 4 baar retry hoti hai — pehle ek network glitch = poora download fail",
+        "⏭ Adhoore download <b>resume</b> hote hain (Range request), shuru se nahi",
+        "✂️ Truncated/half files detect hokar dobara try hoti hain",
+        "🎠 Carousel ka koi item fail ho to baaki phir bhi milenge (pehle sab fail hota tha)",
+        "🔄 CDN link expire ho jaye to metadata refresh karke dobara koshish",
+        "⏱ Stall hone par timeout — pehle download ghanton latka rehta tha",
+        "🚀 yt-dlp fallback: 10 retries + exponential backoff, ffmpeg ke bina bhi chalta hai",
+        "💬 Fail hone par asli technical wajah dikhti hai, generic message nahi",
+    ],
     "v2.3.3": [
         "🩺 <code>/igtest</code> ab sahi verdict deta hai — pehle galat 'IP blocked' bolta tha jabki embed chal raha tha",
         "🔇 Story videos ka silent rendition avoid karta hai (audio wali copy prefer)",
@@ -3735,6 +3745,10 @@ async def _deliver_instagram(client, info, uid, status=None, quiet=False,
         await _safe_edit(status, f"📤 {len(files)} item upload ho rahe hain…")
 
     caption = build_post_caption(meta, url)
+    # Be honest when only part of a carousel could be fetched
+    if meta.get("partial"):
+        caption = (f"⚠️ <i>{meta['partial']} items mile (baaki Instagram se "
+                   f"nahi aa paye)</i>\n\n" + caption)[:1024]
     total, sent_msgs = await _send_instagram_media(
         client, uid, info["chat_id"], info["reply_to"], files,
         caption=caption, return_messages=True)
