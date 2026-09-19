@@ -18,11 +18,39 @@ from pyrogram.types import (
 )
 
 # ── Safe colored button helper (works with pyrofork; graceful fallback for plain pyrogram) ──
+# Telegram added coloured buttons in Bot API 9.4 (9 Feb 2026) via a `style`
+# field on InlineKeyboardButton — primary (blue), success (green), danger
+# (red). It is a Bot-API-only feature: the MTProto layer that Pyrogram
+# speaks exposes bg_primary/bg_success/bg_danger flags that pyrofork
+# 2.3.69 does not implement (InlineKeyboardButton has no `style`, and
+# raw.types.KeyboardButtonCallback has only text/data/requires_password).
+#
+# So we pass `style` through when the installed library supports it, and
+# otherwise fall back to a coloured emoji prefix so the intent still reads
+# visually. Upgrading pyrofork later turns on real colours with no other
+# code change.
+_STYLE_DOT = {"success": "🟢", "danger": "🔴", "primary": "🔵"}
+
+try:                                    # probed once at import
+    import inspect as _inspect
+    _BTN_HAS_STYLE = "style" in _inspect.signature(
+        InlineKeyboardButton.__init__).parameters
+except Exception:
+    _BTN_HAS_STYLE = False
+
+
 def _btn(text: str, callback_data: str, style: str = None) -> InlineKeyboardButton:
-    """InlineKeyboardButton wrapper.
-    NOTE: style= is a python-telegram-bot (PTB) feature, NOT Pyrogram.
-    Pyrogram does not support button colors via style= parameter.
-    Kept as API-compatible wrapper for future migration."""
+    """Inline button, coloured when the installed Pyrogram supports it."""
+    if style and _BTN_HAS_STYLE:
+        try:
+            return InlineKeyboardButton(text, callback_data=callback_data,
+                                        style=style)
+        except TypeError:
+            pass
+    if style and style in _STYLE_DOT and not _BTN_HAS_STYLE:
+        dot = _STYLE_DOT[style]
+        if not text.startswith(dot):
+            text = f"{dot} {text}"
     return InlineKeyboardButton(text, callback_data=callback_data)
 
 
@@ -253,11 +281,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.6.2"
-BOT_CODENAME = "Big Folders"
+BOT_VERSION  = "v2.7.0"
+BOT_CODENAME = "Cleaner UI"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.7.0": [
+        "🐞 <b>TeraBox fix:</b> valid links 'invalid' bata raha tha — ab surl ke dono form try hote hain",
+        "🔒 File mil jaye par download link na mile to saaf batata hai (pehle chup-chaap fail)",
+        "🎨 Buttons par colour dots — 🟢 safe, 🔴 cancel, 🔵 normal",
+        "💬 Link menu ab aasan bhasha me: 'Google Drive', 'Video site' — 'telegram: 1' jaisa nahi",
+        "✅ Result message saaf: 'Success: 0 Failed: 1' ki jagah kaam ki baat",
+        "🛑 <code>/cancel</code> ka message chhota aur seedha",
+    ],
     "v2.6.2": [
         "🍪 <b>Netscape format cookies ab support hain</b> — pehle poori file <code>ndus=</code> ke aage chipak jati thi (0 chars error)",
         "📂 <b>Bade Drive folders fix</b> — 86 files wala folder chup-chaap hang ho jata tha, ab file-by-file download hota hai",
@@ -728,9 +764,8 @@ async def cancel_cmd(client, message):
     q=ZIP_QUEUE_SESSIONS.get(uid)
     if q: q["cancelled"]=True; ZIP_QUEUE_SESSIONS.pop(uid,None)
     await message.reply_text(
-        "🛑 <b>Everything Cancelled!</b>\n\n"
-        "✅ Running task killed\n✅ All sessions cleared\n✅ ZIP queue removed"
-    )
+        "🛑 <b>Cancel ho gaya.</b>\n\n"
+        "<i>Sab kuch ruk gaya — naya link bhej sakte ho.</i>")
 
 
 @app.on_message(filters.command("mystats"))
@@ -2295,11 +2330,19 @@ async def process_links_message(client, message, content):
     cats={}
     for u in links:
         k=classify_link(u); cats[k]=cats.get(k,0)+1
-    em={"gdrive":"🗂","m3u8":"📺","direct":"💾","telegram":"✈️",
-        "ytdl":"🎬","filehost":"📦","instagram":"📸","unknown":"🔗"}
-    lines=[f"{em.get(k,'🔗')} {k}: <b>{v}</b>" for k,v in cats.items()]
+    # Friendly names — "telegram: 1" meant nothing to anyone but the code
+    LABEL = {"gdrive":("🗂","Google Drive"), "m3u8":("📺","Live stream"),
+             "direct":("💾","Direct file"), "telegram":("✈️","Telegram"),
+             "ytdl":("🎬","Video site"),   "filehost":("📦","File host"),
+             "instagram":("📸","Instagram"),"unknown":("🔗","Other link")}
+    lines=[]
+    for k,v in cats.items():
+        icon,name = LABEL.get(k,("🔗","Other link"))
+        lines.append(f"{icon} {name}" + (f" × <b>{v}</b>" if v>1 else ""))
+    n=len(links)
+    head=f"🔗 <b>{n} link{'s' if n!=1 else ''} mila</b>" if n!=1 else "🔗 <b>Link mila</b>"
     await message.reply_text(
-        f"🔗 <b>{len(links)} links found</b>\n\n"+"\n".join(lines)+"\n\nChoose action:",
+        head+"\n\n"+"\n".join(lines)+"\n\n<i>Kya karna hai?</i>",
         reply_markup=InlineKeyboardMarkup([
             [_btn("⬇️ Download All", f"links|download_all|{message.chat.id}|{message.id}", "success")],
             [_btn("🧹 Cleaned TXT", f"links|clean_txt|{message.chat.id}|{message.id}", "primary"),
@@ -4548,14 +4591,26 @@ async def handle_links_download_all(client, cq, original_msg):
     for url in m3u8s:
         if user_cancelled.get(uid): break
         await offer_m3u8_menu(client,cq,uid,url,temp_root)
-    try: await cq.message.edit_text(
-        f"✅ Done.\nSuccess: {ok}  Failed: {fail}"
-        + (f"\nm3u8: {len(m3u8s)} (quality buttons above)" if m3u8s else ""))
+    if ok and not fail:
+        summary = (f"✅ <b>Ho gaya!</b>  {ok} file"
+                   f"{'s' if ok!=1 else ''} bhej di.")
+    elif ok and fail:
+        summary = (f"⚠️ <b>Adhoora</b>\n\n"
+                   f"✅ {ok} bhej di\n❌ {fail} nahi ho payi")
+    elif fail:
+        summary = (f"❌ <b>Download nahi ho paya</b>\n\n"
+                   f"<i>Upar har link ka alag message dekho — "
+                   f"usme wajah likhi hai.</i>")
+    else:
+        summary = "ℹ️ Kuch download karne layak nahi mila."
+    if m3u8s:
+        summary += f"\n\n📺 {len(m3u8s)} stream — quality buttons upar hain."
+    try: await cq.message.edit_text(summary)
     except Exception: pass
     if is_priv and pinned:
         try: await client.unpin_chat_message(chat_id,reply_to)
         except Exception: pass
-        await client.send_message(chat_id,"✅ All link downloads finished!",reply_to_message_id=reply_to)
+        # (no extra "finished" ping — the summary above already says it)
 
 # ════════════════════════════════════════════════════════════════════════════
 # /song — Search & download song by name via YouTube

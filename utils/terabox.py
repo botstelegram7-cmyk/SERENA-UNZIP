@@ -343,25 +343,32 @@ async def _list_on_mirror(session: aiohttp.ClientSession, mirror: str,
                           dir_path: str = "") -> Tuple[Optional[List[Dict]], int]:
     """Return (entries, errno) for one mirror."""
     referer = f"https://{mirror}/sharing/link?surl={surl}"
-    base = (f"https://{mirror}/share/list?app_id={APP_ID}"
-            f"&shorturl=1{surl}&root={'0' if dir_path else '1'}")
-    if dir_path:
-        from urllib.parse import quote
-        base += f"&dir={quote(dir_path)}"
 
-    attempts = [base]
-    if token:
-        attempts.insert(0, base + f"&jsToken={token}")
-
+    # The API is inconsistent about the leading "1" of a /s/1xxxx link.
+    # Some shares only resolve with it, others only WITHOUT it (those
+    # answer errno 105 — "invalid link" — when it is present), so try
+    # both forms before giving up. Getting this wrong made perfectly
+    # good links look deleted.
     last_errno = 0
-    for url in attempts:
-        data = await _get_json(session, url, referer)
-        if not data:
-            continue
-        errno = int(data.get("errno", -1) or 0)
-        if errno == 0:
-            return (data.get("list") or []), 0
-        last_errno = errno
+    for variant in (surl, "1" + surl):
+        base = (f"https://{mirror}/share/list?app_id={APP_ID}"
+                f"&shorturl={variant}&root={'0' if dir_path else '1'}")
+        if dir_path:
+            from urllib.parse import quote
+            base += f"&dir={quote(dir_path)}"
+
+        attempts = [base]
+        if token:
+            attempts.insert(0, base + f"&jsToken={token}")
+
+        for url in attempts:
+            data = await _get_json(session, url, referer)
+            if not data:
+                continue
+            errno = int(data.get("errno", -1) or 0)
+            if errno == 0:
+                return (data.get("list") or []), 0
+            last_errno = errno
     return None, last_errno
 
 
@@ -402,15 +409,33 @@ async def list_files(url: str) -> List[Dict]:
             if entries is not None:
                 files = await _flatten(session, mirror, surl, token, entries)
                 if files:
+                    if not any(f.get("dlink") for f in files):
+                        # The share lists fine, but TeraBox withheld every
+                        # signed download URL — that is the anonymous/IP
+                        # wall again, not a missing or broken file.
+                        names = ", ".join(f["name"][:40] for f in files[:2])
+                        raise TeraboxError(
+                            "🔒 <b>File mil gayi, par TeraBox download link "
+                            "nahi de raha.</b>\n\n"
+                            f"📄 <i>{names}</i>\n\n"
+                            + ("Cookie set hai lekin TeraBox ne phir bhi mana "
+                               "kiya — ya to wo expire ho gayi hai, ya file "
+                               "restricted hai.\n\n✅ Browser se fresh "
+                               "<code>ndus</code> cookie lo."
+                               if has_cookie() else
+                               "Iske liye login zaroori hai.\n\n"
+                               "✅ <code>TERABOX_COOKIE</code> me apni "
+                               "<code>ndus</code> cookie daalo — "
+                               "<i>Chrome → F12 → Application → Cookies "
+                               "→ terabox.com → ndus</i>"))
                     return files
                 raise TeraboxError(
                     "📭 <b>Is share me koi file nahi mili.</b>\n\n"
                     "Folder khali hai ya uska content hata diya gaya hai.")
             if errno:
                 seen_errno = errno
-            # 105 means the share genuinely does not exist — no point sweeping
-            if errno == 105:
-                break
+            # Keep sweeping: 105 from one mirror does not mean the share is
+            # dead, since another mirror often resolves the same link.
 
     if seen_errno in _ERRNO_HELP:
         raise TeraboxError(_ERRNO_HELP[seen_errno])
