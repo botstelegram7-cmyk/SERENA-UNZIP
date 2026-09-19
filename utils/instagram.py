@@ -244,6 +244,36 @@ def _item(url: str, is_video: bool, idx: int, thumb: str = "") -> Dict:
     return {"url": url, "is_video": bool(is_video), "index": idx, "thumbnail": thumb}
 
 
+def _pick_best_video(candidates: List[Dict]) -> Optional[str]:
+    """Choose a video rendition, avoiding silent preview tracks.
+
+    Instagram stories sometimes include muted "preview"/"dash" renditions
+    alongside the real one. Those often download fine but play with no
+    sound, so prefer plain progressive MP4s and only fall back to the
+    largest candidate when nothing better is available.
+    """
+    if not candidates:
+        return None
+
+    def _score(c: Dict) -> tuple:
+        url = (c.get("url") or "")
+        low = url.lower()
+        # Penalise renditions that are typically video-only / silent
+        silent = any(tag in low for tag in
+                     ("_n.mp4", "dash", "preview", "novideo", "audio_only"))
+        has_type = c.get("type")
+        # type 101/102/103 are the standard progressive renditions
+        good_type = 1 if (has_type in (101, 102, 103) or has_type is None) else 0
+        area = (c.get("width") or 0) * (c.get("height") or 0)
+        return (0 if silent else 1, good_type, area)
+
+    try:
+        best = max(candidates, key=_score)
+    except Exception:
+        best = candidates[0]
+    return best.get("url")
+
+
 def _pick_best(candidates: List[Dict]) -> Optional[str]:
     """Choose the highest resolution entry from an Instagram *_versions list."""
     if not candidates:
@@ -1309,9 +1339,10 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
     for i, it in enumerate(items_raw, 1):
         vids = it.get("video_versions") or []
         if vids:
-            u = _pick_best(vids)
+            u = _pick_best_video(vids)
             if u:
-                items.append(_item(u, True, i))
+                thumb = _pick_best((it.get("image_versions2") or {}).get("candidates") or [])
+                items.append(_item(u, True, i, thumb or ""))
                 continue
         imgs = (it.get("image_versions2") or {}).get("candidates") or []
         u = _pick_best(imgs)
@@ -1322,6 +1353,39 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
             "full_name": _clean_text(user.get("full_name") or ""),
             "count": len(items)}
     return items, info
+
+
+async def has_audio_track(path: str) -> bool:
+    """True if the file contains at least one audio stream.
+
+    Tries ffprobe first, then falls back to parsing `ffmpeg -i` output
+    (some images ship ffmpeg without ffprobe). If neither tool exists we
+    return True, so a missing binary never produces a false "no audio"
+    warning.
+    """
+    # Preferred: ffprobe, machine-readable
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "error", "-select_streams", "a",
+            "-show_entries", "stream=codec_type", "-of", "csv=p=0", path,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return b"audio" in (out or b"")
+    except FileNotFoundError:
+        pass
+    except Exception:
+        return True
+
+    # Fallback: ffmpeg writes stream info to stderr and exits non-zero
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-i", path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE)
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return b"Audio:" in (err or b"")
+    except Exception:
+        return True
 
 
 async def download_media_items(items: List[Dict], output_dir: str,
@@ -1450,17 +1514,19 @@ async def diagnose() -> str:
             ("embed page",
              "https://www.instagram.com/p/C1234567890/embed/captioned/"),
         ]
+        results: Dict[str, int] = {}
         for name, url in probes:
             try:
                 async with session.get(
                     url, headers=headers,
                     timeout=aiohttp.ClientTimeout(total=15)) as r:
                     body = await r.read()
+                    results[name] = r.status
                     icon = {200: "✅", 401: "🔒", 403: "🔒",
                             429: "⏳", 404: "❓"}.get(r.status, "⚠️")
                     note = ""
                     if r.status == 429:
-                        note = " — rate-limited (IP blocked)"
+                        note = " — rate-limited"
                     elif r.status in (401, 403):
                         note = " — login required / cookies rejected"
                     elif r.status == 200 and len(body) < 100:
@@ -1468,11 +1534,27 @@ async def diagnose() -> str:
                     out.append(f"{icon} {name}: <b>HTTP {r.status}</b>"
                                f" ({len(body)} bytes){note}")
             except Exception as e:
+                results[name] = -1
                 out.append(f"⚠️ {name}: <code>{str(e)[:60]}</code>")
 
-    out += ["", "<i>429 on every endpoint = Instagram is blocking this "
-            "server's IP. Cookies cannot fix that; a proxy or a different "
-            "host is needed.</i>"]
+    api_ok = results.get("web_profile_info") == 200
+    embed_ok = results.get("embed page") == 200
+    out.append("")
+    if api_ok and embed_ok:
+        out.append("<b>Verdict:</b> ✅ Sab endpoints kaam kar rahe hain.")
+    elif embed_ok and not api_ok:
+        out.append(
+            "<b>Verdict:</b> ⚠️ Embed chal raha hai, private API rate-limited hai.\n"
+            "• <b>Reels/posts</b> download honge (embed se)\n"
+            "• <b>Stories aur /profile</b> nahi chalenge — unke liye API zaroori hai\n\n"
+            "<i>Ye IP ka partial block hai. Kuch ghante baad API khud "
+            "khul jati hai; permanent fix ke liye residential proxy chahiye.</i>")
+    elif not embed_ok and not api_ok:
+        out.append(
+            "<b>Verdict:</b> ❌ Koi endpoint kaam nahi kar raha — IP block hai.\n"
+            "<i>Cookies se fix nahi hoga; proxy ya doosra host chahiye.</i>")
+    else:
+        out.append("<b>Verdict:</b> ⚠️ Mila-jula response — upar details dekho.")
     return "\n".join(out)
 
 
@@ -1491,14 +1573,28 @@ def _friendly_error(kind: str) -> str:
     if remaining > 0:
         return rate_limit_message(remaining)
     if has_cookies():
+        # Don't lead with "cookies expired": when the embed path still works
+        # the cookies are usually fine and it is the private API that is
+        # blocked for this IP. Telling the user to re-export cookies then
+        # sends them chasing the wrong fix.
+        story_note = ""
+        if kind in ("story", "highlight"):
+            story_note = (
+                "\n<b>Stories ke liye Instagram ki private API chahiye</b>, "
+                "jo embed fallback se nahi milti — isliye reels chalne ke "
+                "bawajood stories fail ho sakti hain.\n")
         return (
-            "🔒 <b>Instagram ne access block kiya.</b>\n\n"
-            "Cookies set hain, lekin shayad:\n"
-            "• Session expire ho gayi hai\n"
-            "• Post delete / private hai\n"
-            "• Instagram ne server IP ko rate-limit kiya hai\n\n"
-            "✅ <b>Fix:</b> Browser se fresh cookies export karke "
-            "<code>INSTAGRAM_COOKIES</code> env var update karo, phir retry."
+            "🔒 <b>Instagram ne ye request block kar di.</b>\n"
+            f"{story_note}\n"
+            "Possible wajah:\n"
+            "• Server IP par API rate-limit (sabse aam)\n"
+            "• Story expire ho gayi / delete ho gayi\n"
+            "• Account private hai aur aap follow nahi karte\n"
+            "• Session sach me expire ho gayi\n\n"
+            "🩺 <b>Pehle ye chalao:</b> <code>/igtest</code> — "
+            "wo batayega ki cookies ka issue hai ya IP ka.\n"
+            "<i>Agar embed 200 aur API 429 dikhe, to cookies theek hain; "
+            "IP block hai aur kuch ghante baad khud chalne lagega.</i>"
         )
     extra = " (Stories/Highlights ke liye login zaroori hai.)" if kind in ("story", "highlight") else ""
     return (

@@ -250,11 +250,18 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.3.2"
-BOT_CODENAME = "Cooldown Fix"
+BOT_VERSION  = "v2.3.3"
+BOT_CODENAME = "Story & Diagnostics"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.3.3": [
+        "🩺 <code>/igtest</code> ab sahi verdict deta hai — pehle galat 'IP blocked' bolta tha jabki embed chal raha tha",
+        "🔇 Story videos ka silent rendition avoid karta hai (audio wali copy prefer)",
+        "🔊 Agar phir bhi audio na mile to caption me saaf likha jayega",
+        "💬 Story error ab galat tarike se 'cookies expire' nahi bolta — asli wajah batata hai",
+        "🖼 Story videos ke saath proper thumbnail",
+    ],
     "v2.3.2": [
         "🐞 <b>Fix:</b> ek hi attempt ke andar ke saare 429 alag-alag gine ja rahe the — cooldown bewajah 10 min/1 hour tak chala jata tha",
         "🔄 Cooldown khatam hone par download <b>apne aap</b> retry hota hai (max 3 baar)",
@@ -1004,8 +1011,22 @@ async def story_cmd(client, message):
     if not files:
         await _safe_edit(status, "❌ Stories download nahi ho payin."); return
 
+    # Some story renditions come through without an audio track. Say so
+    # instead of letting the user wonder why it plays silent.
+    silent = []
+    try:
+        from utils.instagram import has_audio_track
+        for f in files:
+            if str(f).lower().endswith((".mp4", ".mov", ".webm")):
+                if not await has_audio_track(f):
+                    silent.append(os.path.basename(f))
+    except Exception:
+        pass
+
     caption = (f"📲 <b>@{info['username']}</b> stories\n"
                f"🕐 {len(files)} item{'s' if len(files) != 1 else ''}")
+    if silent:
+        caption += f"\n🔇 <i>{len(silent)} video bina audio ke (Instagram ne silent rendition diya)</i>"
     total = await _send_instagram_media(client, uid, message.chat.id, message.id,
                                         files, caption=caption)
     try: await status.delete()
