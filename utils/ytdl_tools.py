@@ -125,50 +125,12 @@ async def get_formats(url: str) -> List[Dict]:
 
 
 async def _instagram_formats(url: str) -> List[Dict]:
-    """Detect what an Instagram link actually contains and offer real options.
+    """Instagram no longer shows a quality menu — bot.py downloads directly.
 
-    Photos / carousels get a single "download all" button (no fake qualities),
-    videos/reels get quality choices, and mixed carousels get both.
+    Kept so any legacy callback path still resolves to the photo handler.
     """
-    from utils.instagram import content_kind, fetch_media_items
-
-    kind = content_kind(url)
-    try:
-        items = await fetch_media_items(url)
-    except Exception:
-        items = []
-
-    if items:
-        n_vid = sum(1 for i in items if i["is_video"])
-        n_img = len(items) - n_vid
-        if n_vid == 0:
-            label = f"📸 Download {n_img} Photo{'s' if n_img > 1 else ''}" if n_img > 1 \
-                    else "📸 Download Photo (Best Quality)"
-            return [{"label": label, "format_id": "insta_photo", "height": 0,
-                     "ext": "jpg", "size_approx": 0}]
-        if n_img == 0 and n_vid == 1:
-            return [
-                {"label": "🎬 Best Quality", "format_id": "insta_photo", "height": 0, "ext": "mp4", "size_approx": 0},
-                {"label": "🎵 Audio Only",  "format_id": "bestaudio",   "height": 0, "ext": "m4a", "size_approx": 0},
-            ]
-        return [
-            {"label": f"📥 Download All ({n_img} photo, {n_vid} video)".replace("(0 photo, ", "("),
-             "format_id": "insta_photo", "height": 0, "ext": "mp4", "size_approx": 0},
-            {"label": "🎵 Audio Only", "format_id": "bestaudio", "height": 0, "ext": "m4a", "size_approx": 0},
-        ]
-
-    # Probe failed (private / login-walled / rate-limited). Offer a smart
-    # auto button — the downloader's yt-dlp fallback may still succeed and
-    # will raise a clear, actionable error otherwise.
-    auto_label = {
-        "story":     "📲 Download Story (Auto)",
-        "highlight": "⭐ Download Highlight (Auto)",
-        "reel":      "🎬 Download Reel (Auto)",
-    }.get(kind, "📥 Download (Auto — Best Quality)")
-    return [
-        {"label": auto_label,      "format_id": "insta_photo", "height": 0, "ext": "mp4", "size_approx": 0},
-        {"label": "🎵 Audio Only", "format_id": "bestaudio",   "height": 0, "ext": "m4a", "size_approx": 0},
-    ]
+    return [{"label": "📥 Download", "format_id": "insta_photo",
+             "height": 0, "ext": "mp4", "size_approx": 0}]
 
 
 def _instagram_photo_formats() -> List[Dict]:

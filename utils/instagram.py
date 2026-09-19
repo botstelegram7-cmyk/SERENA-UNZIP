@@ -237,6 +237,65 @@ def _pick_best(candidates: List[Dict]) -> Optional[str]:
     return best.get("url")
 
 
+# ── Metadata extraction ──────────────────────────────────────────────────────
+
+def _clean_text(txt: str) -> str:
+    """Tidy up an Instagram caption for Telegram."""
+    if not txt:
+        return ""
+    txt = html.unescape(str(txt))
+    txt = txt.replace("\\n", "\n").replace("\\/", "/").replace("\\u0026", "&")
+    # Collapse 3+ blank lines, trim trailing spaces on each line
+    txt = re.sub(r"[ \t]+\n", "\n", txt)
+    txt = re.sub(r"\n{3,}", "\n\n", txt)
+    return txt.strip()
+
+
+def _meta_from_v1(node: Dict) -> Dict:
+    """Pull caption / owner / title / stats from a v1 API media object."""
+    cap = node.get("caption")
+    text = ""
+    if isinstance(cap, dict):
+        text = cap.get("text") or ""
+    elif isinstance(cap, str):
+        text = cap
+    user = node.get("user") or node.get("owner") or {}
+    return {
+        "caption": _clean_text(text),
+        "title": _clean_text(node.get("title") or ""),
+        "username": user.get("username") or "",
+        "full_name": _clean_text(user.get("full_name") or ""),
+        "likes": node.get("like_count") or 0,
+        "views": node.get("play_count") or node.get("view_count") or 0,
+        "taken_at": node.get("taken_at") or 0,
+    }
+
+
+def _meta_from_graphql(node: Dict) -> Dict:
+    """Pull caption / owner / title from a GraphQL shortcode_media node."""
+    text = ""
+    edges = ((node.get("edge_media_to_caption") or {}).get("edges")) or []
+    if edges:
+        text = ((edges[0] or {}).get("node") or {}).get("text") or ""
+    if not text:
+        text = node.get("caption") or ""
+    owner = node.get("owner") or {}
+    return {
+        "caption": _clean_text(text),
+        "title": _clean_text(node.get("title") or ""),
+        "username": owner.get("username") or "",
+        "full_name": _clean_text(owner.get("full_name") or ""),
+        "likes": ((node.get("edge_media_preview_like") or {}).get("count")) or 0,
+        "views": node.get("video_view_count") or 0,
+        "taken_at": node.get("taken_at_timestamp") or 0,
+    }
+
+
+def _empty_meta() -> Dict:
+    return {"caption": "", "title": "", "username": "", "full_name": "",
+            "likes": 0, "views": 0, "taken_at": 0}
+
+
 def _parse_v1_media(node: Dict) -> List[Dict]:
     """Parse a v1 API media object (handles carousel_media)."""
     out: List[Dict] = []
@@ -311,7 +370,7 @@ async def _ensure_csrf(session: aiohttp.ClientSession) -> Optional[str]:
     return None
 
 
-async def _try_graphql(session: aiohttp.ClientSession, shortcode: str) -> List[Dict]:
+async def _try_graphql(session: aiohttp.ClientSession, shortcode: str) -> Tuple[List[Dict], Dict]:
     csrf = await _ensure_csrf(session)
     headers = _base_headers()
     if csrf:
@@ -347,14 +406,14 @@ async def _try_graphql(session: aiohttp.ClientSession, shortcode: str) -> List[D
         if node:
             items = _parse_graphql_media(node)
             if items:
-                return items
-    return []
+                return items, _meta_from_graphql(node)
+    return [], _empty_meta()
 
 
-async def _try_api_v1(session: aiohttp.ClientSession, shortcode: str) -> List[Dict]:
+async def _try_api_v1(session: aiohttp.ClientSession, shortcode: str) -> Tuple[List[Dict], Dict]:
     media_id = shortcode_to_media_id(shortcode)
     if not media_id:
-        return []
+        return [], _empty_meta()
     endpoints = [
         f"https://www.instagram.com/api/v1/media/{media_id}/info/",
         f"https://i.instagram.com/api/v1/media/{media_id}/info/",
@@ -377,11 +436,11 @@ async def _try_api_v1(session: aiohttp.ClientSession, shortcode: str) -> List[Di
         if items_raw:
             parsed = _parse_v1_media(items_raw[0])
             if parsed:
-                return parsed
-    return []
+                return parsed, _meta_from_v1(items_raw[0])
+    return [], _empty_meta()
 
 
-async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> List[Dict]:
+async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[List[Dict], Dict]:
     """Embed page needs no auth — great fallback for single public photos."""
     url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
     try:
@@ -391,10 +450,10 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> List[Dic
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
             if r.status != 200:
-                return []
+                return [], _empty_meta()
             body = await r.text()
     except Exception:
-        return []
+        return [], _empty_meta()
 
     # Newer embeds inline a JSON blob containing the real media
     for pattern in (
@@ -412,7 +471,7 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> List[Dic
         if node:
             items = _parse_graphql_media(node)
             if items:
-                return items
+                return items, _meta_from_graphql(node)
 
     # Plain scrape of the <img class="EmbeddedMediaImage"> / og:image
     for pattern in (
@@ -424,11 +483,48 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> List[Dic
         if m:
             img = html.unescape(m.group(1)).replace("\\u0026", "&").replace("\\/", "/")
             if "scontent" in img or "cdninstagram" in img or "fbcdn" in img:
-                return [_item(img, False, 1)]
-    return []
+                return [_item(img, False, 1)], _meta_from_embed(body)
+    return [], _empty_meta()
 
 
-async def _try_opengraph(session: aiohttp.ClientSession, url: str) -> List[Dict]:
+def _meta_from_embed(body: str) -> Dict:
+    """Scrape caption + author out of an embed / public HTML page."""
+    meta = _empty_meta()
+
+    # The embed page shows the caption inside the Caption div
+    m = re.search(r'class="[^"]*Caption[^"]*"[^>]*>(.*?)</div>', body, re.DOTALL)
+    if m:
+        raw = m.group(1)
+        # Drop the leading "<a>username</a>" and any nested tags
+        raw = re.sub(r'<a[^>]*class="[^"]*CaptionUsername[^"]*"[^>]*>.*?</a>', "", raw, flags=re.DOTALL)
+        raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
+        raw = re.sub(r"<[^>]+>", "", raw)
+        meta["caption"] = _clean_text(raw)
+
+    if not meta["caption"]:
+        m = re.search(r'property="og:description"\s+content="([^"]*)"', body)
+        if m:
+            desc = html.unescape(m.group(1))
+            # og:description looks like:  123 likes, 4 comments - user on date: "caption"
+            q = re.search(r'[:\-]\s*[""\"](.+)[""\"]\s*$', desc, re.DOTALL)
+            meta["caption"] = _clean_text(q.group(1) if q else desc)
+
+    m = re.search(r'property="og:title"\s+content="([^"]*)"', body)
+    if m:
+        title = html.unescape(m.group(1))
+        u = re.search(r"@([A-Za-z0-9_.]+)", title)
+        if u:
+            meta["username"] = u.group(1)
+        meta["title"] = _clean_text(re.sub(r"\s*on Instagram.*$", "", title))
+
+    if not meta["username"]:
+        m = re.search(r'"owner"\s*:\s*\{[^}]*"username"\s*:\s*"([^"]+)"', body)
+        if m:
+            meta["username"] = m.group(1)
+    return meta
+
+
+async def _try_opengraph(session: aiohttp.ClientSession, url: str) -> Tuple[List[Dict], Dict]:
     try:
         async with session.get(
             url,
@@ -436,22 +532,26 @@ async def _try_opengraph(session: aiohttp.ClientSession, url: str) -> List[Dict]
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
             if r.status != 200:
-                return []
+                return [], _empty_meta()
             body = await r.text()
     except Exception:
-        return []
+        return [], _empty_meta()
 
+    meta = _meta_from_embed(body)
     vid = re.search(r'property="og:video"\s+content="([^"]+)"', body)
     if vid:
-        return [_item(html.unescape(vid.group(1)), True, 1)]
+        return [_item(html.unescape(vid.group(1)), True, 1)], meta
     img = re.search(r'property="og:image"\s+content="([^"]+)"', body)
     if img:
-        return [_item(html.unescape(img.group(1)), False, 1)]
-    return []
+        return [_item(html.unescape(img.group(1)), False, 1)], meta
+    return [], _empty_meta()
 
 
-async def fetch_media_items(url: str) -> List[Dict]:
-    """Return every media item of an Instagram post, in carousel order."""
+async def fetch_post(url: str) -> Tuple[List[Dict], Dict]:
+    """Return (media items in carousel order, post metadata).
+
+    Metadata keys: caption, title, username, full_name, likes, views, taken_at.
+    """
     url = normalize_url(url)
     shortcode = extract_shortcode(url)
 
@@ -463,20 +563,40 @@ async def fetch_media_items(url: str) -> List[Dict]:
         if jar:
             session.cookie_jar.update_cookies(jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
 
+        best_items: List[Dict] = []
+        best_meta: Dict = _empty_meta()
+
         if shortcode:
             for strategy in (_try_graphql, _try_api_v1, _try_embed):
                 try:
-                    items = await strategy(session, shortcode)
+                    items, meta = await strategy(session, shortcode)
                 except Exception:
-                    items = []
+                    items, meta = [], _empty_meta()
                 if items:
-                    return items
+                    best_items, best_meta = items, meta
+                    # Media found. If the caption is missing, try the embed page
+                    # (public, no auth) purely to enrich the metadata.
+                    if not best_meta.get("caption") and strategy is not _try_embed:
+                        try:
+                            _, extra = await _try_embed(session, shortcode)
+                            for k, v in (extra or {}).items():
+                                if v and not best_meta.get(k):
+                                    best_meta[k] = v
+                        except Exception:
+                            pass
+                    return best_items, best_meta
 
         try:
-            items = await _try_opengraph(session, url)
+            items, meta = await _try_opengraph(session, url)
         except Exception:
-            items = []
-        return items
+            items, meta = [], _empty_meta()
+        return items, meta
+
+
+async def fetch_media_items(url: str) -> List[Dict]:
+    """Backwards-compatible helper — media items only."""
+    items, _ = await fetch_post(url)
+    return items
 
 
 # ── Downloading ──────────────────────────────────────────────────────────────
@@ -655,7 +775,38 @@ async def _download_one(
     return dest
 
 
-async def _ytdlp_fallback(url: str, output_dir: str) -> List[str]:
+async def _ytdlp_fallback_with_meta(url: str, output_dir: str) -> Tuple[List[str], Dict]:
+    """yt-dlp fallback that also harvests caption/title from its info JSON."""
+    files = await _ytdlp_fallback(url, output_dir, write_info=True)
+    meta = _empty_meta()
+    try:
+        for info_file in sorted(Path(output_dir).glob("*.info.json")):
+            try:
+                data = json.loads(info_file.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                continue
+            desc = data.get("description") or ""
+            title = data.get("title") or ""
+            # yt-dlp often duplicates the caption into the title
+            if title and desc and desc.strip().startswith(title.strip()[:40]):
+                title = ""
+            meta["caption"] = _clean_text(desc)
+            meta["title"] = _clean_text(title)
+            meta["username"] = data.get("uploader_id") or data.get("channel_id") or ""
+            meta["full_name"] = _clean_text(data.get("uploader") or "")
+            meta["likes"] = data.get("like_count") or 0
+            meta["views"] = data.get("view_count") or 0
+            try:
+                info_file.unlink()
+            except Exception:
+                pass
+            break
+    except Exception:
+        pass
+    return files, meta
+
+
+async def _ytdlp_fallback(url: str, output_dir: str, write_info: bool = False) -> List[str]:
     """Last resort — good for reels, stories and highlights."""
     out_tmpl = os.path.join(output_dir, "%(id)s_%(autonumber)02d.%(ext)s")
     cmd = ["yt-dlp"]
@@ -675,8 +826,10 @@ async def _ytdlp_fallback(url: str, output_dir: str) -> List[str]:
         "--yes-playlist",
         "--ignore-errors",
         "--no-warnings",
-        url,
     ]
+    if write_info:
+        cmd += ["--write-info-json"]
+    cmd += [url]
     before = {p.name for p in Path(output_dir).iterdir()} if Path(output_dir).exists() else set()
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -707,6 +860,75 @@ async def _ytdlp_fallback(url: str, output_dir: str) -> List[str]:
     return normalised
 
 
+def _esc(txt: str) -> str:
+    """Escape for Telegram HTML parse mode."""
+    return (str(txt).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+# Telegram hard-limits captions to 1024 characters.
+TG_CAPTION_LIMIT = 1024
+
+
+def build_post_caption(meta: Dict, url: str = "", extra: str = "") -> str:
+    """Build a Telegram HTML caption for an Instagram post.
+
+    The description goes inside an **expandable blockquote**
+    (<blockquote expandable>) so long captions collapse behind a
+    "Show more" tap instead of flooding the chat.
+    """
+    meta = meta or {}
+    parts: List[str] = []
+
+    title = (meta.get("title") or "").strip()
+    username = (meta.get("username") or "").strip()
+    full_name = (meta.get("full_name") or "").strip()
+    caption = (meta.get("caption") or "").strip()
+
+    # ── Header: title if present, else the author ──
+    if title and title.lower() != caption.lower()[: len(title)].lower():
+        parts.append(f"<b>{_esc(title)}</b>")
+
+    if username:
+        who = f"<b>{_esc(full_name)}</b> " if full_name and full_name != username else ""
+        parts.append(f"👤 {who}<a href=\"https://www.instagram.com/{_esc(username)}/\">@{_esc(username)}</a>")
+    elif full_name:
+        parts.append(f"👤 <b>{_esc(full_name)}</b>")
+
+    # ── Stats ──
+    stats = []
+    if meta.get("likes"):
+        stats.append(f"❤️ {int(meta['likes']):,}")
+    if meta.get("views"):
+        stats.append(f"👁 {int(meta['views']):,}")
+    if stats:
+        parts.append("  ".join(stats))
+
+    header = "\n".join(p for p in parts if p)
+
+    # ── Description in an expandable quote ──
+    body = ""
+    if caption:
+        # Reserve room for header/footer so the total stays under the limit
+        budget = TG_CAPTION_LIMIT - len(header) - len(extra) - 120
+        text = caption
+        if budget > 80 and len(text) > budget:
+            text = text[: budget - 1].rsplit(" ", 1)[0].rstrip() + "…"
+        if budget > 80:
+            body = f"<blockquote expandable>{_esc(text)}</blockquote>"
+
+    footer = ""
+    if url:
+        footer = f'<a href="{_esc(url)}">🔗 Open on Instagram</a>'
+
+    out = "\n\n".join(p for p in (header, body, extra.strip(), footer) if p)
+    out = out.strip()
+
+    # Absolute safety net — never exceed Telegram's limit
+    if len(out) > TG_CAPTION_LIMIT:
+        out = "\n\n".join(p for p in (header, extra.strip(), footer) if p)[:TG_CAPTION_LIMIT]
+    return out
+
+
 def _friendly_error(kind: str) -> str:
     if has_cookies():
         return (
@@ -728,11 +950,12 @@ def _friendly_error(kind: str) -> str:
     )
 
 
-async def download_instagram(url: str, output_dir: str) -> List[str]:
+async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
     """
-    Download an Instagram post's media (photos + videos, full carousel).
+    Download an Instagram post's media and return (file paths, metadata).
 
-    Returns a list of local file paths, ordered as in the post.
+    Files are ordered exactly as in the post. Metadata carries the caption,
+    title, author and stats so callers can build a rich Telegram caption.
     Raises InstagramError with a helpful Hinglish message on failure.
     """
     url = normalize_url(url)
@@ -744,9 +967,9 @@ async def download_instagram(url: str, output_dir: str) -> List[str]:
 
     # ── Path A: direct CDN download via Instagram's own APIs ──
     try:
-        items = await fetch_media_items(url)
+        items, meta = await fetch_post(url)
     except Exception:
-        items = []
+        items, meta = [], _empty_meta()
 
     if items:
         connector = aiohttp.TCPConnector(limit=4)
@@ -759,14 +982,23 @@ async def download_instagram(url: str, output_dir: str) -> List[str]:
         saved.sort(key=lambda p: os.path.basename(p))
 
     if saved:
-        return saved
+        return saved, meta
 
     # ── Path B: yt-dlp (reels, stories, highlights) ──
-    saved = await _ytdlp_fallback(url, output_dir)
+    saved, yt_meta = await _ytdlp_fallback_with_meta(url, output_dir)
     if saved:
-        return saved
+        for k, v in (yt_meta or {}).items():
+            if v and not meta.get(k):
+                meta[k] = v
+        return saved, meta
 
     raise InstagramError(_friendly_error(kind))
+
+
+async def download_instagram(url: str, output_dir: str) -> List[str]:
+    """Backwards-compatible helper — file paths only."""
+    files, _ = await download_post(url, output_dir)
+    return files
 
 
 # Backwards-compatible alias used by older bot.py code paths

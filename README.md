@@ -281,11 +281,41 @@ so media is never silently lost.
 > missing the module degrades gracefully and simply sends those rare files as
 > documents.
 
+**No confirmation buttons** — an Instagram link starts downloading immediately.
+There is no quality menu to tap through (Instagram serves one quality anyway).
+
+### Captions
+
+Every post's text is attached to the media. The description is wrapped in a
+Telegram **expandable blockquote**, so long captions collapse behind a
+"Show more" tap instead of flooding the chat:
+
+```
+<b>Title</b>                                  ← if the post has one
+👤 <b>Full Name</b> @username                 ← links to the profile
+❤️ 15,234  👁 98,000                          ← stats when available
+
+<blockquote expandable>Full description…</blockquote>
+
+🔗 Open on Instagram
+```
+
+Caption text is HTML-escaped and truncated to Telegram's 1024-character limit.
+Metadata is read from the GraphQL/v1 responses, and falls back to scraping the
+embed page or `og:` tags, then to yt-dlp's info JSON.
+
+### Albums
+
+Carousels are always delivered as Telegram **albums**, never as loose messages.
+Posts with more than 10 items are split into consecutive groups of 10 (the API
+maximum). The caption rides on the first item. If an album is rejected, its
+items are re-sent individually so nothing is ever lost.
+
 **Commands**
 
 ```
 /insta <url>     — Instagram downloader (aliases: /ig, /instagram)
-<paste link>     — Auto-detected, goes straight to the download menu
+<paste link>     — Auto-detected, downloads straight away
 ```
 
 ---
