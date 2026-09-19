@@ -64,15 +64,17 @@ def extract_links_from_folder(base_dir: str) -> Dict[str, List[str]]:
     return all_links
 
 
+INSTAGRAM_DOMAINS = ["instagram.com", "instagr.am", "ddinstagram.com"]
+
 YTDL_DOMAINS = [
-    "instagram.com", "twitter.com", "x.com", "facebook.com", "fb.watch",
+    "twitter.com", "x.com", "facebook.com", "fb.watch",
     "tiktok.com", "vimeo.com", "dailymotion.com", "reddit.com", "twitch.tv",
     "bilibili.com", "ok.ru", "vk.com",
 ]
 
 def classify_link(url: str) -> str:
     """
-    Return: 'gdrive' | 'telegram' | 'm3u8' | 'ytdl' | 'direct' | 'unknown'
+    Return: 'gdrive' | 'telegram' | 'instagram' | 'm3u8' | 'ytdl' | 'direct' | 'unknown'
     """
     u = url.strip()
     u_low = u.lower()
@@ -81,6 +83,10 @@ def classify_link(url: str) -> str:
         return "gdrive"
     if "t.me/" in u_low or "telegram.me/" in u_low:
         return "telegram"
+
+    for domain in INSTAGRAM_DOMAINS:
+        if domain in u_low:
+            return "instagram"
 
     for domain in YTDL_DOMAINS:
         if domain in u_low:

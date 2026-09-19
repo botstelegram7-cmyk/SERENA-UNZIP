@@ -216,7 +216,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `OWNER_ID` | ✅ | Your Telegram user ID |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
 | `FORCE_SUB_CHANNEL` | ⬜ | Channel username users must join |
-| `INSTAGRAM_COOKIES` | ⬜ | Netscape format cookies for private Instagram content |
+| `INSTAGRAM_COOKIES` | ⚠️ | Instagram cookies (Netscape or header format). **Strongly recommended** — Instagram blocks anonymous datacenter IPs. Required for Stories/Highlights. |
 | `QUEUE_END_GIF` | ⬜ | Giphy MP4 URL or Telegram sticker file_id — sent after each ZIP extract |
 | `TEMP_DIR` | ⬜ | Temp folder path (default: `./downloads`) |
 | `MAX_FILE_SIZE_MB` | ⬜ | Max file size to process (default: `2000`) |
@@ -225,15 +225,62 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 
 ---
 
+## 📸 Instagram Downloader
+
+Instagram media is handled by a dedicated module (`utils/instagram.py`) instead of
+relying on yt-dlp alone — yt-dlp fails on photo posts with *"There is no video in
+this post"* and only ever returns the first item of a carousel.
+
+**What works now**
+
+| Content | Result |
+|---------|--------|
+| 📷 Photo post | Full-resolution image (not a thumbnail crop) |
+| 🎠 Carousel | **Every** photo/video, in order, delivered as one Telegram album |
+| 🎬 Reel / video | Highest quality with audio |
+| 📲 Story / ⭐ Highlight | Downloaded (requires cookies) |
+| 🔗 Plain link pasted in chat | Auto-detected — no `/ytdl` needed |
+
+**How it works** — five strategies are tried in order, first success wins:
+
+1. **Web GraphQL** (`/graphql/query`) — full carousel, highest resolution
+2. **Web API v1** (`/api/v1/media/<id>/info/`) — shortcode is converted to a numeric media id
+3. **Embed page** (`/p/<code>/embed/captioned/`) — works with no auth at all
+4. **OpenGraph tags** — last-resort single item
+5. **yt-dlp** — fallback for reels, stories and highlights
+
+Images are fetched straight from Instagram's CDN in parallel, with the highest
+resolution picked from each `*_versions` list. Truncated/placeholder files are
+rejected automatically.
+
+**Commands**
+
+```
+/insta <url>     — Instagram downloader (aliases: /ig, /instagram)
+<paste link>     — Auto-detected, goes straight to the download menu
+```
+
+---
+
 ## 🍪 Instagram Cookies Setup
 
-For downloading **Stories, Highlights, and private content**:
+Instagram now blocks **anonymous requests from datacenter IPs** (Render, Railway,
+Heroku, VPS…) with `401 login_required` / `429`. Cookies are therefore
+**strongly recommended** — and mandatory for Stories, Highlights and private content.
 
-1. Install [Cookie Editor](https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) browser extension
-2. Open Instagram and log in
-3. Click Cookie Editor → **Export → Netscape**
+1. Install the [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) or [Cookie Editor](https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) extension
+2. Open Instagram and log in (use a **throwaway account** — never your main one)
+3. Export the cookies in **Netscape** format
 4. Copy the exported text
-5. In Render/Railway → Environment Variables → `INSTAGRAM_COOKIES` → paste the text
+5. In Render/Railway → Environment Variables → `INSTAGRAM_COOKIES` → paste it
+
+Both formats are accepted:
+
+* Netscape TSV (`domain  TRUE  /  TRUE  0  sessionid  abc...`)
+* Header style (`sessionid=abc; csrftoken=xyz`)
+
+> ⚠️ Sessions expire. If downloads start failing with a "login required" message,
+> export fresh cookies and update the variable.
 
 ---
 
@@ -247,7 +294,8 @@ For downloading **Stories, Highlights, and private content**:
 /zq          — Short alias for /zipqueue
 /zqpass      — Set queue password
 /cancelqueue — Cancel active queue
-/ytdl        — Download from Instagram/YouTube/Twitter etc.
+/insta       — Instagram photos, carousels, reels, stories (alias: /ig)
+/ytdl        — Download from Twitter/TikTok/Facebook etc.
 /compress    — Compress video (reply to video)
 /resize      — Resize video
 /merge       — Merge multiple videos

@@ -14,6 +14,7 @@ from pyrogram import Client, enums, filters, idle
 from pyrogram.errors import FileReferenceExpired, FloodWait, MessageNotModified
 from pyrogram.types import (
     CallbackQuery, Chat, InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo,
+    InputMediaPhoto, InputMediaVideo,
 )
 
 # ── Safe colored button helper (works with pyrofork; graceful fallback for plain pyrogram) ──
@@ -527,7 +528,8 @@ async def help_cmd(client, message):
         "• Split File  • Extract Subtitles\n"
         "• Screenshot  • Watermark  • Rename\n\n"
         "⬇️ <b>Downloaders</b>\n"
-        "• <code>/ytdl &lt;link&gt;</code> — Instagram, Twitter, TikTok, Facebook, Vimeo…\n"
+        "• <code>/insta &lt;link&gt;</code> — Instagram photos, carousels, reels, stories\n"
+        "• <code>/ytdl &lt;link&gt;</code> — Twitter, TikTok, Facebook, Vimeo…\n"
         "• TXT / links → auto-download (direct, m3u8, GDrive)\n\n"
         "🗜 <b>ZIP Creator</b>: <code>/zip</code> → files bhejo → ✅ Done\n"
         "📦 <b>ZIP Queue</b>: <code>/zipqueue</code> → multiple ZIPs → process all in order\n"
@@ -540,7 +542,7 @@ async def help_cmd(client, message):
         "👥 <b>Groups — Reply to file + command:</b>\n"
         "<code>/unzip</code>  <code>/audio</code>  <code>/compress</code>  <code>/info</code>\n"
         "<code>/subs</code>  <code>/rename</code>  <code>/split</code>  <code>/screenshot</code>\n"
-        "<code>/pdf</code>  <code>/watermark</code>  <code>/ytdl</code>\n\n"
+        "<code>/pdf</code>  <code>/watermark</code>  <code>/ytdl</code>  <code>/insta</code>\n\n"
         "🛠 <b>Admin</b>: <code>/admin</code>  <code>/status</code>  <code>/broadcast</code>\n"
         "<code>/premium &lt;id&gt; [days]</code>  <code>/ban</code>  <code>/unban</code>"
     )
@@ -644,6 +646,34 @@ async def ytdl_cmd(client, message):
     buttons.append([_btn("❌ Cancel", f"ytdlcancel|{task_id}", "danger")])
     try: await status.edit_text(f"🎬 Quality choose karo:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
     except: pass
+
+
+@app.on_message(filters.command(["insta", "ig", "instagram"]))
+async def insta_cmd(client, message):
+    """Dedicated Instagram downloader: photos, carousels, reels, stories, highlights."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    if await is_banned(uid): return
+    if not await check_force_sub(client, message): return
+    args = message.command[1:]
+    if not args:
+        await message.reply_text(
+            "📸 <b>Instagram Downloader</b>\n\n"
+            "Usage: <code>/insta &lt;URL&gt;</code>\n"
+            "Ya seedha link paste kar do — bot khud detect kar lega.\n\n"
+            "✅ Supported:\n"
+            "• 📷 Photo posts (full resolution)\n"
+            "• 🎠 Carousels — <b>saari images ek album mein</b>\n"
+            "• 🎬 Reels & videos (audio ke saath)\n"
+            "• 📲 Stories & ⭐ Highlights <i>(cookies chahiye)</i>\n\n"
+            "<i>Private content ke liye owner ko INSTAGRAM_COOKIES set karna hoga.</i>")
+        return
+    url = args[0].strip()
+    if not _is_instagram_url(url):
+        await message.reply_text("❌ Ye Instagram link nahi hai. <code>/ytdl</code> try karo.")
+        return
+    await get_or_create_user(uid)
+    await _start_instagram_flow(client, message, url)
 
 
 @app.on_message(filters.command("zip"))
@@ -1542,8 +1572,10 @@ async def cmds_cmd(client, message):
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "📥 <b>DOWNLOAD COMMANDS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📸 <b>/insta</b> — Instagram downloader (photos + carousels + reels)\n"
+        "   → <code>/insta https://instagram.com/p/...</code>\n"
+        "   → Ya seedha link paste karo, bot auto-detect karega\n\n"
         "🌐 <b>/ytdl</b> — Download from any URL\n"
-        "   → <code>/ytdl https://instagram.com/reel/...</code>\n"
         "   → <code>/ytdl https://youtube.com/watch?v=...</code>\n"
         "   → <code>/ytdl https://twitter.com/...</code>\n"
         "   → <code>/ytdl https://tiktok.com/...</code>\n\n"
@@ -1732,6 +1764,33 @@ async def on_file(client, message):
 # ════════════════════════════════════════════════════════════════════════════
 # TEXT / LINKS HANDLER
 # ════════════════════════════════════════════════════════════════════════════
+async def _start_instagram_flow(client, message, url):
+    """Paste an Instagram link → straight to the download menu (no /ytdl needed)."""
+    uid = message.from_user.id
+    if not await check_rate_limit(uid, message): return
+    status = await message.reply_text("🔍 Instagram post check kar raha hoon…")
+    try:
+        formats = await get_formats(url)
+    except Exception as e:
+        await status.edit_text(f"❌ Info fetch failed:\n<code>{str(e)[:400]}</code>"); return
+    task_id = uuid.uuid4().hex
+    temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
+    temp_root.mkdir(parents=True, exist_ok=True)
+    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
+    YTDL_TASKS[task_id] = {"user_id": uid, "url": url, "formats": formats,
+                           "temp_root": str(temp_root), "chat_id": message.chat.id,
+                           "reply_to": message.id}
+    buttons = [[_btn(f["label"], f"ytdlq|{task_id}|{i}", "primary")]
+               for i, f in enumerate(formats)]
+    buttons.append([_btn("❌ Cancel", f"ytdlcancel|{task_id}", "danger")])
+    try:
+        await status.edit_text(
+            f"📸 <b>Instagram link detected!</b>\n<code>{url}</code>\n\nKya download karna hai?",
+            reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception:
+        pass
+
+
 async def process_links_message(client, message, content):
     if not message.from_user: return
     links=find_links_in_text(content or "")
@@ -1740,6 +1799,17 @@ async def process_links_message(client, message, content):
         if message.chat and message.chat.type not in (enums.ChatType.PRIVATE,):
             return
         await _safe_reply(message, "No valid URLs found."); return
+    # ── Instagram links: handle directly instead of the generic link menu ──
+    insta = [u for u in links if _is_instagram_url(u)]
+    if insta:
+        try: await log_input(client, message, f"instagram: {insta[0]}")
+        except Exception: pass
+        for u in insta[:3]:
+            await _start_instagram_flow(client, message, u)
+        others = [u for u in links if u not in insta]
+        if not others:
+            return
+        links = others
     LINK_SESSIONS[(message.chat.id,message.id)]={"links":links,"content":content or ""}
     cats={}
     for u in links:
@@ -2955,6 +3025,148 @@ async def _do_merge_videos(client, cq, uid):
     merge_sessions.pop(uid,None)
     await update_user_stats(uid,os.path.getsize(out)/(1024*1024))
 
+# ── Instagram delivery helper ─────────────────────────────────────────────────
+async def _send_instagram_media(client, uid, chat_id, reply_to, files, status=None):
+    """Send downloaded Instagram media.
+
+    Carousels (2-10 items) go out as a single Telegram album so the user gets
+    the post exactly as it looks on Instagram. Single items and anything
+    oversized fall back to individual sends. Returns total bytes sent.
+    """
+    files = [f for f in files if f and Path(f).exists() and Path(f).stat().st_size > 0]
+    if not files:
+        return 0
+
+    total = sum(Path(f).stat().st_size for f in files)
+    cap = await build_caption(uid, "📸 Instagram")
+
+    def _kind(p):
+        ext = Path(p).suffix.lower()
+        if ext in IMAGE_EXT_SET:
+            return "photo"
+        if is_video_path(Path(p).name):
+            return "video"
+        return "doc"
+
+    # ── Album path: 2-10 photos/videos, each under Telegram's 50 MB album cap ──
+    albumable = [f for f in files if _kind(f) in ("photo", "video")]
+    if (
+        len(albumable) == len(files)
+        and 2 <= len(files) <= 10
+        and all(Path(f).stat().st_size <= 50 * 1024 * 1024 for f in files)
+    ):
+        try:
+            media = []
+            for i, fpath in enumerate(files):
+                caption = cap if i == 0 else None
+                if _kind(fpath) == "photo":
+                    media.append(InputMediaPhoto(str(fpath), caption=caption))
+                else:
+                    media.append(InputMediaVideo(
+                        str(fpath), caption=caption,
+                        duration=await _get_video_duration(str(fpath)),
+                        supports_streaming=True,
+                    ))
+            sent = await client.send_media_group(chat_id, media, reply_to_message_id=reply_to)
+            try:
+                await log_output(client, await client.get_users(uid),
+                                 sent[0] if isinstance(sent, list) else sent,
+                                 f"instagram album ({len(files)} items)")
+            except Exception:
+                pass
+            return total
+        except Exception:
+            pass  # album failed → fall through to one-by-one
+
+    # ── Individual sends ──
+    for i, fpath in enumerate(files):
+        fpath = str(fpath)
+        fname = Path(fpath).name
+        kind = _kind(fpath)
+        caption = cap if i == 0 else fname
+        try:
+            if kind == "photo":
+                await client.send_photo(chat_id, fpath, caption=caption,
+                                        reply_to_message_id=reply_to)
+            elif kind == "video":
+                await client.send_video(
+                    chat_id, fpath, caption=caption,
+                    thumb=await choose_thumbnail(uid, fpath),
+                    duration=await _get_video_duration(fpath),
+                    supports_streaming=True,
+                    reply_to_message_id=reply_to,
+                )
+            else:
+                await client.send_document(chat_id, fpath, caption=caption,
+                                           reply_to_message_id=reply_to)
+        except Exception as e:
+            try:
+                await client.send_message(
+                    chat_id, f"⚠️ Item {i+1}/{len(files)} bhej nahi paya: <code>{str(e)[:150]}</code>",
+                    reply_to_message_id=reply_to)
+            except Exception:
+                pass
+        await asyncio.sleep(0.3)
+    return total
+
+
+async def _handle_instagram_task(client, cq, info, tid):
+    """Download an Instagram link and deliver every media item."""
+    from utils.instagram import InstagramError, content_kind, download_instagram
+
+    uid = cq.from_user.id
+    url = info["url"]
+    temp_root = Path(info["temp_root"])
+    kind = content_kind(url)
+    label = {"story": "Story", "highlight": "Highlight",
+             "reel": "Reel", "post": "Post"}.get(kind, "Post")
+
+    try:
+        await cq.message.edit_text(f"📸 Instagram {label} download ho raha hai…")
+    except Exception:
+        pass
+
+    try:
+        files = await download_instagram(url, str(temp_root))
+    except InstagramError as e:
+        try:
+            await cq.message.edit_text(str(e))
+        except Exception:
+            pass
+        YTDL_TASKS.pop(tid, None)
+        return
+    except Exception as e:
+        try:
+            await cq.message.edit_text(f"❌ Instagram download failed:\n<code>{str(e)[:400]}</code>")
+        except Exception:
+            pass
+        YTDL_TASKS.pop(tid, None)
+        return
+
+    if not files:
+        try:
+            await cq.message.edit_text("❌ Is post mein koi media nahi mila.")
+        except Exception:
+            pass
+        YTDL_TASKS.pop(tid, None)
+        return
+
+    try:
+        await cq.message.edit_text(f"📤 {len(files)} item upload ho rahe hain…")
+    except Exception:
+        pass
+
+    total = await _send_instagram_media(
+        client, uid, info["chat_id"], info["reply_to"], files, status=cq.message)
+
+    try:
+        await cq.message.delete()
+    except Exception:
+        pass
+    await update_user_stats(uid, total / 1048576)
+    YTDL_TASKS.pop(tid, None)
+
+
 # ── yt-dlp download ───────────────────────────────────────────────────────────
 async def _do_ytdl_download(client, cq, tid, idx):
     info=YTDL_TASKS.get(tid)
@@ -2968,79 +3180,26 @@ async def _do_ytdl_download(client, cq, tid, idx):
     try: await cq.message.edit_text(f"⬇️ Downloading <b>{fmt['label']}</b>…\n<code>{url}</code>")
     except: pass
     # ── Instagram handling ──
-    # "insta_photo" format_id = photo/carousel post → use _download_instagram_photos
-    # Normal format_ids → use download_video (with audio-safe format strings)
+    # All Instagram links (photos, carousels, reels, stories, highlights) go
+    # through the dedicated module, which returns EVERY media item in the post.
+    if _is_instagram_url(url) and fmt.get("format_id") == "insta_photo":
+        await _handle_instagram_task(client, cq, info, tid)
+        return
+
     try:
-        if _is_instagram_url(url) and fmt.get("format_id") == "insta_photo":
-            # Direct photo/carousel download — no quality selection needed
-            try: await cq.message.edit_text("📸 Downloading Instagram post…")
-            except: pass
-            photo_files = await _download_instagram_photos(url, str(temp_root))
-            if photo_files:
-                cap = await build_caption(uid, "📸 Instagram")
-                for i, fpath in enumerate(photo_files):
-                    ext_i = Path(fpath).suffix.lower()
-                    fname_i = Path(fpath).name
-                    try:
-                        if ext_i in IMAGE_EXT_SET:
-                            await client.send_photo(info["chat_id"], fpath,
-                                caption=cap if i==0 else fname_i,
-                                reply_to_message_id=info["reply_to"])
-                        elif is_video_path(fname_i):
-                            dur_i = await _get_video_duration(fpath)
-                            thumb_i = await choose_thumbnail(uid, fpath)
-                            await client.send_video(info["chat_id"], fpath,
-                                caption=cap if i==0 else fname_i,
-                                thumb=thumb_i, duration=dur_i,
-                                reply_to_message_id=info["reply_to"])
-                    except Exception as ei:
-                        await client.send_message(info["chat_id"],
-                            f"⚠️ File {i+1}: <code>{str(ei)[:150]}</code>",
-                            reply_to_message_id=info["reply_to"])
-                    await asyncio.sleep(0.3)
-                try: await cq.message.delete()
-                except: pass
-                await update_user_stats(uid, sum(Path(f).stat().st_size for f in photo_files if Path(f).exists())/1048576)
-            YTDL_TASKS.pop(tid,None); return
-        dl_path = await ytdl_download(url, str(temp_root), format_id=fmt["format_id"], height=fmt.get("height",0))
+        dl_path = await ytdl_download(url, str(temp_root), format_id=fmt["format_id"], height=fmt.get("height", 0))
     except Exception as e:
         err_str = str(e)
-        # Instagram photo post? Redirect to photo downloader
-        if _is_instagram_url(url) and any(k in err_str.lower() for k in
-                ("no video", "there is no video", "no video in this post",
-                 "no video formats")):
-            try: await cq.message.edit_text("📸 Photo post detected — switching to image downloader…")
-            except: pass
-            try:
-                photo_files = await _download_instagram_photos(url, str(temp_root))
-                if photo_files:
-                    cap = await build_caption(uid, "📸 Instagram")
-                    for i, fpath in enumerate(photo_files):
-                        ext_i = Path(fpath).suffix.lower()
-                        fname_i = Path(fpath).name
-                        try:
-                            if ext_i in IMAGE_EXT_SET:
-                                await client.send_photo(info["chat_id"], fpath,
-                                    caption=cap if i==0 else fname_i,
-                                    reply_to_message_id=info["reply_to"])
-                            elif is_video_path(fname_i):
-                                dur_i = await _get_video_duration(fpath)
-                                th_i = await choose_thumbnail(uid, fpath)
-                                await client.send_video(info["chat_id"], fpath,
-                                    caption=cap if i==0 else fname_i,
-                                    thumb=th_i, duration=dur_i,
-                                    reply_to_message_id=info["reply_to"])
-                        except Exception: pass
-                        await asyncio.sleep(0.3)
-                    try: await cq.message.delete()
-                    except: pass
-                    await update_user_stats(uid, sum(Path(f).stat().st_size for f in photo_files if Path(f).exists())/1048576)
-                    YTDL_TASKS.pop(tid,None); return
-            except Exception as pe:
-                err_str = str(pe)
+        # Instagram fell back to yt-dlp and hit a photo post / missing formats
+        if _is_instagram_url(url) and any(k in err_str.lower() for k in (
+                "no video", "no video formats", "unsupported url",
+                "empty media response", "requested format")):
+            await _handle_instagram_task(client, cq, info, tid)
+            return
         try: await cq.message.edit_text(f"❌ Download failed:\n<code>{err_str[:500]}</code>")
         except: pass
-        YTDL_TASKS.pop(tid,None); return
+        YTDL_TASKS.pop(tid, None); return
+
     basename=os.path.basename(dl_path)
     status=cq.message; start_u=time.time()
     try: await status.edit_text(f"📤 Uploading: <code>{basename}</code>")
