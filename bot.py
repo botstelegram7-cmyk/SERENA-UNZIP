@@ -281,11 +281,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.7.0"
-BOT_CODENAME = "Cleaner UI"
+BOT_VERSION  = "v2.7.1"
+BOT_CODENAME = "Honest Errors"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.7.1": [
+        "🚫 <code>/profile</code> aur <code>/story</code> ab jhoota auto-retry nahi dikhate — saaf batate hain ki IP block hai",
+        "🩺 <code>/tbtest</code> bina link ke ab 'invalid link' nahi bolta — reachability test karta hai",
+        "🔍 TeraBox errno ab detail me: token rejected, download refused, verification required",
+        "📄 MIT LICENSE file add ki",
+        "🤝 CONTRIBUTING.md add ki — setup, code style, naya platform kaise jode",
+        "⚠️ Credit na hataane ki request README aur CONTRIBUTING dono me",
+    ],
     "v2.7.0": [
         "🐞 <b>TeraBox fix:</b> valid links 'invalid' bata raha tha — ab surl ke dono form try hote hain",
         "🔒 File mil jaye par download link na mile to saaf batata hai (pehle chup-chaap fail)",
@@ -1059,7 +1067,7 @@ async def profile_cmd(client, message):
     try:
         posts, info = await fetch_profile_posts(username, limit)
     except RateLimited as e:
-        asyncio.create_task(_show_rate_limit_countdown(status, e.remaining)); return
+        await _safe_edit(status, _api_wall_message("profile", e.remaining)); return
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
@@ -1147,7 +1155,7 @@ async def story_cmd(client, message):
     try:
         items, info = await fetch_stories(username)
     except RateLimited as e:
-        asyncio.create_task(_show_rate_limit_countdown(status, e.remaining)); return
+        await _safe_edit(status, _api_wall_message("story", e.remaining)); return
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
@@ -3736,6 +3744,30 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
         await asyncio.sleep(0.3)
 
     return (total, sent_ids) if return_messages else total
+
+
+def _api_wall_message(kind: str, remaining: int = 0) -> str:
+    """Honest message for /profile and /story when the API is walled.
+
+    These two need Instagram's private API, which a blocked server IP is
+    refused every single time — so a countdown promising an automatic
+    retry would be untrue. Reels and posts still work via the embed path.
+    """
+    from utils.instagram import _fmt_duration, has_cookies
+    what = "Profile bulk download" if kind == "profile" else "Stories"
+    wait = (f"\n⏱ Abhi cooldown: <b>{_fmt_duration(remaining)}</b>\n"
+            if remaining > 0 else "\n")
+    return (
+        f"🚫 <b>{what} abhi nahi ho sakta.</b>\n"
+        f"{wait}"
+        "\nInstagram is server ke IP ko apni private API se block kar raha "
+        "hai, aur profile/story sirf usi se milte hain.\n\n"
+        "✅ <b>Reels aur posts chalte hain</b> — unka link seedha bhej do.\n\n"
+        + ("<i>Cookies set hain, par IP block cookies se theek nahi hota.</i>"
+           if has_cookies() else
+           "<i>Owner: <code>INSTAGRAM_COOKIES</code> set karo — usse "
+           "kabhi-kabhi chal jata hai.</i>")
+        + "\n<i>Owner: <code>/igtest</code> se confirm karo.</i>")
 
 
 async def _show_rate_limit_countdown(status, remaining: int,

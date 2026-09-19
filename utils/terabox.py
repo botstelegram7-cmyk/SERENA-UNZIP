@@ -568,7 +568,10 @@ async def diagnose(url: str = "") -> str:
         out.append(f"🔗 surl: <code>{extract_surl(url) or 'not parsed'}</code>")
     out.append("")
 
-    surl = extract_surl(url) if url else "1zzzzzzzzzzzzzzz"
+    surl = extract_surl(url) if url else ""
+    if not surl:
+        out += ["<i>Tip: <code>/tbtest &lt;link&gt;</code> chalao — bina link ke "
+                "sirf reachability test hoti hai, file list nahi.</i>", ""]
     jar = aiohttp.CookieJar(unsafe=True)
     async with aiohttp.ClientSession(cookie_jar=jar) as session:
         for mirror in MIRRORS[:5]:
@@ -577,11 +580,18 @@ async def diagnose(url: str = "") -> str:
                                                    surl or "", token)
             if entries is not None:
                 out.append(f"✅ {mirror}: {len(entries)} entries")
+            elif not surl:
+                # No link given: reaching the API at all is the useful signal
+                out.append(f"{'✅' if token else '⚠️'} {mirror}: reachable"
+                           f" (jsToken {'✅' if token else '❌'})")
             else:
-                tag = {105: "invalid link", 140: "IP walled",
-                       -9: "password"}.get(errno, f"errno {errno}")
+                tag = {105: "share not found", 140: "IP walled",
+                       2: "download refused (IP/cookie)",
+                       4000020: "token rejected", -9: "password protected",
+                       400210: "verification required"}.get(errno, f"errno {errno}")
                 out.append(f"⚠️ {mirror}: {tag}"
                            + (f" (jsToken {'✅' if token else '❌'})"))
-    out += ["", "<i>errno 140 = link sahi hai par IP block hai; "
-            "cookie set karne se chalega.</i>"]
+    out += ["", "<i>IP walled / download refused = TeraBox is server ko "
+            "mana kar raha hai. Cookie se list to milti hai, par download "
+            "link tab bhi rok sakta hai.</i>"]
     return "\n".join(out)

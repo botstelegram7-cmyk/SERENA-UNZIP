@@ -462,11 +462,37 @@ serena-unzip-bot/
 
 ---
 
+## 🤝 Contributing
+
+Bug reports and pull requests are welcome — see
+**[CONTRIBUTING.md](CONTRIBUTING.md)** for local setup, code style and how to
+add support for a new platform.
+
+When reporting a bug, please include the output of `/version` (it shows the
+exact commit that is running, so it's clear whether the fix you're missing is
+even deployed) and, for Instagram or TeraBox issues, `/igtest` or
+`/tbtest <link>`.
+
+---
+
 ## 📄 License
 
-```
-MIT License — Free to use, modify and distribute with attribution.
-```
+Released under the **[MIT License](LICENSE)** — free to use, modify, self-host
+and distribute.
+
+### ⚠️ Please keep the credit
+
+Forking and redeploying this bot is absolutely fine. If you do, please:
+
+- **Keep the copyright line in [`LICENSE`](LICENSE) intact.**
+- **Keep the credit** in this README and in the bot's `/start` and `/version`
+  output.
+- Feel free to **add your own name alongside** it — just don't replace the
+  original.
+
+Retaining the copyright notice isn't only courtesy: the MIT licence requires
+it to be included in all copies or substantial portions of the software, so
+removing it is a licence violation.
 
 <div align="center">
 
