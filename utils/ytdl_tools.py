@@ -310,26 +310,7 @@ _DIRECT_PATTERNS = [
     "objects.githubusercontent.com",
 ]
 
-def is_direct_download_url(url: str) -> bool:
-    """True if URL is a direct file link (not a webpage to scrape)."""
-    url_lower = url.lower().split("?")[0]
-    # Check extension
-    for ext in _DIRECT_EXTS:
-        if url_lower.endswith(ext):
-            return True
-    # Check known CDN/download patterns
-    for pat in _DIRECT_PATTERNS:
-        if pat in url.lower():
-            return True
-    return False
-
-# --- Direct download URL support ---
-_DIRECT_EXTS = (
-    ".mp4",".mkv",".avi",".mov",".webm",
-    ".mp3",".m4a",".aac",".flac",".ogg",".wav",
-    ".zip",".rar",".7z",".tar",".gz",".pdf",
-    ".jpg",".jpeg",".png",".gif",".webp",".apk",
-)
+# Hosts that always serve a file rather than a page.
 _DIRECT_HOSTS = (
     "drive.usercontent.google.com",
     "drive.google.com/uc",
@@ -338,16 +319,25 @@ _DIRECT_HOSTS = (
     "dl.dropboxusercontent.com",
 )
 
+
 def is_direct_download_url(url: str) -> bool:
+    """True if URL is a direct file link (not a webpage to scrape).
+
+    NOTE: this used to be defined twice in this module; the later copy
+    silently shadowed the earlier one. The two are now merged here.
+    """
     u = url.lower()
     base = u.split("?")[0].split("#")[0]
     for ext in _DIRECT_EXTS:
-        if base.endswith(ext): return True
+        if base.endswith(ext):
+            return True
     for host in _DIRECT_HOSTS:
-        if host in u: return True
-    if "?dl=1" in u or "?download=1" in u or "/download?id=" in u: return True
+        if host in u:
+            return True
+    for pat in _DIRECT_PATTERNS:
+        if pat in u:
+            return True
     return False
-
 
 async def download_direct(url: str, output_dir: str) -> str:
     import re as _re, aiohttp

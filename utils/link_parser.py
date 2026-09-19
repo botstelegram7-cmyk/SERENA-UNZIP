@@ -109,37 +109,199 @@ def extract_links_from_folder(base_dir: str) -> Dict[str, List[str]]:
 
 INSTAGRAM_DOMAINS = ["instagram.com", "instagr.am", "ddinstagram.com"]
 
+# Sites yt-dlp can extract media from. yt-dlp supports 1800+ sites, so this
+# list is only a fast path — anything not listed still falls through to
+# yt-dlp via the "unknown" branch rather than being HTTP-fetched as a page.
 YTDL_DOMAINS = [
-    "twitter.com", "x.com", "facebook.com", "fb.watch",
-    "tiktok.com", "vimeo.com", "dailymotion.com", "reddit.com", "twitch.tv",
-    "bilibili.com", "ok.ru", "vk.com",
+    # video
+    "youtube.com", "youtu.be", "youtube-nocookie.com", "m.youtube.com",
+    "twitter.com", "x.com", "t.co", "facebook.com", "fb.watch", "fb.com",
+    "tiktok.com", "vt.tiktok.com", "vm.tiktok.com",
+    "vimeo.com", "dailymotion.com", "dai.ly", "reddit.com", "redd.it",
+    "twitch.tv", "clips.twitch.tv", "bilibili.com", "ok.ru", "vk.com",
+    "rumble.com", "odysee.com", "bitchute.com", "streamable.com",
+    "9gag.com", "imgur.com", "gfycat.com", "tumblr.com",
+    "linkedin.com", "pinterest.com", "pin.it", "snapchat.com",
+    "threads.net", "threads.com", "kick.com", "nicovideo.jp",
+    "douyin.com", "kuaishou.com", "weibo.com", "xiaohongshu.com",
+    "likee.video", "josh.in", "chingari.io", "moj.share",
+    "sharechat.com", "roposo.com", "mxtakatak.com",
+    # news / broadcast
+    "bbc.co.uk", "bbc.com", "cnn.com", "nytimes.com", "aajtak.in",
+    "ndtv.com", "zeenews.india.com", "abplive.com", "news18.com",
+    "espn.com", "hotstar.com", "voot.com", "sonyliv.com", "zee5.com",
+    "jiocinema.com", "mxplayer.in", "ullu.app", "altbalaji.com",
+    # audio / music
+    "soundcloud.com", "on.soundcloud.com", "bandcamp.com",
+    "mixcloud.com", "audiomack.com", "spotify.com", "open.spotify.com",
+    "deezer.com", "audius.co", "jiosaavn.com", "gaana.com", "wynk.in",
+    # education / misc
+    "ted.com", "coursera.org", "udemy.com", "khanacademy.org",
+    "archive.org", "rutube.ru", "pornhub.com", "xvideos.com",
 ]
+
+# Hosts that need a browser-style page scrape or a special extractor rather
+# than a plain GET. Kept separate so they are never treated as direct files.
+FILEHOST_DOMAINS = [
+    "mega.nz", "mediafire.com", "pixeldrain.com", "anonfiles.com",
+    "gofile.io", "1fichier.com", "krakenfiles.com", "bayfiles.com",
+    "workupload.com", "send.cm", "dropbox.com", "we.tl", "wetransfer.com",
+    "terabox.com", "1024terabox.com", "teraboxapp.com", "4funbox.com",
+    "mirrobox.com", "nephobox.com",
+]
+
+def _host_of(url: str) -> str:
+    """Hostname of a URL, lowercased and without a leading www."""
+    u = (url or "").strip()
+    if "://" not in u:
+        u = "https://" + u
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(u).hostname or "").lower()
+    except Exception:
+        host = ""
+    return host[4:] if host.startswith("www.") else host
+
+
+def _host_matches(host: str, domain: str) -> bool:
+    """True if `host` is `domain` or a subdomain of it.
+
+    Substring matching is wrong here: "ok.co" would match "ex.com" and
+    "4funbox.com" would match "terabox.com", mis-routing ordinary links.
+    """
+    domain = domain.lower().lstrip(".")
+    if "/" in domain:                      # entries like "drive.google.com/uc"
+        return domain in host
+    return host == domain or host.endswith("." + domain)
+
 
 def classify_link(url: str) -> str:
     """
-    Return: 'gdrive' | 'telegram' | 'instagram' | 'm3u8' | 'ytdl' | 'direct' | 'unknown'
+    Return: 'gdrive' | 'telegram' | 'instagram' | 'm3u8' | 'ytdl' |
+            'filehost' | 'direct' | 'unknown'
     """
     u = url.strip()
     u_low = u.lower()
+    host = _host_of(u)
 
-    if "drive.google.com" in u_low:
+    if _host_matches(host, "drive.google.com"):
         return "gdrive"
-    if "t.me/" in u_low or "telegram.me/" in u_low:
+    if _host_matches(host, "t.me") or _host_matches(host, "telegram.me"):
         return "telegram"
 
     for domain in INSTAGRAM_DOMAINS:
-        if domain in u_low:
+        if _host_matches(host, domain):
             return "instagram"
 
+    # A real file extension wins over the domain list: a direct .mp4 on a
+    # listed site should be fetched directly, not handed to yt-dlp.
+    base_early = u_low.split("?", 1)[0].split("#", 1)[0]
+    for ext in FILE_EXT:
+        if base_early.endswith(ext):
+            return "direct"
+    if base_early.endswith(".m3u8") or base_early.endswith(".mpd"):
+        return "m3u8"
+
     for domain in YTDL_DOMAINS:
-        if domain in u_low:
+        if _host_matches(host, domain):
             return "ytdl"
+
+    for domain in FILEHOST_DOMAINS:
+        if _host_matches(host, domain):
+            return "filehost"
 
     base = u_low.split("?", 1)[0].split("#", 1)[0]
     if base.endswith(".m3u8"):
+        return "m3u8"
+    if base.endswith(".mpd"):
         return "m3u8"
     for ext in FILE_EXT:
         if base.endswith(ext):
             return "direct"
 
+    # Query strings often carry the real filename, e.g. ?file=movie.mkv
+    for ext in FILE_EXT:
+        if ext in u_low:
+            return "direct"
+
+    return "unknown"
+
+
+# ── Runtime probing ──────────────────────────────────────────────────────────
+# Extensions lie and many CDNs serve files from extension-less URLs, so when
+# static classification says "unknown" we ask the server what it actually is.
+
+_MEDIA_CT_PREFIXES = ("video/", "audio/", "image/")
+_DIRECT_CT = {
+    "application/zip", "application/x-zip-compressed",
+    "application/x-rar-compressed", "application/vnd.rar",
+    "application/x-7z-compressed", "application/x-tar",
+    "application/gzip", "application/x-gzip",
+    "application/pdf", "application/epub+zip",
+    "application/vnd.android.package-archive",
+    "application/octet-stream",
+    "application/x-msdownload", "application/x-iso9660-image",
+}
+_PLAYLIST_CT = {
+    "application/vnd.apple.mpegurl", "application/x-mpegurl",
+    "audio/x-mpegurl", "application/dash+xml",
+}
+
+
+async def probe_link_kind(url: str, timeout: int = 15) -> str:
+    """Ask the server what a URL really serves.
+
+    Returns 'direct', 'm3u8', 'ytdl' or 'unknown'. Never raises — an
+    unreachable URL simply comes back as 'unknown'.
+    """
+    import aiohttp
+
+    def _from_ct(ct: str, disp: str = "") -> str:
+        ct = (ct or "").split(";")[0].strip().lower()
+        if ct in _PLAYLIST_CT:
+            return "m3u8"
+        if ct in _DIRECT_CT or ct.startswith(_MEDIA_CT_PREFIXES):
+            return "direct"
+        # A download disposition means a file regardless of content type
+        if "attachment" in (disp or "").lower():
+            return "direct"
+        if ct.startswith("text/html"):
+            return "ytdl"      # an HTML page → let yt-dlp try to extract
+        return ""
+
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/125.0.0.0 Safari/537.36"),
+        "Accept": "*/*",
+    }
+    try:
+        conn = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=conn) as session:
+            # HEAD first — cheap, and enough for most servers
+            try:
+                async with session.head(
+                    url, headers=headers, allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                    kind = _from_ct(r.headers.get("Content-Type", ""),
+                                    r.headers.get("Content-Disposition", ""))
+                    if kind:
+                        return kind
+            except Exception:
+                pass
+
+            # Some servers reject HEAD; fetch a single byte instead
+            try:
+                rng = dict(headers, Range="bytes=0-0")
+                async with session.get(
+                    url, headers=rng, allow_redirects=True,
+                    timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                    kind = _from_ct(r.headers.get("Content-Type", ""),
+                                    r.headers.get("Content-Disposition", ""))
+                    if kind:
+                        return kind
+            except Exception:
+                pass
+    except Exception:
+        pass
     return "unknown"

@@ -363,6 +363,11 @@ Both formats are accepted:
 /zqpass      — Set queue password
 /cancelqueue — Cancel active queue
 /insta       — Instagram photos, carousels, reels, stories (alias: /ig)
+Paste any link  — YouTube, TikTok, Twitter/X, Facebook, Spotify, SoundCloud,
+                  Pinterest, Reddit, Rumble and 1800+ other sites via yt-dlp;
+                  direct file URLs; m3u8/DASH streams; Google Drive; and file
+                  hosts such as MEGA, MediaFire and Terabox. Links without a
+                  file extension are probed at runtime and routed correctly.
 /profile     — Bulk-download a profile's latest posts (alias: /bulk)
 /story       — Download a user's active stories
 /version     — Build, changelog and live health (alias: /changelog)

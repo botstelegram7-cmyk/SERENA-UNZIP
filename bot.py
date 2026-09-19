@@ -220,7 +220,8 @@ from utils.extractors import detect_encrypted, extract_archive
 from utils.file_splitter import split_file, human_size
 from utils.gdrive import get_gdrive_direct_link
 from utils.http_downloader import download_file
-from utils.link_parser import classify_link, extract_links_from_folder, find_links_in_text
+from utils.link_parser import (classify_link, extract_links_from_folder,
+                               find_links_in_text, probe_link_kind)
 from utils.m3u8_tools import download_m3u8_stream, get_m3u8_variants
 from utils.media_tools import (
     add_watermark, compress_video, extract_audio, extract_subtitles,
@@ -250,11 +251,21 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.4.0"
-BOT_CODENAME = "Reliable Downloads"
+BOT_VERSION  = "v2.5.0"
+BOT_CODENAME = "Universal Links"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.5.0": [
+        "🎬 <b>YouTube ab kaam karta hai!</b> Pehle wo 'unknown' tha aur HTML page download kar raha tha",
+        "🌍 88 sites ka fast-path: TikTok, Twitter/X, FB, Spotify, SoundCloud, Pinterest, LinkedIn, Rumble, Hotstar, JioCinema, ShareChat aur bahut kuch",
+        "📦 File hosts detect hote hain: MEGA, MediaFire, Terabox, Pixeldrain, GoFile, WeTransfer",
+        "🔍 <b>Indirect links</b>: extension na ho to bot server se poochta hai ki file hai ya page, phir sahi handler chunta hai",
+        "🤖 Pehchan na aane wale links ab yt-dlp ko diye jate hain (1800+ sites support)",
+        "🎵 Audio files ab audio player me jate hain, document ki tarah nahi",
+        "🐞 Fix: <code>is_direct_download_url</code> do baar defined tha, doosra pehle wale ko chup-chaap override kar raha tha",
+        "🛡 Domain matching ab hostname-based hai — <code>ok.co</code> ab <code>ex.com</code> se match nahi karta",
+    ],
     "v2.4.0": [
         "🔁 Har media file ab 4 baar retry hoti hai — pehle ek network glitch = poora download fail",
         "⏭ Adhoore download <b>resume</b> hote hain (Range request), shuru se nahi",
@@ -2174,7 +2185,8 @@ async def process_links_message(client, message, content):
     cats={}
     for u in links:
         k=classify_link(u); cats[k]=cats.get(k,0)+1
-    em={"gdrive":"🗂","m3u8":"📺","direct":"💾","telegram":"✈️","unknown":"🔗"}
+    em={"gdrive":"🗂","m3u8":"📺","direct":"💾","telegram":"✈️",
+        "ytdl":"🎬","filehost":"📦","instagram":"📸","unknown":"🔗"}
     lines=[f"{em.get(k,'🔗')} {k}: <b>{v}</b>" for k,v in cats.items()]
     await message.reply_text(
         f"🔗 <b>{len(links)} links found</b>\n\n"+"\n".join(lines)+"\n\nChoose action:",
@@ -3956,24 +3968,145 @@ async def handle_m3u8_quality_choice(client, cq, tid, idx):
         except Exception: pass
     M3U8_TASKS.pop(tid,None)
 
+async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
+                                reply_to, status) -> bool:
+    """Download a link with yt-dlp and upload whatever it produces.
+
+    Used for video-site links and for anything we could not identify, since
+    yt-dlp supports far more sites than any hardcoded list. Returns True if
+    at least one file was delivered.
+    """
+    out_dir = Path(temp_root)/uuid.uuid4().hex[:8]
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cookie_path = None
+    try:
+        from utils.instagram import write_cookie_file
+        cookie_path = write_cookie_file()
+    except Exception:
+        pass
+
+    cmd = ["yt-dlp", "--no-warnings", "--ignore-errors", "--no-abort-on-error",
+           "--retries", "10", "--fragment-retries", "10",
+           "--retry-sleep", "exp=1:30", "--socket-timeout", "30",
+           "--concurrent-fragments", "4",
+           "--no-playlist",
+           "--max-filesize", f"{Config.YTDL_MAX_SIZE_MB}M",
+           # Prefer a ready-made MP4 so no ffmpeg merge is required
+           "--format", ("best[ext=mp4][vcodec!=none][acodec!=none]/"
+                        "bestvideo*+bestaudio/best"),
+           "--merge-output-format", "mp4",
+           "--output", str(out_dir/"%(title).80s.%(ext)s")]
+    if cookie_path:
+        cmd += ["--cookies", cookie_path]
+    cmd += [url]
+
+    await _safe_edit(status, f"🎬 Fetching…\n<code>{url[:70]}</code>")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        _, err = await asyncio.wait_for(proc.communicate(),
+                                        timeout=Config.YTDL_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except Exception: pass
+        await _safe_edit(status, "❌ Timeout — ye link bahut slow hai.")
+        return False
+    except FileNotFoundError:
+        await _safe_edit(status, "❌ yt-dlp installed nahi hai (owner: "
+                                 "<code>pip install -U yt-dlp</code>).")
+        return False
+
+    files = [p for p in sorted(out_dir.rglob("*")) if p.is_file()
+             and p.suffix.lower() not in (".part", ".ytdl", ".json")]
+    if not files:
+        detail = ""
+        if err:
+            for line in err.decode("utf-8", "ignore").splitlines():
+                if "ERROR" in line:
+                    detail = line.strip()[:200]; break
+        if detail:
+            await _safe_edit(status, f"❌ <code>{detail}</code>")
+        return False
+
+    sent_any = False
+    for f in files:
+        try:
+            size = f.stat().st_size
+            if size < 1024:
+                continue
+            bn = f.name
+            await _safe_edit(status, f"📤 Uploading: {bn[:50]}")
+            start_u = time.time()
+            if is_video_path(bn):
+                cap = await build_caption(uid, bn)
+                thumb = await choose_thumbnail(uid, str(f))
+                sent = await client.send_video(
+                    chat_id, str(f), caption=cap, thumb=thumb,
+                    duration=await _get_video_duration(str(f)),
+                    supports_streaming=True,
+                    progress=progress_for_pyrogram,
+                    progress_args=(status, start_u, bn, "to Telegram"),
+                    reply_to_message_id=reply_to)
+            elif is_audio_file(bn):
+                sent = await client.send_audio(
+                    chat_id, str(f), caption=bn,
+                    progress=progress_for_pyrogram,
+                    progress_args=(status, start_u, bn, "to Telegram"),
+                    reply_to_message_id=reply_to)
+            else:
+                sent = await client.send_document(
+                    chat_id, str(f), caption=bn,
+                    progress=progress_for_pyrogram,
+                    progress_args=(status, start_u, bn, "to Telegram"),
+                    reply_to_message_id=reply_to)
+            sent_any = True
+            await update_user_stats(uid, size/1048576)
+            try: await log_output(client, await client.get_users(uid), sent, f"ytdl: {url}")
+            except Exception: pass
+        except Exception:
+            continue
+    return sent_any
+
+
 async def handle_links_download_all(client, cq, original_msg):
     key=(original_msg.chat.id,original_msg.id); sess=LINK_SESSIONS.get(key)
     content=sess["content"] if sess else (original_msg.text or original_msg.caption or "") or ""
     all_links=sess["links"] if sess else find_links_in_text(content)
     if not all_links: await cq.message.edit_text("Koi URL nahi mila."); return
-    cats: Dict[str,list]={"direct":[],"m3u8":[],"gdrive":[],"telegram":[],"unknown":[]}
+    cats: Dict[str,list]={"direct":[],"m3u8":[],"gdrive":[],"telegram":[],
+                          "ytdl":[],"filehost":[],"unknown":[]}
     for u in all_links:
         k=classify_link(u); cats.setdefault(k,[]); cats[k].append(u)
-    direct=cats.get("direct",[]); m3u8s=cats.get("m3u8",[]); gdrives=cats.get("gdrive",[]); unknowns=cats.get("unknown",[])
-    candidates=direct+unknowns
-    if not candidates and not m3u8s and not gdrives:
-        await cq.message.edit_text("Supported links (direct/m3u8/gdrive) nahi mile."); return
+    direct=cats.get("direct",[]); m3u8s=cats.get("m3u8",[])
+    gdrives=cats.get("gdrive",[]); unknowns=cats.get("unknown",[])
+    ytdls=cats.get("ytdl",[]) + cats.get("filehost",[])
+
+    # Unknown links used to be fetched with a plain GET, which silently
+    # saved the HTML page instead of the media. Probe each one and route it
+    # to the right handler instead of guessing.
+    still_unknown=[]
+    for u in unknowns:
+        kind = await probe_link_kind(u)
+        if kind == "direct":   direct.append(u)
+        elif kind == "ytdl":   ytdls.append(u)
+        elif kind == "m3u8":   m3u8s.append(u)
+        else:                  still_unknown.append(u)
+    # Anything still unidentified is worth one yt-dlp attempt: it supports
+    # 1800+ sites, far more than any list we could maintain.
+    ytdls += still_unknown
+
+    candidates=direct
+    if not candidates and not m3u8s and not gdrives and not ytdls:
+        await cq.message.edit_text("Koi supported link nahi mila."); return
     if not cq.from_user: return
     user=cq.from_user; uid=user.id
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    try: await cq.message.edit_text(f"⬇️ Direct: {len(candidates)} | GDrive: {len(gdrives)} | m3u8: {len(m3u8s)}\nDownloading…")
+    try: await cq.message.edit_text(
+        f"⬇️ Direct: {len(candidates)} | Video sites: {len(ytdls)} | "
+        f"GDrive: {len(gdrives)} | m3u8: {len(m3u8s)}\nDownloading…")
     except Exception: pass
     ok=fail=0; chat_id=cq.message.chat.id; reply_to=cq.message.id
     is_priv=cq.message.chat.type==enums.ChatType.PRIVATE; pinned=False
@@ -4023,10 +4156,33 @@ async def handle_links_download_all(client, cq, original_msg):
             ok+=1; await log_output(client,user,sent,f"gdrive: {url}")
         except Exception: fail+=1
         await asyncio.sleep(0.4)
+    # ── Video-site links (YouTube, TikTok, file hosts, unidentified) ──
+    for url in ytdls:
+        if user_cancelled.get(uid): break
+        st=None
+        try:
+            st=await client.send_message(chat_id,f"🎬 {url[:60]}…",
+                                         reply_to_message_id=reply_to)
+            sent_any=await _ytdl_direct_download(client,uid,url,temp_root,
+                                                 chat_id,reply_to,st)
+            if sent_any:
+                ok+=1
+                try: await st.delete()
+                except Exception: pass
+            else:
+                fail+=1
+                await _safe_edit(st,f"❌ Download nahi ho paya:\n<code>{url[:80]}</code>")
+        except Exception as e:
+            fail+=1
+            if st: await _safe_edit(st,f"❌ <code>{str(e)[:150]}</code>")
+        await asyncio.sleep(0.4)
+
     for url in m3u8s:
         if user_cancelled.get(uid): break
         await offer_m3u8_menu(client,cq,uid,url,temp_root)
-    try: await cq.message.edit_text(f"✅ Direct/GDrive done.\nSuccess: {ok}  Failed: {fail}\nm3u8: {len(m3u8s)} (quality buttons above)")
+    try: await cq.message.edit_text(
+        f"✅ Done.\nSuccess: {ok}  Failed: {fail}"
+        + (f"\nm3u8: {len(m3u8s)} (quality buttons above)" if m3u8s else ""))
     except Exception: pass
     if is_priv and pinned:
         try: await client.unpin_chat_message(chat_id,reply_to)
