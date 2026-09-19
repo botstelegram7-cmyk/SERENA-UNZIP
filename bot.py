@@ -253,11 +253,18 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.6.0"
-BOT_CODENAME = "TeraBox"
+BOT_VERSION  = "v2.6.1"
+BOT_CODENAME = "Cookie Fix"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.6.1": [
+        "🐞 <b>Fix:</b> cookie me newline hone par har request crash ho jati thi — devtools se paste karne par ye aam hai",
+        "🍪 Cookie ab automatically clean hoti hai (newline, tab, quotes, extra space)",
+        "🔎 Galat cookie pehle hi pakdi jati hai, saaf message ke saath",
+        "💬 Network/transport error ab 'TeraBox ne API badla' nahi bolta — asli wajah batata hai",
+        "🩺 <code>/tbtest</code> aur <code>/version</code> me cookie ka status dikhta hai",
+    ],
     "v2.6.0": [
         "📦 <b>TeraBox download support</b> — yt-dlp me TeraBox ka extractor hai hi nahi, isliye native resolver banaya",
         "🔗 Saare TeraBox mirrors: terabox.com, 1024terabox, teraboxapp, 4funbox, terasharelink, terafileshare aur baaki",
@@ -821,6 +828,7 @@ async def version_cmd(client, message):
         f"🔌 Handlers: <b>{handlers}</b>",
         f"🍪 Instagram cookies: {cookie_icon} <b>{cookie_state}</b>",
         f"⚡ Cached posts: <b>{cache_n}</b>",
+        f"📦 TeraBox cookie: <b>{_tb_cookie_line()}</b>",
     ]
     _rl = rate_limit_remaining()
     if _rl > 0:
@@ -882,7 +890,7 @@ async def terabox_cmd(client, message):
     uid = message.from_user.id
     if await is_banned(uid): return
     if not await check_force_sub(client, message): return
-    from utils.terabox import TeraboxError, has_cookie, is_terabox_url
+    from utils.terabox import TeraboxError, is_terabox_url
 
     args = message.command[1:]
     if not args:
@@ -890,7 +898,7 @@ async def terabox_cmd(client, message):
             "📦 <b>TeraBox Downloader</b>\n\n"
             "Usage: <code>/terabox &lt;link&gt;</code>\n"
             "Ya seedha link paste kar do — bot khud pehchan lega.\n\n"
-            f"🍪 Cookie: {'✅ set' if has_cookie() else '❌ not set'}\n"
+            f"🍪 Cookie: {_tb_cookie_line()}\n"
             "<i>Cookie ke bina TeraBox server IPs ko block karta hai.</i>")
         return
 
@@ -4166,6 +4174,15 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
     except Exception:
         pass
     return ok, failed
+
+
+def _tb_cookie_line() -> str:
+    """One-line TeraBox cookie state for help text and /version."""
+    from utils.terabox import cookie_problem, has_cookie
+    if not has_cookie():
+        return "❌ not set"
+    problem = cookie_problem()
+    return f"⚠️ {problem}" if problem else "✅ set"
 
 
 async def _start_terabox_flow(client, message, url):

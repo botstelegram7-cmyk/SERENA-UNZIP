@@ -122,15 +122,51 @@ def extract_surl(url: str) -> Optional[str]:
     return None
 
 
+# Control characters in a header value make aiohttp raise ValueError
+# ("Potential header injection"). Pasting a cookie out of devtools very
+# easily carries a trailing newline, so sanitise before use — otherwise
+# every request dies before it is sent and the failure looks like a
+# TeraBox API change rather than a bad cookie.
+_CTRL_RE = re.compile(r"[\r\n\t\x00-\x1f\x7f]")
+
+
+def _clean_cookie(raw: str) -> str:
+    """Normalise a pasted cookie into a safe single-line header value."""
+    if not raw:
+        return ""
+    raw = _CTRL_RE.sub(" ", str(raw))
+    raw = raw.strip().strip('"').strip("'").strip()
+    raw = re.sub(r"\s*;\s*", "; ", raw)
+    raw = re.sub(r"\s{2,}", " ", raw)
+    return raw.strip("; ").strip()
+
+
 def _cookie_header() -> str:
     """Build a Cookie header from the configured session value."""
-    raw = (Config.TERABOX_COOKIE or "").strip()
+    raw = _clean_cookie(Config.TERABOX_COOKIE or "")
     if not raw:
         return ""
     # Accept either a bare ndus value or a full "k=v; k=v" string
     if "=" not in raw:
         return f"ndus={raw}"
     return raw
+
+
+def cookie_problem() -> str:
+    """Return a human-readable problem with the configured cookie, if any."""
+    raw = (Config.TERABOX_COOKIE or "")
+    if not raw.strip():
+        return "not set"
+    cleaned = _cookie_header()
+    if not cleaned:
+        return "empty after cleanup"
+    if "ndus" not in cleaned.lower():
+        return "no `ndus` key found — copy the ndus cookie specifically"
+    m = re.search(r"ndus=([^;]+)", cleaned, re.I)
+    val = (m.group(1).strip() if m else "")
+    if len(val) < 20:
+        return f"`ndus` looks too short ({len(val)} chars) — copy the full value"
+    return ""
 
 
 def has_cookie() -> bool:
@@ -195,6 +231,12 @@ def _wall_message() -> str:
         "<i>Chrome → F12 → Application → Cookies → terabox.com → ndus</i>")
 
 
+# Remembers why the last request failed, so a transport-level problem
+# (bad cookie, DNS, timeout) is reported instead of being mistaken for
+# "TeraBox changed its API".
+_LAST_TRANSPORT_ERROR: Dict[str, str] = {"v": ""}
+
+
 async def _get_json(session: aiohttp.ClientSession, url: str,
                     referer: str = "") -> Optional[Dict]:
     try:
@@ -202,10 +244,24 @@ async def _get_json(session: aiohttp.ClientSession, url: str,
                                timeout=aiohttp.ClientTimeout(total=25),
                                allow_redirects=True) as r:
             if r.status != 200:
+                _LAST_TRANSPORT_ERROR["v"] = f"HTTP {r.status}"
                 return None
             txt = await r.text()
-            return json.loads(txt)
-    except Exception:
+            try:
+                return json.loads(txt)
+            except ValueError:
+                _LAST_TRANSPORT_ERROR["v"] = "response was not JSON"
+                return None
+    except ValueError as e:
+        # aiohttp raises this for control characters in headers — i.e. a
+        # cookie pasted with a newline in it.
+        _LAST_TRANSPORT_ERROR["v"] = f"bad request headers ({str(e)[:60]})"
+        return None
+    except asyncio.TimeoutError:
+        _LAST_TRANSPORT_ERROR["v"] = "timeout"
+        return None
+    except Exception as e:
+        _LAST_TRANSPORT_ERROR["v"] = f"{type(e).__name__}: {str(e)[:60]}"
         return None
 
 
@@ -265,6 +321,14 @@ async def list_files(url: str) -> List[Dict]:
             "❌ <b>Is link se share ID nahi mila.</b>\n\n"
             "Format aisa hona chahiye: <code>terabox.com/s/1xxxxxxx</code>")
 
+    problem = cookie_problem()
+    if problem and problem != "not set":
+        raise TeraboxError(
+            f"🍪 <b>TERABOX_COOKIE thik nahi hai:</b> {problem}.\n\n"
+            "Chrome → F12 → Application → Cookies → terabox.com → "
+            "<code>ndus</code> → poori value copy karo.")
+
+    _LAST_TRANSPORT_ERROR["v"] = ""
     jar = aiohttp.CookieJar(unsafe=True)
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=20, sock_read=30)
     seen_errno = 0
@@ -295,10 +359,20 @@ async def list_files(url: str) -> List[Dict]:
         raise TeraboxError(_ERRNO_HELP[seen_errno])
     if seen_errno in (140, 400210, 460020, -6):
         raise TeraboxError(_wall_message())
+    transport = _LAST_TRANSPORT_ERROR.get("v") or ""
+    if not seen_errno and transport:
+        # Never reached TeraBox at all — say so rather than blaming its API
+        raise TeraboxError(
+            "❌ <b>TeraBox tak request pahunch hi nahi payi.</b>\n\n"
+            f"<i>Reason: {transport}</i>\n\n"
+            + ("✅ Cookie check karo — usme newline ya extra character to nahi?"
+               if "header" in transport.lower()
+               else "✅ Thodi der baad try karo."))
     raise TeraboxError(
         "❌ <b>TeraBox se file list nahi mili.</b>"
         + (f"\n\n<i>errno: {seen_errno}</i>" if seen_errno else "")
-        + "\n\n<i>TeraBox apna API aksar badalta rehta hai.</i>")
+        + (f"\n<i>{transport}</i>" if transport else "")
+        + "\n\n<i>Owner: <code>/tbtest</code> chala kar mirrors ka status dekho.</i>")
 
 
 async def _flatten(session: aiohttp.ClientSession, mirror: str, surl: str,
@@ -398,7 +472,16 @@ def human_size(n: int) -> str:
 async def diagnose(url: str = "") -> str:
     """Owner-facing probe, mirrored on /igtest's style."""
     out = ["🔬 <b>TeraBox Diagnostics</b>", ""]
-    out.append(f"🍪 Cookie: {'✅ set' if has_cookie() else '❌ not set'}")
+    problem = cookie_problem()
+    if not has_cookie():
+        out.append("🍪 Cookie: ❌ <b>not set</b>")
+    elif problem:
+        out.append(f"🍪 Cookie: ⚠️ <b>{problem}</b>")
+    else:
+        ck = _cookie_header()
+        m = re.search(r"ndus=([^;]+)", ck, re.I)
+        val = m.group(1) if m else ""
+        out.append(f"🍪 Cookie: ✅ set (ndus, {len(val)} chars)")
     if url:
         out.append(f"🔗 surl: <code>{extract_surl(url) or 'not parsed'}</code>")
     out.append("")
