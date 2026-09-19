@@ -250,11 +250,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.3.0"
-BOT_CODENAME = "Instagram Overhaul"
+BOT_VERSION  = "v2.3.1"
+BOT_CODENAME = "Rate-Limit ETA"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.3.1": [
+        "⏱ Rate-limit ab exact ETA deta hai — kitne second baad retry karna hai",
+        "🔁 Live countdown message jo apne aap update hota hai",
+        "📈 Baar-baar limit lagne par wait time badhta hai (1 min → 1 hour)",
+        "🚦 Cooldown ke dauran request bheji hi nahi jaati — turant ETA milta hai",
+        "🛑 <code>/profile</code> bulk download rate-limit par ruk jata hai, ETA ke saath",
+        "🧩 <code>/version</code> me live rate-limit status",
+    ],
     "v2.3.0": [
         "🔐 Owner IDs moved to the <code>OWNER_IDS</code> env var (no longer in the code)",
         "🐞 Fixed a crash in group admin checks when no owner was configured",
@@ -728,7 +736,8 @@ async def ytdl_cmd(client, message):
 async def version_cmd(client, message):
     """Show the running build, what changed in it, and live health."""
     if not message.from_user: return
-    from utils.instagram import cookie_status_line, has_cookies, validate_cookies
+    from utils.instagram import (_fmt_duration, cookie_status_line, has_cookies,
+                                 rate_limit_remaining, validate_cookies)
 
     handlers = sum(len(v) for v in app.dispatcher.groups.values())
 
@@ -755,6 +764,13 @@ async def version_cmd(client, message):
         f"🔌 Handlers: <b>{handlers}</b>",
         f"🍪 Instagram cookies: {cookie_icon} <b>{cookie_state}</b>",
         f"⚡ Cached posts: <b>{cache_n}</b>",
+    ]
+    _rl = rate_limit_remaining()
+    if _rl > 0:
+        lines.append(f"⏳ Rate-limited: <b>{_fmt_duration(_rl)}</b> left (<code>{_rl}s</code>)")
+    else:
+        lines.append("🟢 Rate-limit: <b>clear</b>")
+    lines += [
         "",
         f"<b>What's new in {BOT_VERSION}</b>",
     ]
@@ -817,7 +833,7 @@ async def profile_cmd(client, message):
     uid = message.from_user.id
     if await is_banned(uid): return
     if not await check_force_sub(client, message): return
-    from utils.instagram import (InstagramError, extract_username,
+    from utils.instagram import (InstagramError, RateLimited, extract_username,
                                  fetch_profile_posts)
 
     args = message.command[1:]
@@ -846,6 +862,8 @@ async def profile_cmd(client, message):
 
     try:
         posts, info = await fetch_profile_posts(username, limit)
+    except RateLimited as e:
+        asyncio.create_task(_show_rate_limit_countdown(status, e.remaining)); return
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
@@ -879,6 +897,19 @@ async def profile_cmd(client, message):
             failed += 0 if sent else 1
         except Exception:
             failed += 1
+
+        # If Instagram started rate-limiting mid-batch, stop and report the ETA
+        from utils.instagram import rate_limit_remaining
+        rl = rate_limit_remaining()
+        if rl > 0:
+            from utils.instagram import _fmt_duration
+            await client.send_message(
+                message.chat.id,
+                f"⏳ <b>Rate-limit ho gaya</b> — {done}/{len(posts)} posts ke baad ruka.\n\n"
+                f"⏱ <b>{_fmt_duration(rl)}</b> baad dobara try karo "
+                f"(<code>{rl}s</code>).",
+                reply_to_message_id=message.id)
+            break
         await asyncio.sleep(1.2)          # be gentle with Instagram
 
     user_cancelled.pop(uid, None)
@@ -895,8 +926,9 @@ async def story_cmd(client, message):
     uid = message.from_user.id
     if await is_banned(uid): return
     if not await check_force_sub(client, message): return
-    from utils.instagram import (InstagramError, download_media_items,
-                                 extract_username, fetch_stories)
+    from utils.instagram import (InstagramError, RateLimited,
+                                 download_media_items, extract_username,
+                                 fetch_stories)
 
     args = message.command[1:]
     if not args:
@@ -918,6 +950,8 @@ async def story_cmd(client, message):
 
     try:
         items, info = await fetch_stories(username)
+    except RateLimited as e:
+        asyncio.create_task(_show_rate_limit_countdown(status, e.remaining)); return
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
@@ -3475,6 +3509,39 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
     return (total, sent_ids) if return_messages else total
 
 
+async def _show_rate_limit_countdown(status, remaining: int):
+    """Edit the status message into a live countdown while cooling down.
+
+    Instagram sends no Retry-After header, so we show our own tracked ETA
+    and tick it down instead of leaving the user guessing.
+    """
+    from utils.instagram import _fmt_duration
+
+    remaining = max(0, int(remaining))
+    # Update roughly every 10s early on, slower for long waits (avoids
+    # hitting Telegram's edit rate limits on a 1-hour cooldown).
+    step = 10 if remaining <= 300 else 30
+
+    while remaining > 0:
+        try:
+            await _safe_edit(
+                status,
+                "⏳ <b>Instagram rate-limit</b>\n\n"
+                f"⏱ Try again in <b>{_fmt_duration(remaining)}</b>  "
+                f"(<code>{remaining}s</code>)\n\n"
+                "<i>Ye message apne aap update hota rahega. "
+                "Cooldown khatam hone par link dobara bhejo.</i>")
+        except Exception:
+            return
+        await asyncio.sleep(min(step, remaining))
+        remaining -= step
+
+    await _safe_edit(
+        status,
+        "✅ <b>Rate-limit khatam!</b>\n\n"
+        "Ab link dobara bhejo — download chalu ho jayega.")
+
+
 async def _send_cached_instagram(client, info, cached) -> bool:
     """Re-send a previously uploaded post using stored file_ids.
 
@@ -3538,7 +3605,8 @@ async def _deliver_instagram(client, info, uid, status=None, quiet=False):
     Shared by the single-link flow and the /profile bulk downloader.
     Repeat links are served from cache instead of being re-downloaded.
     """
-    from utils.instagram import (InstagramError, build_description_messages,
+    from utils.instagram import (InstagramError, RateLimited,
+                                 build_description_messages,
                                  build_post_caption, caption_overflowed,
                                  download_post)
 
@@ -3557,6 +3625,11 @@ async def _deliver_instagram(client, info, uid, status=None, quiet=False):
 
     try:
         files, meta = await download_post(url, str(temp_root))
+    except RateLimited as e:
+        # Show a live countdown so the user knows exactly when to retry
+        if not quiet and status:
+            asyncio.create_task(_show_rate_limit_countdown(status, e.remaining))
+        return False
     except InstagramError as e:
         if not quiet and status:
             await _safe_edit(status, str(e))

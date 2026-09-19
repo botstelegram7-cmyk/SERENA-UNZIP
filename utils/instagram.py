@@ -393,6 +393,8 @@ async def _try_graphql(session: aiohttp.ClientSession, shortcode: str) -> Tuple[
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as r:
+                if r.status == 429:
+                    note_rate_limit()
                 if r.status != 200:
                     continue
                 payload = await r.json(content_type=None)
@@ -427,6 +429,8 @@ async def _try_api_v1(session: aiohttp.ClientSession, shortcode: str) -> Tuple[L
             async with session.get(
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)
             ) as r:
+                if r.status == 429:
+                    note_rate_limit()
                 if r.status != 200:
                     continue
                 payload = await r.json(content_type=None)
@@ -573,6 +577,7 @@ async def fetch_post(url: str) -> Tuple[List[Dict], Dict]:
                 except Exception:
                     items, meta = [], _empty_meta()
                 if items:
+                    clear_rate_limit()      # success → cooldown is over
                     best_items, best_meta = items, meta
                     # Media found. If the caption is missing, try the embed page
                     # (public, no auth) purely to enrich the metadata.
@@ -1056,6 +1061,84 @@ def build_description_messages(meta: Dict, url: str = "") -> List[str]:
     return out
 
 
+# ── Rate-limit tracking ──────────────────────────────────────────────────────
+# Instagram returns HTTP 429 with no Retry-After header, so we track the
+# cooldown ourselves and escalate it while the limit keeps being hit.
+
+_RATE_LIMIT: Dict[str, float] = {"until": 0.0, "hits": 0.0, "last_hit": 0.0}
+
+# Backoff ladder, in seconds. Repeated 429s walk further down the list.
+_RATE_BACKOFF = [60, 180, 300, 600, 900, 1800, 3600]
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Human-friendly duration: '45 seconds', '2 min 30 sec', '1 hour 5 min'."""
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds} second{'s' if seconds != 1 else ''}"
+    mins, secs = divmod(seconds, 60)
+    if mins < 60:
+        return f"{mins} min" + (f" {secs} sec" if secs else "")
+    hours, mins = divmod(mins, 60)
+    return f"{hours} hour{'s' if hours != 1 else ''}" + (f" {mins} min" if mins else "")
+
+
+def note_rate_limit() -> float:
+    """Record a 429 and return the UNIX timestamp when retrying is allowed."""
+    now = time.time()
+    # Reset the escalation if the last hit was long ago (limit has cooled off)
+    if now - float(_RATE_LIMIT.get("last_hit") or 0) > 7200:
+        _RATE_LIMIT["hits"] = 0.0
+    idx = min(int(_RATE_LIMIT.get("hits") or 0), len(_RATE_BACKOFF) - 1)
+    wait = _RATE_BACKOFF[idx]
+    _RATE_LIMIT["hits"] = float(idx + 1)
+    _RATE_LIMIT["last_hit"] = now
+    _RATE_LIMIT["until"] = max(float(_RATE_LIMIT.get("until") or 0), now + wait)
+    return float(_RATE_LIMIT["until"])
+
+
+def clear_rate_limit():
+    """Called after a success — the limit is evidently over."""
+    _RATE_LIMIT["until"] = 0.0
+    _RATE_LIMIT["hits"] = 0.0
+
+
+def rate_limit_remaining() -> int:
+    """Seconds left on the current cooldown (0 when clear)."""
+    return max(0, int(round(float(_RATE_LIMIT.get("until") or 0) - time.time())))
+
+
+def rate_limit_message(remaining: Optional[int] = None) -> str:
+    """User-facing message with a concrete ETA."""
+    if remaining is None:
+        remaining = rate_limit_remaining()
+    if remaining <= 0:
+        return ("⏳ Instagram ne rate-limit kar diya tha.\n\n"
+                "✅ Ab try kar sakte ho.")
+    return (
+        "⏳ <b>Instagram ne rate-limit kar diya.</b>\n\n"
+        f"⏱ <b>{_fmt_duration(remaining)}</b> baad try karo  "
+        f"(<code>{remaining}s</code>)\n\n"
+        "<i>Instagram ek IP se zyada requests block kar deta hai. "
+        "Itna wait karke dobara bhejo — cooldown khatam hote hi chal jayega.</i>"
+    )
+
+
+class RateLimited(InstagramError):
+    """Raised when Instagram is rate-limiting us; carries the ETA."""
+
+    def __init__(self, remaining: Optional[int] = None):
+        self.remaining = remaining if remaining is not None else rate_limit_remaining()
+        super().__init__(rate_limit_message(self.remaining))
+
+
+def raise_if_rate_limited():
+    """Fail fast with an ETA instead of making a doomed request."""
+    remaining = rate_limit_remaining()
+    if remaining > 0:
+        raise RateLimited(remaining)
+
+
 # ── Profile & stories ────────────────────────────────────────────────────────
 
 def extract_username(text: str) -> Optional[str]:
@@ -1087,8 +1170,8 @@ async def _profile_info(session: aiohttp.ClientSession, username: str) -> Dict:
         if r.status in (401, 403):
             raise InstagramError(_friendly_error("profile"))
         if r.status == 429:
-            raise InstagramError(
-                "⏳ Instagram ne rate-limit kar diya. Thodi der baad try karo.")
+            note_rate_limit()
+            raise RateLimited()
         if r.status != 200:
             raise InstagramError(f"❌ Instagram ne HTTP {r.status} diya.")
         data = await r.json(content_type=None)
@@ -1101,6 +1184,7 @@ async def _profile_info(session: aiohttp.ClientSession, username: str) -> Dict:
 async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict], Dict]:
     """Return (list of {shortcode,url,is_video,caption}, profile info)."""
     username = (username or "").lstrip("@")
+    raise_if_rate_limited()
     jar = cookies_as_dict()
     cookie_jar = aiohttp.CookieJar(unsafe=True)
     async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
@@ -1146,6 +1230,7 @@ async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict
 async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
     """Return (media items, info) for a user's currently active stories."""
     username = (username or "").lstrip("@")
+    raise_if_rate_limited()
     if not has_cookies():
         raise InstagramError(
             "🔒 Stories ke liye login zaroori hai.\n\n"
@@ -1270,6 +1355,7 @@ async def validate_cookies(force: bool = False) -> Tuple[bool, str]:
                     ok, detail = False, f"Instagram rejected the session (HTTP {r.status}) — cookies expired."
                 elif r.status == 429:
                     # Rate limiting is not a cookie problem; do not cry wolf.
+                    note_rate_limit()
                     ok, detail = True, "Rate-limited (HTTP 429) — cookies presumed valid."
                 else:
                     ok, detail = False, f"Unexpected response from Instagram (HTTP {r.status})."
@@ -1291,6 +1377,9 @@ def cookie_status_line() -> str:
 
 
 def _friendly_error(kind: str) -> str:
+    remaining = rate_limit_remaining()
+    if remaining > 0:
+        return rate_limit_message(remaining)
     if has_cookies():
         return (
             "🔒 <b>Instagram ne access block kiya.</b>\n\n"
@@ -1324,6 +1413,10 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
     shortcode = extract_shortcode(url) or ""
     os.makedirs(output_dir, exist_ok=True)
 
+    # Don't burn a doomed request while a cooldown is active — tell the
+    # user exactly how long is left instead.
+    raise_if_rate_limited()
+
     saved: List[str] = []
 
     # ── Path A: direct CDN download via Instagram's own APIs ──
@@ -1343,6 +1436,7 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
         saved.sort(key=lambda p: os.path.basename(p))
 
     if saved:
+        clear_rate_limit()
         return saved, meta
 
     # ── Path B: yt-dlp (reels, stories, highlights) ──
