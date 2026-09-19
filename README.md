@@ -300,7 +300,17 @@ Telegram **expandable blockquote**, so long captions collapse behind a
 🔗 Open on Instagram
 ```
 
-Caption text is HTML-escaped and truncated to Telegram's 1024-character limit.
+Caption text is HTML-escaped. Length is budgeted on the **visible** text in
+UTF-16 units — exactly what Telegram counts — so markup and escaped characters
+(`<`, `>`, `&`) no longer eat into the limit.
+
+**Long reel descriptions** are never lost: the media keeps a trimmed caption and
+the complete text follows in separate messages (up to 4096 chars each), each one
+still inside its own expandable quote. Splitting happens on word boundaries with
+byte-exact reassembly, verified against 50 000-character inputs.
+
+The title is rendered in a bold sans-serif Unicode font, with the author,
+stats and link in bold entities.
 Metadata is read from the GraphQL/v1 responses, and falls back to scraping the
 embed page or `og:` tags, then to yt-dlp's info JSON.
 

@@ -3028,8 +3028,10 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
     `caption` is the rich post caption and is attached to the first item only.
     Returns total bytes sent.
     """
-    from utils.instagram import (TG_CAPTION_LIMIT, normalize_image,
-                                 sniff_format)
+    import html as html_mod
+
+    from utils.instagram import (TG_CAPTION_LIMIT, _visible_len,
+                                 normalize_image, sniff_format)
 
     files = [f for f in files if f and Path(f).exists() and Path(f).stat().st_size > 0]
     if not files:
@@ -3055,9 +3057,12 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
     user_cap = await build_caption(uid, "")
     head = caption or ""
     if user_cap:
-        head = f"{user_cap}\n\n{head}".strip() if head else user_cap
-    if len(head) > TG_CAPTION_LIMIT:
-        head = head[:TG_CAPTION_LIMIT]
+        # User's own caption sits on top, styled to match the post header
+        user_line = f"<b>{html_mod.escape(user_cap)}</b>"
+        head = f"{user_line}\n\n{head}".strip() if head else user_line
+    # Trim on VISIBLE length (what Telegram counts), never on raw HTML length
+    if _visible_len(head) > TG_CAPTION_LIMIT:
+        head = caption or ""
 
     def _kind(p):
         fmt = sniff_format(p)
@@ -3183,7 +3188,8 @@ async def _run_instagram_download(client, status, info, uid, tid=None):
     `status` is the progress message that gets edited/deleted as we go.
     Albums are kept together; captions carry the post description.
     """
-    from utils.instagram import (InstagramError, build_post_caption,
+    from utils.instagram import (InstagramError, build_description_messages,
+                                 build_post_caption, caption_overflowed,
                                  content_kind, download_post)
 
     url = info["url"]
@@ -3220,6 +3226,23 @@ async def _run_instagram_download(client, status, info, uid, tid=None):
     caption = build_post_caption(meta, url)
     total = await _send_instagram_media(
         client, uid, info["chat_id"], info["reply_to"], files, caption=caption)
+
+    # Reels often carry descriptions far longer than Telegram's 1024-char
+    # caption limit. Send the complete text as follow-up expandable quotes so
+    # nothing is lost.
+    try:
+        if caption_overflowed(meta, url):
+            for msg in build_description_messages(meta, url):
+                try:
+                    await client.send_message(
+                        info["chat_id"], msg,
+                        reply_to_message_id=info["reply_to"],
+                        disable_web_page_preview=True)
+                except Exception:
+                    break
+                await asyncio.sleep(0.4)
+    except Exception:
+        pass
 
     try:
         await status.delete()

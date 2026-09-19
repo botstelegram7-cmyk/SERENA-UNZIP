@@ -865,67 +865,194 @@ def _esc(txt: str) -> str:
     return (str(txt).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
-# Telegram hard-limits captions to 1024 characters.
+# Telegram hard-limits captions to 1024 characters, and messages to 4096.
 TG_CAPTION_LIMIT = 1024
+TG_MESSAGE_LIMIT = 4096
+
+
+# ── Fancy font helpers ───────────────────────────────────────────────────────
+# Telegram renders these Unicode maths alphanumerics everywhere, so they give
+# the caption a styled look without relying on entity formatting.
+
+_BOLD_SANS = {}
+for _a, _z, _base in ((0x41, 0x5A, 0x1D5D4), (0x61, 0x7A, 0x1D5EE), (0x30, 0x39, 0x1D7EC)):
+    for _c in range(_a, _z + 1):
+        _BOLD_SANS[chr(_c)] = chr(_base + _c - _a)
+
+
+def to_bold_font(text: str) -> str:
+    """Convert ASCII letters/digits to bold sans-serif Unicode."""
+    return "".join(_BOLD_SANS.get(ch, ch) for ch in str(text))
+
+
+def _visible_len(html_text: str) -> int:
+    """Length Telegram actually counts: rendered text, in UTF-16 code units.
+
+    Telegram counts the *parsed* caption (tags stripped, entities unescaped)
+    and measures it in UTF-16 units, so emoji cost 2. Measuring raw HTML — as
+    this code used to — wildly overcounts and silently drops the description.
+    """
+    txt = re.sub(r"<[^>]+>", "", html_text)
+    txt = (txt.replace("&lt;", "<").replace("&gt;", ">")
+              .replace("&quot;", '"').replace("&#39;", "'").replace("&amp;", "&"))
+    return len(txt.encode("utf-16-le")) // 2
+
+
+def _truncate_visible(text: str, max_units: int) -> str:
+    """Trim raw (unescaped) text so its UTF-16 length fits `max_units`."""
+    if max_units <= 1:
+        return ""
+    if len(text.encode("utf-16-le")) // 2 <= max_units:
+        return text
+    lo, hi, best = 0, len(text), ""
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cut = text[:mid]
+        if len(cut.encode("utf-16-le")) // 2 <= max_units - 1:
+            best, lo = cut, mid + 1
+        else:
+            hi = mid - 1
+    # Prefer a clean break at a newline or space
+    for sep in ("\n", " "):
+        idx = best.rfind(sep)
+        if idx > len(best) * 0.6:
+            best = best[:idx]
+            break
+    return best.rstrip() + "\u2026"
 
 
 def build_post_caption(meta: Dict, url: str = "", extra: str = "") -> str:
     """Build a Telegram HTML caption for an Instagram post.
 
-    The description goes inside an **expandable blockquote**
-    (<blockquote expandable>) so long captions collapse behind a
-    "Show more" tap instead of flooding the chat.
+    The description sits inside an **expandable blockquote**
+    (<blockquote expandable>), which Telegram collapses behind a "Show more"
+    tap — ideal for long reel descriptions.
+
+    Budgeting is done on *visible* UTF-16 length (what Telegram counts), not on
+    raw HTML length, so markup and escaped characters no longer eat the budget.
     """
     meta = meta or {}
-    parts: List[str] = []
 
     title = (meta.get("title") or "").strip()
     username = (meta.get("username") or "").strip()
     full_name = (meta.get("full_name") or "").strip()
     caption = (meta.get("caption") or "").strip()
 
-    # ── Header: title if present, else the author ──
-    if title and title.lower() != caption.lower()[: len(title)].lower():
-        parts.append(f"<b>{_esc(title)}</b>")
+    parts: List[str] = []
+
+    # ── Header ──
+    if title and not caption.lower().startswith(title.lower()[:40]):
+        parts.append(f"<b>{_esc(to_bold_font(title))}</b>")
 
     if username:
-        who = f"<b>{_esc(full_name)}</b> " if full_name and full_name != username else ""
-        parts.append(f"👤 {who}<a href=\"https://www.instagram.com/{_esc(username)}/\">@{_esc(username)}</a>")
+        who = f"<b>{_esc(full_name)}</b>\n" if full_name and full_name != username else ""
+        parts.append(
+            f"{who}\U0001F464 <a href=\"https://www.instagram.com/{_esc(username)}/\">"
+            f"<b>@{_esc(username)}</b></a>"
+        )
     elif full_name:
-        parts.append(f"👤 <b>{_esc(full_name)}</b>")
+        parts.append(f"\U0001F464 <b>{_esc(full_name)}</b>")
 
-    # ── Stats ──
     stats = []
     if meta.get("likes"):
-        stats.append(f"❤️ {int(meta['likes']):,}")
+        stats.append(f"\u2764\uFE0F <b>{int(meta['likes']):,}</b>")
     if meta.get("views"):
-        stats.append(f"👁 {int(meta['views']):,}")
+        stats.append(f"\U0001F441 <b>{int(meta['views']):,}</b>")
     if stats:
-        parts.append("  ".join(stats))
+        parts.append("  \u2022  ".join(stats))
 
     header = "\n".join(p for p in parts if p)
 
-    # ── Description in an expandable quote ──
-    body = ""
-    if caption:
-        # Reserve room for header/footer so the total stays under the limit
-        budget = TG_CAPTION_LIMIT - len(header) - len(extra) - 120
-        text = caption
-        if budget > 80 and len(text) > budget:
-            text = text[: budget - 1].rsplit(" ", 1)[0].rstrip() + "…"
-        if budget > 80:
-            body = f"<blockquote expandable>{_esc(text)}</blockquote>"
-
     footer = ""
     if url:
-        footer = f'<a href="{_esc(url)}">🔗 Open on Instagram</a>'
+        footer = f'<a href="{_esc(url)}">\U0001F517 <b>Open on Instagram</b></a>'
 
-    out = "\n\n".join(p for p in (header, body, extra.strip(), footer) if p)
-    out = out.strip()
+    extra = (extra or "").strip()
 
-    # Absolute safety net — never exceed Telegram's limit
-    if len(out) > TG_CAPTION_LIMIT:
-        out = "\n\n".join(p for p in (header, extra.strip(), footer) if p)[:TG_CAPTION_LIMIT]
+    # ── Budget the description against what Telegram really counts ──
+    fixed = [p for p in (header, extra, footer) if p]
+    # separators: "\n\n" between each block, plus the description block
+    sep_cost = 2 * (len(fixed) + (1 if caption else 0))
+    used = sum(_visible_len(p) for p in fixed) + sep_cost
+    budget = TG_CAPTION_LIMIT - used - 2   # small safety margin
+
+    body = ""
+    if caption and budget >= 20:
+        text = _truncate_visible(caption, budget)
+        if text:
+            body = f"<blockquote expandable>{_esc(text)}</blockquote>"
+
+    out = "\n\n".join(p for p in (header, body, extra, footer) if p).strip()
+
+    # Safety net — drop blocks only if we somehow still overflow
+    if _visible_len(out) > TG_CAPTION_LIMIT:
+        out = "\n\n".join(p for p in (header, body, footer) if p).strip()
+    if _visible_len(out) > TG_CAPTION_LIMIT:
+        out = "\n\n".join(p for p in (header, footer) if p).strip()
+    return out
+
+
+def caption_overflowed(meta: Dict, url: str = "", extra: str = "") -> bool:
+    """True if the description had to be trimmed to fit the caption."""
+    caption = ((meta or {}).get("caption") or "").strip()
+    if not caption:
+        return False
+    built = build_post_caption(meta, url, extra)
+    if "<blockquote" not in built:
+        return True
+    return "\u2026</blockquote>" in built
+
+
+def build_description_messages(meta: Dict, url: str = "") -> List[str]:
+    """Full description split into <=4096-char expandable-quote messages.
+
+    Used when a reel's description is too long for the 1024-char caption:
+    the media keeps a trimmed caption and the complete text follows in one
+    or more separate messages, still collapsed behind "Show more".
+    """
+    caption = ((meta or {}).get("caption") or "").strip()
+    if not caption:
+        return []
+
+    header = "\U0001F4DD <b>Full Description</b>"
+    # Room for the wrapper tags, header and a safety margin
+    chunk_budget = TG_MESSAGE_LIMIT - _visible_len(header) - 40
+
+    def _fit(text: str, budget: int) -> int:
+        """Largest prefix length whose UTF-16 size fits `budget`."""
+        if len(text.encode("utf-16-le")) // 2 <= budget:
+            return len(text)
+        lo, hi, best = 0, len(text), 0
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if len(text[:mid].encode("utf-16-le")) // 2 <= budget:
+                best, lo = mid, mid + 1
+            else:
+                hi = mid - 1
+        return best
+
+    chunks: List[str] = []
+    remaining = caption
+    while remaining:
+        cut = _fit(remaining, chunk_budget)
+        if cut >= len(remaining):
+            chunks.append(remaining)
+            break
+        # Break on a newline or space so words stay intact, but slice the
+        # ORIGINAL string at that index so no character is ever dropped.
+        window = remaining[:cut]
+        brk = max(window.rfind("\n"), window.rfind(" "))
+        if brk < cut * 0.6:
+            brk = cut
+        chunks.append(remaining[:brk].rstrip())
+        remaining = remaining[brk:].lstrip()
+        if not chunks[-1]:
+            chunks.pop()
+
+    out: List[str] = []
+    for i, chunk in enumerate(chunks):
+        head = header if i == 0 else f"\U0001F4DD <b>Full Description ({i + 1}/{len(chunks)})</b>"
+        out.append(f"{head}\n<blockquote expandable>{_esc(chunk)}</blockquote>")
     return out
 
 
