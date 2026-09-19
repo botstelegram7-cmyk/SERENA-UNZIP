@@ -147,7 +147,9 @@ FILEHOST_DOMAINS = [
     "gofile.io", "1fichier.com", "krakenfiles.com", "bayfiles.com",
     "workupload.com", "send.cm", "dropbox.com", "we.tl", "wetransfer.com",
     "terabox.com", "1024terabox.com", "teraboxapp.com", "4funbox.com",
-    "mirrobox.com", "nephobox.com",
+    "mirrobox.com", "nephobox.com", "terabox.app", "1024tera.com",
+    "teraboxlink.com", "momerybox.com", "tibibox.com", "freeterabox.com",
+    "terasharelink.com", "terafileshare.com", "teraboxshare.com",
 ]
 
 def _host_of(url: str) -> str:

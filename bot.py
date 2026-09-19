@@ -253,11 +253,21 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.5.1"
-BOT_CODENAME = "Drive Folders"
+BOT_VERSION  = "v2.6.0"
+BOT_CODENAME = "TeraBox"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.6.0": [
+        "📦 <b>TeraBox download support</b> — yt-dlp me TeraBox ka extractor hai hi nahi, isliye native resolver banaya",
+        "🔗 Saare TeraBox mirrors: terabox.com, 1024terabox, teraboxapp, 4funbox, terasharelink, terafileshare aur baaki",
+        "📂 Folder shares recursive walk hote hain, saari files milti hain",
+        "⚡ Naya <code>/terabox</code> command (alias <code>/tb</code>) — ya seedha link paste karo",
+        "🍪 <code>TERABOX_COOKIE</code> env var support (ndus cookie)",
+        "🩺 <code>/tbtest</code> — mirrors ka live status dekho",
+        "💬 errno 140 ab sahi samjhaya jata hai: link sahi hai, IP block hai — cookie daalo",
+        "💾 Har file upload ke baad disk se hat jati hai (Render 512MB safe)",
+    ],
     "v2.5.1": [
         "📂 <b>Google Drive folder links ab kaam karte hain</b> — pehle sirf single file support thi, folder seedha fail hota tha",
         "📱 Mobile ke nested folder links (<code>/drive/mobile/folders/a/b/c</code>) se sahi folder pick hota hai",
@@ -863,6 +873,69 @@ async def insta_cmd(client, message):
         return
     await get_or_create_user(uid)
     await _start_instagram_flow(client, message, url)
+
+
+@app.on_message(filters.command(["terabox", "tb"]))
+async def terabox_cmd(client, message):
+    """Download a TeraBox share link."""
+    if not message.from_user: return
+    uid = message.from_user.id
+    if await is_banned(uid): return
+    if not await check_force_sub(client, message): return
+    from utils.terabox import TeraboxError, has_cookie, is_terabox_url
+
+    args = message.command[1:]
+    if not args:
+        await message.reply_text(
+            "📦 <b>TeraBox Downloader</b>\n\n"
+            "Usage: <code>/terabox &lt;link&gt;</code>\n"
+            "Ya seedha link paste kar do — bot khud pehchan lega.\n\n"
+            f"🍪 Cookie: {'✅ set' if has_cookie() else '❌ not set'}\n"
+            "<i>Cookie ke bina TeraBox server IPs ko block karta hai.</i>")
+        return
+
+    url = args[0].strip()
+    if not is_terabox_url(url):
+        await message.reply_text("❌ Ye TeraBox ka link nahi lag raha."); return
+    if not await check_rate_limit(uid, message): return
+    await get_or_create_user(uid)
+
+    temp_root = Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
+    temp_root.mkdir(parents=True, exist_ok=True)
+    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
+
+    status = await message.reply_text("📦 TeraBox link process ho raha hai…")
+    try:
+        ok, failed = await _handle_terabox_link(
+            client, uid, message.from_user, url, temp_root,
+            message.chat.id, message.id, status)
+        if ok:
+            try: await status.delete()
+            except Exception: pass
+            if failed:
+                await message.reply_text(
+                    f"✅ {ok} file bheji, ⚠️ {failed} fail hui.")
+        elif not failed:
+            await _safe_edit(status, "📭 Koi file nahi mili.")
+        else:
+            await _safe_edit(status, f"❌ {failed} file download nahi ho payi.")
+    except TeraboxError as e:
+        await _safe_edit(status, str(e))
+    except Exception as e:
+        await _safe_edit(status, f"❌ TeraBox failed:\n<code>{str(e)[:250]}</code>")
+
+
+@app.on_message(filters.command(["tbtest", "tbdiag"]))
+async def tbtest_cmd(client, message):
+    """Owner: probe TeraBox mirrors."""
+    if not message.from_user or not is_owner(message.from_user.id): return
+    from utils.terabox import diagnose
+    args = message.command[1:]
+    st = await message.reply_text("🔬 TeraBox mirrors test kar raha hoon…")
+    try:
+        await _safe_edit(st, await diagnose(args[0] if args else ""))
+    except Exception as e:
+        await _safe_edit(st, f"❌ <code>{str(e)[:250]}</code>")
 
 
 @app.on_message(filters.command(["igtest", "igdiag", "diagnose"]))
@@ -2181,6 +2254,16 @@ async def process_links_message(client, message, content):
         if message.chat and message.chat.type not in (enums.ChatType.PRIVATE,):
             return
         await _safe_reply(message, "No valid URLs found."); return
+    # ── TeraBox links: handle directly (no yt-dlp extractor exists) ──
+    from utils.terabox import is_terabox_url as _is_tb
+    tb_links = [u for u in links if _is_tb(u)]
+    if tb_links:
+        for u in tb_links[:3]:
+            await _start_terabox_flow(client, message, u)
+        links = [u for u in links if u not in tb_links]
+        if not links:
+            return
+
     # ── Instagram links: handle directly instead of the generic link menu ──
     insta = [u for u in links if _is_instagram_url(u)]
     if insta:
@@ -4085,6 +4168,110 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
     return ok, failed
 
 
+async def _start_terabox_flow(client, message, url):
+    """Entry point for a pasted TeraBox link."""
+    from utils.terabox import TeraboxError
+
+    uid = message.from_user.id
+    if not await check_rate_limit(uid, message):
+        return
+    await get_or_create_user(uid)
+
+    temp_root = Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
+    temp_root.mkdir(parents=True, exist_ok=True)
+    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
+
+    status = await message.reply_text("📦 TeraBox link mila — check kar raha hoon…")
+    try:
+        ok, failed = await _handle_terabox_link(
+            client, uid, message.from_user, url, temp_root,
+            message.chat.id, message.id, status)
+        if ok:
+            try: await status.delete()
+            except Exception: pass
+            if failed:
+                await message.reply_text(
+                    f"✅ {ok} file bheji, ⚠️ {failed} fail hui.")
+        elif not failed:
+            await _safe_edit(status, "📭 Koi file nahi mili.")
+        else:
+            await _safe_edit(status, f"❌ {failed} file download nahi ho payi.")
+    except TeraboxError as e:
+        await _safe_edit(status, str(e))
+    except Exception as e:
+        await _safe_edit(status, f"❌ TeraBox failed:\n<code>{str(e)[:250]}</code>")
+
+
+async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
+                               reply_to, status):
+    """Resolve a TeraBox share and upload its files. Returns (ok, failed).
+
+    yt-dlp has no TeraBox extractor, so this uses the native resolver in
+    utils/terabox.py.
+    """
+    from utils.terabox import (TeraboxError, download_file, human_size,
+                               list_files)
+
+    await _safe_edit(status, "📦 TeraBox share check kar raha hoon…")
+    files = await list_files(url)          # raises TeraboxError with guidance
+
+    total_size = sum(f.get("size") or 0 for f in files)
+    await _safe_edit(
+        status,
+        f"📦 <b>{len(files)} file{'s' if len(files) != 1 else ''}</b> mili "
+        f"({human_size(total_size)})\nDownload shuru…")
+
+    dest_dir = Path(temp_root)/f"terabox_{uuid.uuid4().hex[:8]}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    cap_mb = Config.YTDL_MAX_SIZE_MB
+    ok = failed = skipped = 0
+    for i, entry in enumerate(files, 1):
+        if user_cancelled.get(uid):
+            break
+        name = entry.get("name") or "file"
+        size = entry.get("size") or 0
+        if cap_mb and size > cap_mb * 1024 * 1024:
+            skipped += 1
+            await client.send_message(
+                chat_id,
+                f"⏭ <b>{name}</b> skip kiya — {human_size(size)} "
+                f"(limit {cap_mb} MB).",
+                reply_to_message_id=reply_to)
+            continue
+
+        await _safe_edit(
+            status,
+            f"⬇️ <b>{i}/{len(files)}</b> — {name[:45]}\n"
+            f"📦 {human_size(size)}")
+        try:
+            fp = await download_file(entry, str(dest_dir))
+        except Exception:
+            fp = None
+        if not fp:
+            failed += 1
+            continue
+        if await _upload_one_file(client, uid, fp, chat_id, reply_to, status,
+                                  label=f" {i}/{len(files)}"):
+            ok += 1
+        else:
+            failed += 1
+        try:
+            os.remove(fp)          # free disk as we go — Render has 512 MB
+        except Exception:
+            pass
+        await asyncio.sleep(0.4)
+
+    if skipped and not ok and not failed:
+        raise TeraboxError(
+            f"⏭ Saari files size limit ({cap_mb} MB) se badi thin.")
+    try:
+        await log_output(client, user, None, f"terabox: {url} ({ok} files)")
+    except Exception:
+        pass
+    return ok, failed
+
+
 async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
                                 reply_to, status) -> bool:
     """Download a link with yt-dlp and upload whatever it produces.
@@ -4197,7 +4384,10 @@ async def handle_links_download_all(client, cq, original_msg):
         k=classify_link(u); cats.setdefault(k,[]); cats[k].append(u)
     direct=cats.get("direct",[]); m3u8s=cats.get("m3u8",[])
     gdrives=cats.get("gdrive",[]); unknowns=cats.get("unknown",[])
-    ytdls=cats.get("ytdl",[]) + cats.get("filehost",[])
+    from utils.terabox import is_terabox_url
+    _filehosts = cats.get("filehost",[])
+    teraboxes = [u for u in _filehosts if is_terabox_url(u)]
+    ytdls=cats.get("ytdl",[]) + [u for u in _filehosts if u not in teraboxes]
 
     # Unknown links used to be fetched with a plain GET, which silently
     # saved the HTML page instead of the media. Probe each one and route it
@@ -4214,7 +4404,7 @@ async def handle_links_download_all(client, cq, original_msg):
     ytdls += still_unknown
 
     candidates=direct
-    if not candidates and not m3u8s and not gdrives and not ytdls:
+    if not candidates and not m3u8s and not gdrives and not ytdls and not teraboxes:
         await cq.message.edit_text("Koi supported link nahi mila."); return
     if not cq.from_user: return
     user=cq.from_user; uid=user.id
@@ -4223,7 +4413,8 @@ async def handle_links_download_all(client, cq, original_msg):
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     try: await cq.message.edit_text(
         f"⬇️ Direct: {len(candidates)} | Video sites: {len(ytdls)} | "
-        f"GDrive: {len(gdrives)} | m3u8: {len(m3u8s)}\nDownloading…")
+        f"GDrive: {len(gdrives)} | TeraBox: {len(teraboxes)} | "
+        f"m3u8: {len(m3u8s)}\nDownloading…")
     except Exception: pass
     ok=fail=0; chat_id=cq.message.chat.id; reply_to=cq.message.id
     is_priv=cq.message.chat.type==enums.ChatType.PRIVATE; pinned=False
@@ -4270,6 +4461,26 @@ async def handle_links_download_all(client, cq, original_msg):
             fail+=1
             if st: await _safe_edit(st, f"❌ GDrive failed:\n<code>{str(e)[:200]}</code>")
         await asyncio.sleep(0.4)
+    # ── TeraBox shares (no yt-dlp extractor exists for these) ──
+    for url in teraboxes:
+        if user_cancelled.get(uid): break
+        st=None
+        try:
+            st=await client.send_message(chat_id,f"📦 TeraBox: {url[:50]}…",
+                                         reply_to_message_id=reply_to)
+            sent_n, failed_n = await _handle_terabox_link(
+                client, uid, user, url, temp_root, chat_id, reply_to, st)
+            ok += sent_n; fail += failed_n
+            if sent_n:
+                try: await st.delete()
+                except Exception: pass
+        except Exception as e:
+            fail+=1
+            msg = str(e) if e.__class__.__name__=="TeraboxError" \
+                  else f"❌ TeraBox failed:\n<code>{str(e)[:200]}</code>"
+            if st: await _safe_edit(st, msg)
+        await asyncio.sleep(0.4)
+
     # ── Video-site links (YouTube, TikTok, file hosts, unidentified) ──
     for url in ytdls:
         if user_cancelled.get(uid): break

@@ -213,6 +213,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `API_HASH` | ✅ | Telegram API Hash from [my.telegram.org](https://my.telegram.org) |
 | `BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
+| `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. |
 | `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
 | `FORCE_SUB_CHANNEL` | ⬜ | Channel username users must join |
@@ -371,6 +372,8 @@ Paste any link  — YouTube, TikTok, Twitter/X, Facebook, Spotify, SoundCloud,
 /profile     — Bulk-download a profile's latest posts (alias: /bulk)
 /story       — Download a user's active stories
 /version     — Build, changelog and live health (alias: /changelog)
+/terabox     — Download a TeraBox share link (alias: /tb)
+/tbtest      — Owner: probe TeraBox mirrors
 /clearcache  — Owner: drop the Instagram file_id cache
 /ytdl        — Download from Twitter/TikTok/Facebook etc.
 /compress    — Compress video (reply to video)

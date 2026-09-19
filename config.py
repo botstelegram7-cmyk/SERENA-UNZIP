@@ -67,6 +67,11 @@ class Config:
 
     # ── yt-dlp / downloader ───────────────────────────────────────
     INSTAGRAM_COOKIES  = os.getenv("INSTAGRAM_COOKIES", "")   # Full Netscape format
+
+    # TeraBox: the `ndus` cookie from a logged-in session. Anonymous
+    # datacenter IPs are walled (errno 140), so this is what makes
+    # TeraBox downloads work reliably from a server.
+    TERABOX_COOKIE     = os.getenv("TERABOX_COOKIE", "")
     YTDL_MAX_SIZE_MB   = int(os.getenv("YTDL_MAX_SIZE_MB", "2000"))
     YTDL_TIMEOUT_SEC   = int(os.getenv("YTDL_TIMEOUT_SEC", "600"))   # 10 min max per download
     COOKIE_FILE_PATH   = "/tmp/yt_cookies.txt"
