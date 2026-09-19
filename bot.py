@@ -250,11 +250,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.3.1"
-BOT_CODENAME = "Rate-Limit ETA"
+BOT_VERSION  = "v2.3.2"
+BOT_CODENAME = "Cooldown Fix"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.3.2": [
+        "🐞 <b>Fix:</b> ek hi attempt ke andar ke saare 429 alag-alag gine ja rahe the — cooldown bewajah 10 min/1 hour tak chala jata tha",
+        "🔄 Cooldown khatam hone par download <b>apne aap</b> retry hota hai (max 3 baar)",
+        "🍪 Naye cookies daalte hi purana cooldown clear ho jata hai",
+        "🩺 <code>/igtest</code> — har Instagram endpoint ka actual response dekho",
+        "🟢 <code>/resetlimit</code> — cooldown zabardasti clear karo",
+        "🔇 Background cookie-check ab cooldown nahi badhata",
+    ],
     "v2.3.1": [
         "⏱ Rate-limit ab exact ETA deta hai — kitne second baad retry karna hai",
         "🔁 Live countdown message jo apne aap update hota hai",
@@ -816,6 +824,31 @@ async def insta_cmd(client, message):
         return
     await get_or_create_user(uid)
     await _start_instagram_flow(client, message, url)
+
+
+@app.on_message(filters.command(["igtest", "igdiag", "diagnose"]))
+async def igtest_cmd(client, message):
+    """Owner: probe Instagram endpoints and show what they actually return."""
+    if not message.from_user or not is_owner(message.from_user.id): return
+    from utils.instagram import diagnose
+    status = await message.reply_text("🔬 Testing Instagram endpoints…")
+    try:
+        await _safe_edit(status, await diagnose())
+    except Exception as e:
+        await _safe_edit(status, f"❌ Diagnostics failed:\n<code>{str(e)[:300]}</code>")
+
+
+@app.on_message(filters.command(["resetlimit", "clearlimit"]))
+async def resetlimit_cmd(client, message):
+    """Owner: force-clear the rate-limit cooldown."""
+    if not message.from_user or not is_owner(message.from_user.id): return
+    from utils.instagram import clear_rate_limit, rate_limit_remaining
+    was = rate_limit_remaining()
+    clear_rate_limit()
+    await message.reply_text(
+        f"🟢 Cooldown cleared (tha: <b>{was}s</b>).\n\n"
+        "<i>Dhyan rahe: agar Instagram abhi bhi block kar raha hai to "
+        "agli request par cooldown wapas lag jayega.</i>")
 
 
 @app.on_message(filters.command(["clearcache", "cacheclear"]))
@@ -3509,37 +3542,68 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
     return (total, sent_ids) if return_messages else total
 
 
-async def _show_rate_limit_countdown(status, remaining: int):
-    """Edit the status message into a live countdown while cooling down.
+async def _show_rate_limit_countdown(status, remaining: int,
+                                     client=None, info=None, uid=None,
+                                     attempt: int = 1):
+    """Live countdown during a cooldown, then retry the download itself.
 
-    Instagram sends no Retry-After header, so we show our own tracked ETA
-    and tick it down instead of leaving the user guessing.
+    Instagram sends no Retry-After header, so we tick down our own tracked
+    ETA. When it expires we retry automatically rather than making the user
+    re-send the link (which previously just triggered a fresh cooldown).
     """
-    from utils.instagram import _fmt_duration
+    from utils.instagram import _fmt_duration, rate_limit_remaining
 
     remaining = max(0, int(remaining))
-    # Update roughly every 10s early on, slower for long waits (avoids
-    # hitting Telegram's edit rate limits on a 1-hour cooldown).
-    step = 10 if remaining <= 300 else 30
 
     while remaining > 0:
+        # Long waits update less often to stay clear of Telegram edit limits
+        step = 10 if remaining <= 300 else 30
         try:
             await _safe_edit(
                 status,
                 "⏳ <b>Instagram rate-limit</b>\n\n"
-                f"⏱ Try again in <b>{_fmt_duration(remaining)}</b>  "
+                f"⏱ Auto-retry in <b>{_fmt_duration(remaining)}</b>  "
                 f"(<code>{remaining}s</code>)\n\n"
-                "<i>Ye message apne aap update hota rahega. "
-                "Cooldown khatam hone par link dobara bhejo.</i>")
+                "<i>Kuch karne ki zarurat nahi — time poora hote hi "
+                "download apne aap shuru ho jayega.</i>")
         except Exception:
             return
         await asyncio.sleep(min(step, remaining))
-        remaining -= step
+        # Re-read the real cooldown: it may have been extended or cleared
+        # (e.g. new cookies) while we were sleeping.
+        remaining = rate_limit_remaining()
 
-    await _safe_edit(
-        status,
-        "✅ <b>Rate-limit khatam!</b>\n\n"
-        "Ab link dobara bhejo — download chalu ho jayega.")
+    if not (client and info and uid):
+        await _safe_edit(
+            status,
+            "✅ <b>Rate-limit khatam!</b>\n\n"
+            "Ab link dobara bhejo — download chalu ho jayega.")
+        return
+
+    # Bounded retries: without this a permanently blocked IP would spawn
+    # countdown → retry → 429 → countdown … forever.
+    MAX_AUTO_RETRIES = 3
+    if attempt > MAX_AUTO_RETRIES:
+        await _safe_edit(
+            status,
+            "❌ <b>Instagram abhi bhi block kar raha hai.</b>\n\n"
+            f"{MAX_AUTO_RETRIES} auto-retry ke baad bhi rate-limit hai — "
+            "matlab server ka IP block hai, cookies ka issue nahi.\n\n"
+            "<i>Owner: <code>/igtest</code> chala kar confirm karo.</i>")
+        return
+
+    await _safe_edit(status,
+                     f"🔄 <b>Rate-limit khatam</b> — retry {attempt}/{MAX_AUTO_RETRIES}…")
+    try:
+        ok = await _deliver_instagram(client, info, uid, status=status,
+                                      retry_attempt=attempt)
+        if ok:
+            try:
+                await status.delete()
+            except Exception:
+                pass
+    except Exception as e:
+        await _safe_edit(status, f"❌ Auto-retry failed:\n<code>{str(e)[:200]}</code>")
 
 
 async def _send_cached_instagram(client, info, cached) -> bool:
@@ -3599,7 +3663,8 @@ async def _send_cached_instagram(client, info, cached) -> bool:
         return False
 
 
-async def _deliver_instagram(client, info, uid, status=None, quiet=False):
+async def _deliver_instagram(client, info, uid, status=None, quiet=False,
+                             retry_attempt: int = 0):
     """Download one Instagram link and deliver it. Returns True on success.
 
     Shared by the single-link flow and the /profile bulk downloader.
@@ -3626,9 +3691,10 @@ async def _deliver_instagram(client, info, uid, status=None, quiet=False):
     try:
         files, meta = await download_post(url, str(temp_root))
     except RateLimited as e:
-        # Show a live countdown so the user knows exactly when to retry
+        # Countdown, then retry automatically once the cooldown expires
         if not quiet and status:
-            asyncio.create_task(_show_rate_limit_countdown(status, e.remaining))
+            asyncio.create_task(_show_rate_limit_countdown(
+                status, e.remaining, client, info, uid, attempt=retry_attempt + 1))
         return False
     except InstagramError as e:
         if not quiet and status:

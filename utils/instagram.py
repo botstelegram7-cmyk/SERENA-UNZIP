@@ -170,8 +170,26 @@ def has_cookies() -> bool:
     return bool((Config.INSTAGRAM_COOKIES or "").strip())
 
 
+_LAST_COOKIE_FINGERPRINT: Dict[str, str] = {"v": ""}
+
+
+def _note_cookie_change():
+    """Reset the cooldown when the cookies actually change.
+
+    A fresh session is a different identity to Instagram, so a cooldown
+    earned by the previous cookies should not keep blocking the user.
+    """
+    raw = (Config.INSTAGRAM_COOKIES or "").strip()
+    fp = str(hash(raw))
+    if _LAST_COOKIE_FINGERPRINT["v"] and _LAST_COOKIE_FINGERPRINT["v"] != fp:
+        clear_rate_limit()
+        _COOKIE_HEALTH.update({"ok": None, "detail": "", "ts": 0.0})
+    _LAST_COOKIE_FINGERPRINT["v"] = fp
+
+
 def cookies_as_dict() -> Dict[str, str]:
     """Parse Netscape-format OR 'k=v; k=v' cookie string into a dict."""
+    _note_cookie_change()      # fresh cookies clear a stale cooldown
     raw = (Config.INSTAGRAM_COOKIES or "").strip()
     if not raw:
         return {}
@@ -1083,12 +1101,31 @@ def _fmt_duration(seconds: float) -> str:
     return f"{hours} hour{'s' if hours != 1 else ''}" + (f" {mins} min" if mins else "")
 
 
+# One download attempt fans out across several endpoints (4 GraphQL doc_ids,
+# API v1, embed). Each can answer 429, but they are ONE incident — counting
+# them separately escalated a single attempt straight to the hour-long step.
+_INCIDENT_WINDOW = 90
+
+
 def note_rate_limit() -> float:
-    """Record a 429 and return the UNIX timestamp when retrying is allowed."""
+    """Record a 429 and return the UNIX timestamp when retrying is allowed.
+
+    429s arriving within _INCIDENT_WINDOW of each other are treated as a
+    single incident, so the backoff only escalates when the *user* retries
+    and is limited again — not once per internal sub-request.
+    """
     now = time.time()
-    # Reset the escalation if the last hit was long ago (limit has cooled off)
-    if now - float(_RATE_LIMIT.get("last_hit") or 0) > 7200:
+    last = float(_RATE_LIMIT.get("last_hit") or 0)
+
+    # Same incident → just refresh the timestamp, keep the existing ETA.
+    if last and now - last <= _INCIDENT_WINDOW:
+        _RATE_LIMIT["last_hit"] = now
+        return float(_RATE_LIMIT.get("until") or 0)
+
+    # Reset the escalation if the limit has been quiet for a while.
+    if now - last > 7200:
         _RATE_LIMIT["hits"] = 0.0
+
     idx = min(int(_RATE_LIMIT.get("hits") or 0), len(_RATE_BACKOFF) - 1)
     wait = _RATE_BACKOFF[idx]
     _RATE_LIMIT["hits"] = float(idx + 1)
@@ -1348,6 +1385,8 @@ async def validate_cookies(force: bool = False) -> Tuple[bool, str]:
                     except Exception:
                         data = {}
                     if (data.get("data") or {}).get("user"):
+                        # Instagram is answering us again — any cooldown is over.
+                        clear_rate_limit()
                         ok, detail = True, "Cookies are valid and logged in."
                     else:
                         ok, detail = False, "Instagram returned an empty profile — session likely expired."
@@ -1355,7 +1394,9 @@ async def validate_cookies(force: bool = False) -> Tuple[bool, str]:
                     ok, detail = False, f"Instagram rejected the session (HTTP {r.status}) — cookies expired."
                 elif r.status == 429:
                     # Rate limiting is not a cookie problem; do not cry wolf.
-                    note_rate_limit()
+                    # Deliberately NOT calling note_rate_limit(): this is our
+                    # own background probe, so it must never extend the
+                    # cooldown the user is waiting on.
                     ok, detail = True, "Rate-limited (HTTP 429) — cookies presumed valid."
                 else:
                     ok, detail = False, f"Unexpected response from Instagram (HTTP {r.status})."
@@ -1364,6 +1405,75 @@ async def validate_cookies(force: bool = False) -> Tuple[bool, str]:
 
     _COOKIE_HEALTH.update({"ok": ok, "detail": detail, "ts": now})
     return ok, detail
+
+
+async def diagnose() -> str:
+    """Probe each Instagram endpoint and report exactly what it returns.
+
+    Used by /igtest so a failing deployment can be diagnosed from Telegram
+    instead of guessing.
+    """
+    jar = cookies_as_dict()
+    out = ["🔬 <b>Instagram Diagnostics</b>", ""]
+
+    # 1. Cookie presence and shape
+    if not jar:
+        out.append("🍪 Cookies: ❌ <b>none configured</b>")
+    else:
+        keys = ", ".join(sorted(jar.keys())[:8])
+        out.append(f"🍪 Cookies: ✅ {len(jar)} keys")
+        out.append(f"   <code>{keys}</code>")
+        for need in ("sessionid", "csrftoken", "ds_user_id"):
+            out.append(f"   {'✅' if jar.get(need) else '❌'} {need}")
+        sid = jar.get("sessionid", "")
+        if sid and "%3A" not in sid and ":" not in sid:
+            out.append("   ⚠️ <i>sessionid looks malformed</i>")
+
+    # 2. Current cooldown
+    rl = rate_limit_remaining()
+    out += ["", f"⏳ Cooldown: {'<b>' + _fmt_duration(rl) + '</b> left' if rl else '✅ clear'}"]
+
+    # 3. Live endpoint probes
+    out += ["", "<b>Endpoint checks</b>"]
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+        if jar:
+            session.cookie_jar.update_cookies(
+                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+        headers = _base_headers()
+        if jar.get("csrftoken"):
+            headers["X-CSRFToken"] = jar["csrftoken"]
+
+        probes = [
+            ("web_profile_info",
+             "https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram"),
+            ("embed page",
+             "https://www.instagram.com/p/C1234567890/embed/captioned/"),
+        ]
+        for name, url in probes:
+            try:
+                async with session.get(
+                    url, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    body = await r.read()
+                    icon = {200: "✅", 401: "🔒", 403: "🔒",
+                            429: "⏳", 404: "❓"}.get(r.status, "⚠️")
+                    note = ""
+                    if r.status == 429:
+                        note = " — rate-limited (IP blocked)"
+                    elif r.status in (401, 403):
+                        note = " — login required / cookies rejected"
+                    elif r.status == 200 and len(body) < 100:
+                        note = " — empty response"
+                    out.append(f"{icon} {name}: <b>HTTP {r.status}</b>"
+                               f" ({len(body)} bytes){note}")
+            except Exception as e:
+                out.append(f"⚠️ {name}: <code>{str(e)[:60]}</code>")
+
+    out += ["", "<i>429 on every endpoint = Instagram is blocking this "
+            "server's IP. Cookies cannot fix that; a proxy or a different "
+            "host is needed.</i>"]
+    return "\n".join(out)
 
 
 def cookie_status_line() -> str:
