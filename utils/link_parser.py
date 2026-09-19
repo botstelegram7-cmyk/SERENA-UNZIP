@@ -9,6 +9,16 @@ URL_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Links pasted without a scheme, e.g. "instagram.com/reel/ABC/" or
+# "www.youtube.com/watch?v=..". People copy these from mobile share sheets
+# all the time, so treat them as real URLs.
+BARE_URL_REGEX = re.compile(
+    r"(?<![\w@/.])((?:www\.)?[a-z0-9][a-z0-9\-]*(?:\.[a-z0-9\-]+)*"
+    r"\.(?:com|net|org|tv|me|co|io|live|app|be|ly|in|to|cc|xyz|watch)"
+    r"(?:/[^\s]*)?)",
+    re.IGNORECASE,
+)
+
 VIDEO_EXT = {
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".ts"
 }
@@ -26,7 +36,40 @@ FILE_EXT = VIDEO_EXT | ARCHIVE_EXT | AUDIO_EXT | APK_EXT
 
 
 def find_links_in_text(text: str) -> List[str]:
-    return [m.group(1).strip().strip(".,)") for m in URL_REGEX.finditer(text)]
+    """Extract URLs from text, including ones pasted without http(s)://."""
+    text = text or ""
+    out: List[str] = []
+    seen = set()
+
+    def _add(url: str):
+        url = url.strip().strip(".,)\u201d\"'<>")
+        if not url:
+            return
+        key = url.lower().rstrip("/")
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(url)
+
+    spans = []
+    for m in URL_REGEX.finditer(text):
+        spans.append(m.span())
+        _add(m.group(1))
+
+    # Bare domains — skip anything already inside a full URL match
+    for m in BARE_URL_REGEX.finditer(text):
+        if any(s <= m.start() < e for s, e in spans):
+            continue
+        cand = m.group(1)
+        if "." not in cand.split("/")[0]:
+            continue
+        key = ("https://" + cand).lower().rstrip("/")
+        if key in seen or cand.lower().rstrip("/") in seen:
+            continue
+        seen.add(key)
+        out.append("https://" + cand)
+
+    return out
 
 
 

@@ -1893,26 +1893,26 @@ async def on_text(client, message):
             )
             USER_TASKS[uid] = task
         return
+    # ── Group / channel behaviour ──
+    # Links are always actioned (that is why people add the bot), but plain
+    # chatter is ignored unless the bot is mentioned or replied to.
+    if message.chat and message.chat.type != enums.ChatType.PRIVATE:
+        has_link = bool(find_links_in_text(txt))
+        if not has_link:
+            try:
+                me = await client.get_me()
+            except Exception:
+                return
+            mentioned = bool(me.username and ("@" + me.username.lower()) in txt.lower())
+            if (message.reply_to_message and message.reply_to_message.from_user
+                    and message.reply_to_message.from_user.id == me.id):
+                mentioned = True
+            if not mentioned:
+                return
+
     if not await check_force_sub(client,message): return
     await get_or_create_user(uid)
     await process_links_message(client,message,txt)
-
-
-@app.on_message((filters.text|filters.caption) & _non_cmd & (filters.group|filters.channel))
-async def group_text_handler(client, message):
-    if not message.from_user: return
-    txt=(message.text or message.caption or "") or ""
-    if txt.lstrip().startswith("/"): return
-    me=await client.get_me(); mentioned=False
-    if me.username and ("@"+me.username.lower()) in txt.lower(): mentioned=True
-    if (message.reply_to_message and message.reply_to_message.from_user and
-            message.reply_to_message.from_user.id==me.id): mentioned=True
-    if not mentioned: return
-    uid=message.from_user.id
-    if await is_banned(uid): return
-    if not await check_force_sub(client,message): return
-    await get_or_create_user(uid)
-    await process_links_message(client,message,txt.strip())
 
 
 async def _send_mystats(client, user, dest):
