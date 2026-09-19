@@ -652,6 +652,19 @@ async def ytdl_cmd(client, message):
     except: pass
 
 
+@app.on_message(filters.command(["version", "ver", "build"]))
+async def version_cmd(client, message):
+    """Show which commit is actually running — makes deploys verifiable."""
+    if not message.from_user: return
+    handlers = sum(len(v) for v in app.dispatcher.groups.values())
+    await message.reply_text(
+        f"\U0001F9E9 <b>Serena Unzip</b>\n\n"
+        f"\U0001F4E6 Build: <code>{BUILD_VERSION}</code>\n"
+        f"\U0001F50C Handlers: <b>{handlers}</b>\n"
+        f"\U0001F36A Instagram cookies: <b>{'set' if Config.INSTAGRAM_COOKIES.strip() else 'NOT set'}</b>\n\n"
+        f"<i>Plain link paste karke bhi download hota hai — command zaroori nahi.</i>")
+
+
 @app.on_message(filters.command(["insta", "ig", "instagram"]))
 async def insta_cmd(client, message):
     """Dedicated Instagram downloader: photos, carousels, reels, stories, highlights."""
@@ -3489,20 +3502,6 @@ async def handle_links_download_all(client, cq, original_msg):
         await client.send_message(chat_id,"✅ All link downloads finished!",reply_to_message_id=reply_to)
 
 # ════════════════════════════════════════════════════════════════════════════
-# MAIN
-# ════════════════════════════════════════════════════════════════════════════
-async def main():
-    asyncio.create_task(cleanup_worker())
-    await app.start()
-    print("✅ Serena Unzip Bot v2 started.")
-    await idle()
-    await app.stop()
-
-if __name__=="__main__":
-    asyncio.run(main())
-
-
-# ════════════════════════════════════════════════════════════════════════════
 # /song — Search & download song by name via YouTube
 # ════════════════════════════════════════════════════════════════════════════
 @app.on_message(filters.command(["song", "music", "audio"]))
@@ -3554,3 +3553,35 @@ async def song_cmd(client, message):
             except: pass
     finally:
         _safe_cleanup(str(temp_root))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ════════════════════════════════════════════════════════════════════════════
+def _build_version() -> str:
+    """Short git commit of the running code — makes deploys verifiable."""
+    import subprocess
+    for cmd in (["git", "rev-parse", "--short", "HEAD"],):
+        try:
+            out = subprocess.run(cmd, cwd=os.path.dirname(os.path.abspath(__file__)),
+                                 capture_output=True, text=True, timeout=5)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip()
+        except Exception:
+            pass
+    return os.getenv("RENDER_GIT_COMMIT", "unknown")[:7] or "unknown"
+
+
+BUILD_VERSION = _build_version()
+
+
+async def main():
+    asyncio.create_task(cleanup_worker())
+    await app.start()
+    handlers = sum(len(v) for v in app.dispatcher.groups.values())
+    print(f"✅ Serena Unzip Bot v2 started. build={BUILD_VERSION} handlers={handlers}")
+    await idle()
+    await app.stop()
+
+if __name__=="__main__":
+    asyncio.run(main())
