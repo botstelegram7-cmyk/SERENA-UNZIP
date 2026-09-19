@@ -253,6 +253,34 @@ Images are fetched straight from Instagram's CDN in parallel, with the highest
 resolution picked from each `*_versions` list. Truncated/placeholder files are
 rejected automatically.
 
+### Image normalisation (fixes `PHOTO_EXT_INVALID`)
+
+Instagram's CDN often serves **WebP or HEIC bytes from a URL ending in `.jpg`**.
+Telegram inspects the real content and rejects such uploads with:
+
+```
+[400 PHOTO_EXT_INVALID] The photo extension is invalid
+```
+
+Every downloaded image is therefore checked by **magic bytes, never by filename**,
+and normalised before upload:
+
+| Situation | Action |
+|-----------|--------|
+| WebP / HEIC bytes | Re-encoded to real JPEG (quality 90) |
+| Wrong extension (PNG named `.jpg`) | Renamed to the correct one |
+| Alpha channel | Flattened to RGB |
+| Over 10 MB | Re-compressed until it fits |
+| `width + height > 10000` px | Downscaled (Lanczos) |
+
+If conversion somehow fails, the file is sent as a **document** instead of a photo,
+and any upload still rejected by Telegram is automatically retried as a document —
+so media is never silently lost.
+
+> `pillow-heif` is included in `requirements.txt` for HEIC support. If it is
+> missing the module degrades gracefully and simply sends those rare files as
+> documents.
+
 **Commands**
 
 ```

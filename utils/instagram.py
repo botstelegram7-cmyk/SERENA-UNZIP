@@ -489,6 +489,127 @@ def _guess_ext(media_url: str, is_video: bool) -> str:
     return ".mp4" if is_video else ".jpg"
 
 
+# ── Real content-type detection ──────────────────────────────────────────────
+# Instagram's CDN happily serves WebP (and sometimes HEIC) bytes from a URL
+# that ends in ".jpg". Telegram then rejects the upload with
+#   [400 PHOTO_EXT_INVALID] The photo extension is invalid
+# so we must look at the actual magic bytes, never the filename.
+
+def sniff_format(path: str) -> Optional[str]:
+    """Return 'jpeg' | 'png' | 'webp' | 'heic' | 'gif' | 'mp4' | None."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(32)
+    except Exception:
+        return None
+    if len(head) < 12:
+        return None
+    if head[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"heic", b"heix", b"hevc", b"heim", b"heis", b"mif1", b"msf1"):
+            return "heic"
+        return "mp4"
+    return None
+
+
+def normalize_image(path: str) -> str:
+    """Make an image safe for Telegram's send_photo.
+
+    Converts WebP/HEIC/anything-odd to real JPEG, fixes wrong extensions,
+    strips alpha, and downscales if it busts Telegram's limits
+    (10 MB, 10000 px total, 20:1 aspect ratio).
+
+    Returns the path to use — may differ from the input.
+    """
+    fmt = sniff_format(path)
+    if fmt in ("mp4", None):
+        return path
+
+    p = Path(path)
+    suffix = p.suffix.lower()
+    correct = {"jpeg": ".jpg", "png": ".png", "webp": ".webp", "gif": ".gif", "heic": ".heic"}[fmt]
+
+    needs_convert = fmt in ("webp", "heic")
+    needs_rename = (not needs_convert) and suffix != correct and not (
+        fmt == "jpeg" and suffix in (".jpg", ".jpeg")
+    )
+
+    # Telegram limits — check before deciding to leave the file alone
+    too_big = False
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            w, h = im.size
+        if w + h > 10000 or max(w, h) / max(1, min(w, h)) > 20:
+            too_big = True
+    except Exception:
+        pass
+    if os.path.getsize(path) > 10 * 1024 * 1024:
+        too_big = True
+
+    if not needs_convert and not needs_rename and not too_big:
+        return path
+
+    if needs_rename and not too_big:
+        target = str(p.with_suffix(correct))
+        try:
+            os.replace(path, target)
+            return target
+        except Exception:
+            return path
+
+    # Re-encode to a clean, Telegram-friendly JPEG.
+    # Write to a scratch file first, then move onto the final ".jpg" name so
+    # the user-visible filename stays tidy even when the source was ".jpg".
+    final = str(p.with_suffix(".jpg"))
+    target = str(p.with_name(p.stem + ".__tg_tmp.jpg"))
+    try:
+        from PIL import Image
+
+        try:
+            from pillow_heif import register_heif_opener  # optional HEIC support
+
+            register_heif_opener()
+        except Exception:
+            pass
+
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            if w + h > 10000:
+                scale = 10000 / (w + h)
+                im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+            quality = 90
+            im.save(target, "JPEG", quality=quality, optimize=True)
+            while os.path.getsize(target) > 10 * 1024 * 1024 and quality > 40:
+                quality -= 10
+                im.save(target, "JPEG", quality=quality, optimize=True)
+    except Exception:
+        try:
+            if os.path.exists(target):
+                os.remove(target)
+        except Exception:
+            pass
+        return path  # conversion failed — caller will fall back to send_document
+
+    try:
+        if os.path.exists(path) and os.path.abspath(path) != os.path.abspath(final):
+            os.remove(path)
+        os.replace(target, final)
+        return final
+    except Exception:
+        return target
+
+
 async def _download_one(
     session: aiohttp.ClientSession, item: Dict, output_dir: str, shortcode: str
 ) -> Optional[str]:
@@ -496,10 +617,12 @@ async def _download_one(
     ext = _guess_ext(media_url, item["is_video"])
     name = f"{shortcode or 'instagram'}_{item['index']:02d}{ext}"
     dest = os.path.join(output_dir, name)
+    # Ask the CDN for JPEG first — avoids WebP whenever the CDN will honour it
     headers = {
         "User-Agent": DESKTOP_UA,
         "Referer": "https://www.instagram.com/",
-        "Accept": "image/avif,image/webp,image/apng,video/*,*/*;q=0.8",
+        "Accept": ("video/*,*/*;q=0.8" if item["is_video"]
+                   else "image/jpeg,image/png;q=0.9,*/*;q=0.5"),
     }
     try:
         async with session.get(
@@ -520,6 +643,15 @@ async def _download_one(
         except Exception:
             pass
         return None
+
+    # Instagram lies about extensions (.jpg URLs serving WebP/HEIC bytes),
+    # which makes Telegram reject the upload with PHOTO_EXT_INVALID.
+    # Normalise now, at the source, so every consumer gets a clean file.
+    if not item["is_video"]:
+        try:
+            dest = await asyncio.to_thread(normalize_image, dest)
+        except Exception:
+            pass
     return dest
 
 
@@ -563,7 +695,16 @@ async def _ytdlp_fallback(url: str, output_dir: str) -> List[str]:
         and p.name not in before
         and p.suffix.lower() in (IMAGE_EXTS | VIDEO_EXTS)
     ]
-    return fresh
+    # yt-dlp can also leave WebP thumbnails behind — normalise those too
+    normalised = []
+    for f in fresh:
+        if Path(f).suffix.lower() in IMAGE_EXTS:
+            try:
+                f = await asyncio.to_thread(normalize_image, f)
+            except Exception:
+                pass
+        normalised.append(f)
+    return normalised
 
 
 def _friendly_error(kind: str) -> str:

@@ -3040,12 +3040,33 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files, status=No
     total = sum(Path(f).stat().st_size for f in files)
     cap = await build_caption(uid, "📸 Instagram")
 
+    from utils.instagram import normalize_image, sniff_format
+
+    # Trust magic bytes, not filenames — IG serves WebP/HEIC from .jpg URLs and
+    # Telegram rejects those with [400 PHOTO_EXT_INVALID].
+    fixed = []
+    for f in files:
+        try:
+            if sniff_format(f) not in ("mp4", None):
+                f = await asyncio.to_thread(normalize_image, f)
+        except Exception:
+            pass
+        fixed.append(f)
+    files = [f for f in fixed if f and Path(f).exists()]
+    if not files:
+        return 0
+
     def _kind(p):
+        fmt = sniff_format(p)
+        if fmt in ("jpeg", "png", "gif"):
+            return "photo"
+        if fmt in ("webp", "heic"):
+            return "doc"      # conversion failed — send as file, never as photo
+        if fmt == "mp4" or is_video_path(Path(p).name):
+            return "video"
         ext = Path(p).suffix.lower()
         if ext in IMAGE_EXT_SET:
             return "photo"
-        if is_video_path(Path(p).name):
-            return "video"
         return "doc"
 
     # ── Album path: 2-10 photos/videos, each under Telegram's 50 MB album cap ──
@@ -3100,9 +3121,25 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files, status=No
                 await client.send_document(chat_id, fpath, caption=caption,
                                            reply_to_message_id=reply_to)
         except Exception as e:
+            # PHOTO_EXT_INVALID / PHOTO_SAVE_FILE_INVALID / IMAGE_PROCESS_FAILED
+            # → Telegram refused it as a photo. Retry as a plain document so the
+            #   user still gets the media instead of an error.
+            err = str(e)
+            if kind == "photo" and any(k in err.upper() for k in
+                    ("PHOTO_EXT_INVALID", "PHOTO_SAVE_FILE_INVALID",
+                     "IMAGE_PROCESS_FAILED", "PHOTO_CROP_SIZE_SMALL",
+                     "MEDIA_EMPTY")):
+                try:
+                    await client.send_document(
+                        chat_id, fpath, caption=caption, force_document=True,
+                        reply_to_message_id=reply_to)
+                    await asyncio.sleep(0.3)
+                    continue
+                except Exception as e2:
+                    err = str(e2)
             try:
                 await client.send_message(
-                    chat_id, f"⚠️ Item {i+1}/{len(files)} bhej nahi paya: <code>{str(e)[:150]}</code>",
+                    chat_id, f"⚠️ Item {i+1}/{len(files)} bhej nahi paya: <code>{err[:150]}</code>",
                     reply_to_message_id=reply_to)
             except Exception:
                 pass

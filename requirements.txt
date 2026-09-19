@@ -19,4 +19,5 @@ uvicorn==0.30.6
 
 yt-dlp
 Pillow>=10.0.0
+pillow-heif>=0.16.0
 mutagen>=1.47.0
