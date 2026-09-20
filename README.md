@@ -517,8 +517,8 @@ cookie alone does not lift it.
 
 | Platform | Status | Workaround |
 | --- | --- | --- |
-| **YouTube** | Partially affected — downloads may hit a bot-verification challenge | Set `YOUTUBE_COOKIES`, or route through `YTDL_PROXY` |
-| **TeraBox** | Usually affected — files list, but the signed download link is withheld | Residential proxy in `TERABOX_PROXY` |
+| **YouTube** | **Not working on hosted addresses.** Downloads are met with a bot-verification challenge. Tested extensively with a valid cookie export; the challenge persists because the block is applied to the address, not the session. | Residential proxy in `YTDL_PROXY` |
+| **TeraBox** | **Not working on hosted addresses.** Shares list correctly, but the signed download link is withheld. A valid `ndus` cookie does not change this. | Residential proxy in `TERABOX_PROXY` |
 | **Instagram** | Reels and posts work via the public embed; profiles and stories need the private API and are refused | Residential proxy |
 | **Google Drive, direct links, m3u8, archives, media tools** | Unaffected | — |
 

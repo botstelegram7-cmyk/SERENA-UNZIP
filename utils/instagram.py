@@ -1420,6 +1420,10 @@ async def _profile_posts_from_embed(username: str, limit: int) -> Tuple[List[Dic
     Returns fewer posts than the API - the embed only exposes a recent
     window - but it works where the API cannot.
     """
+    # Instagram's embed endpoint is case-sensitive: /Zhas_gfp/embed/ returns
+    # a 200 with an empty shell, while /zhas_gfp/embed/ returns the real
+    # payload. Usernames are lowercase canonically, so normalise.
+    username = (username or "").strip().lstrip("@").lower()
     url = f"https://www.instagram.com/{username}/embed/"
     jar = cookies_as_dict()
 

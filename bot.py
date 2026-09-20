@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.2.1"
-BOT_CODENAME = "Honest Diagnostics"
+BOT_VERSION  = "v3.3.0"
+BOT_CODENAME = "Rich Throughout"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.3.0": [
+        "Fixed <code>/profile</code> returning nothing for usernames with capital letters",
+        "Rich messages now used across help, version and status notices",
+        "YouTube and TeraBox documented as unsupported on hosted addresses",
+        "Remaining mixed-language strings translated to English",
+    ],
     "v3.2.1": [
         "Fixed YouTube \"Requested format is not available\" - selectors now always end in a usable fallback",
         "New <code>/ytcheck</code> verifies the YouTube cookie file and reports what is wrong",
@@ -762,6 +768,11 @@ HELP_PAGES = {
             "Some platforms block requests coming from data centres. The bot\n"
             "runs on hosted infrastructure, so those services see a server\n"
             "address rather than a home connection and refuse it.\n\n"
+            "<b>YouTube and TeraBox do not work here.</b>\n"
+            "Both were investigated thoroughly. Cookies and configuration\n"
+            "cannot lift an address-level block, so please treat them as\n"
+            "unsupported on this deployment unless a residential proxy is\n"
+            "configured.\n\n"
             "<b>YouTube</b>  ·  partially affected\n"
             "Downloads may fail with a bot-verification challenge. Metadata\n"
             "usually still resolves.\n"
@@ -865,6 +876,53 @@ def build_help(page: str = "home") -> str:
             f"{'─' * 28}\n\n{data['body']}")
 
 
+async def _rich_or_html(chat_id: int, blocks, html_text: str,
+                        reply_to: int = None, markup=None,
+                        client=None) -> bool:
+    """Send a rich message, falling back to HTML when unsupported.
+
+    Rich messages are a recent Bot API addition, so every call has to
+    degrade cleanly on servers that do not implement them yet.
+    """
+    from utils import richmsg as R
+    try:
+        if await R.send(chat_id, blocks, reply_to=reply_to):
+            return True
+    except Exception:
+        pass
+    if client is not None:
+        try:
+            await client.send_message(chat_id, html_text, reply_markup=markup,
+                                      reply_to_message_id=reply_to,
+                                      disable_web_page_preview=True)
+        except Exception:
+            return False
+    return False
+
+
+def _blocked_service_blocks(service: str, reason: str, remedy: str,
+                            works: str = ""):
+    """A consistent notice for a service that a hosted address cannot reach."""
+    from utils import richmsg as R
+    blocks = [
+        R.paragraph(R.bold(f"{service} is unavailable")),
+        R.paragraph(reason),
+    ]
+    if works:
+        blocks.append(R.paragraph(R.italic(works)))
+    blocks.append(R.expandable_quote(
+        "A cookie proves who you are; it does not change where the request "
+        "comes from. When a platform refuses an address, the same cookie "
+        "that works in a browser is still refused from a server. Only a "
+        "residential proxy changes that.",
+        credit="Why cookies alone do not help"))
+    blocks.append(R.buttons([
+        R.button("Why", callback_data="help:limits", style="primary"),
+        R.button(remedy, copy_text=remedy, style="success"),
+    ]))
+    return blocks
+
+
 async def _send_limits_rich(chat_id: int, reply_to: int = None) -> bool:
     """Render /limits as a native rich message: a real table plus styled
     buttons. Returns False if the server does not implement the method,
@@ -876,9 +934,14 @@ async def _send_limits_rich(chat_id: int, reply_to: int = None) -> bool:
 
     blocks = [
         R.paragraph(R.bold("Known Limitations")),
-        R.paragraph("Some platforms refuse requests from data centres. "
-                    "This bot runs on hosted infrastructure, so those "
-                    "services see a server address and turn it away."),
+        R.paragraph("Some platforms refuse requests from data centres. This "
+                    "bot runs on hosted infrastructure, so those services see "
+                    "a server address and turn it away."),
+        R.paragraph(R.bold("YouTube and TeraBox do not work on this host.")),
+        R.paragraph("Both have been tested at length. Neither can be fixed "
+                    "with cookies or configuration - only a residential "
+                    "proxy or a different host would change the outcome. "
+                    "Please use the services listed as working below."),
         R.table(
             [[R.cell(R.bold("Service"), header=True),
               R.cell(R.bold("Status"), header=True),
@@ -916,8 +979,46 @@ async def limits_cmd(client, message):
                              disable_web_page_preview=True)
 
 
+async def _help_home_blocks():
+    """The /help landing screen, as rich blocks."""
+    from utils import richmsg as R
+    return [
+        R.paragraph(R.bold(f"{Config.BOT_NAME} - Command Reference")),
+        R.paragraph("A toolkit for archives, media and downloads. "
+                    "Send a file or paste a link to begin."),
+        R.table(
+            [[R.cell(R.bold("Section"), header=True),
+              R.cell(R.bold("What it covers"), header=True)],
+             [R.cell("Archives"),    R.cell("Extract, create, queue")],
+             [R.cell("Media Tools"), R.cell("Compress, merge, audio, subtitles")],
+             [R.cell("Downloaders"), R.cell("Instagram, video sites, Drive")],
+             [R.cell("Account"),     R.cell("Stats, settings, Premium")]],
+            bordered=True, striped=True, compact=True),
+        R.expandable_quote(
+            "Forward any archive and the extraction menu appears. Paste any "
+            "link and it downloads automatically, with no command needed.",
+            credit="Quick start"),
+        R.buttons([
+            R.button("Archives", callback_data="help:archives", style="primary"),
+            R.button("Media", callback_data="help:media", style="primary"),
+            R.button("Downloads", callback_data="help:download", style="primary"),
+        ]),
+        R.buttons([
+            R.button("Account", callback_data="help:account", style="success"),
+            R.button("Groups", callback_data="help:groups", style="success"),
+            R.button("Limitations", callback_data="help:limits", style="danger"),
+        ]),
+    ]
+
+
 @app.on_message(filters.command(["help", "cmds", "commands", "bothelp"]))
 async def help_cmd(client, message):
+    try:
+        blocks = await _help_home_blocks()
+        if await _rich_or_html(message.chat.id, blocks, "", message.id):
+            return
+    except Exception:
+        pass
     await message.reply_text(build_help("home"),
                              reply_markup=help_keyboard("home"),
                              disable_web_page_preview=True)
@@ -1084,6 +1185,34 @@ async def version_cmd(client, message):
                       for v in older
                   ) + "</blockquote>"]
 
+    try:
+        from utils import richmsg as R
+        blocks = [
+            R.paragraph(R.bold(f"{Config.BOT_NAME} {BOT_VERSION}")),
+            R.paragraph(R.italic(BOT_CODENAME)),
+            R.table(
+                [[R.cell(R.bold("Item"), header=True),
+                  R.cell(R.bold("Value"), header=True)],
+                 [R.cell("Build"),      R.cell(R.code(BUILD_VERSION))],
+                 [R.cell("Released"),   R.cell(BOT_RELEASED)],
+                 [R.cell("Handlers"),   R.cell(str(handlers))],
+                 [R.cell("IG cookies"), R.cell(cookie_state)],
+                 [R.cell("Cached"),     R.cell(f"{cache_n} posts")],
+                 [R.cell("TeraBox"),    R.cell(_tb_cookie_line())]],
+                bordered=True, striped=True, compact=True),
+            R.expandable_quote(
+                "\n".join(f"- {re.sub(r'<[^>]+>', '', i)}"
+                          for i in CHANGELOG[BOT_VERSION]),
+                credit=f"What changed in {BOT_VERSION}"),
+            R.buttons([
+                R.button("Commands", callback_data="show_help", style="primary"),
+                R.button("Limitations", callback_data="help:limits", style="danger"),
+            ]),
+        ]
+        if await R.send(message.chat.id, blocks, reply_to=message.id):
+            return
+    except Exception:
+        pass
     await message.reply_text("\n".join(lines), disable_web_page_preview=True)
 
 
@@ -1102,7 +1231,7 @@ async def insta_cmd(client, message):
             "Or simply paste the link and it will be detected.\n\n"
             "Supported:\n"
             "• Photo posts (full resolution)\n"
-            "• Carousels — <b>saari images ek album mein</b>\n"
+            "• Carousels - <b>every image in one album</b>\n"
             "• Reels & videos (audio ke saath)\n"
             "• Stories and Highlights <i>(cookies required)</i>\n\n"
             "Caption, title aur description automatically add hote hain.\n"
@@ -1613,7 +1742,7 @@ async def zipqueue_cmd(client, message):
         "1 ZIP files send (ek ek ya jaldi jaldi)\n"
         "2 <b>▶ Process</b> tap — sab extract honge\n"
         "3 The cache is cleared after each archive \n\n"
-        "<b>Password:</b> /zqpass [password] se saari ZIPs ka common password set please\n"
+        "<b>Password:</b> <code>/zqpass [password]</code> sets one password for every archive\n"
         "<b>List:</b> tap the button to view the archives in the queue\n"
         "<b>Cancel:</b> /cancelqueue ya button se cancel please"
         + group_note,
@@ -3983,11 +4112,12 @@ def _api_wall_message(kind: str, remaining: int = 0) -> str:
         "\nInstagram is blocking this server's IP from its private API, "
         "which is the only source for profiles and stories.\n\n"
         "<b>Reels and posts still work</b> — send their links directly.\n\n"
-        + ("<i>Cookies are configured, but an IP block cannot be fixed with cookies.</i>"
+        + ("<i>Cookies are configured, but an address block cannot be "
+           "fixed with cookies.</i>"
            if has_cookies() else
-           "<i>Owner: <code>INSTAGRAM_COOKIES</code> set please — usse "
-           "kabhi-kabhi chal jata hai.</i>")
-        + "\n<i>Owner: <code>/igtest</code> se confirm please.</i>")
+           "<i>Operator: set <code>INSTAGRAM_COOKIES</code>, which sometimes "
+           "helps.</i>")
+        + "\n<i>Operator: run <code>/igtest</code> to confirm.</i>")
 
 
 async def _show_rate_limit_countdown(status, remaining: int,
@@ -4602,7 +4732,7 @@ async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
 
     if skipped and not ok and not failed:
         raise TeraboxError(
-            f"⏭ Saari files size limit ({cap_mb} MB) se badi thin.")
+            f"Every file exceeded the {cap_mb} MB size limit.")
     try:
         await log_output(client, user, None, f"terabox: {url} ({ok} files)")
     except Exception:
@@ -4832,7 +4962,22 @@ async def handle_links_download_all(client, cq, original_msg):
             fail+=1
             msg = str(e) if e.__class__.__name__=="TeraboxError" \
                   else f"TeraBox failed:\n<code>{str(e)[:200]}</code>"
-            if st: await _safe_edit(st, msg)
+            sent_rich = False
+            if "withheld" in msg or "block" in msg.lower():
+                try:
+                    sent_rich = await _rich_or_html(
+                        chat_id,
+                        _blocked_service_blocks(
+                            "TeraBox",
+                            "The share was found, but TeraBox withholds the "
+                            "signed download link from hosted addresses.",
+                            "TERABOX_PROXY",
+                            "Google Drive and direct links are unaffected."),
+                        "", reply_to)
+                except Exception:
+                    sent_rich = False
+            if st and not sent_rich:
+                await _safe_edit(st, msg)
         await asyncio.sleep(0.4)
 
     # ── Video-site links (YouTube, TikTok, file hosts, unidentified) ──
