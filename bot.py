@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.5.1"
-BOT_CODENAME = "Correct Filters"
+BOT_VERSION  = "v3.6.0"
+BOT_CODENAME = "Mini App"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.6.0": [
+        "New Mini App interface, wired to live account data",
+        "Quota, file limit and active task count read from the server",
+        "Action tiles and quick prompts fill in real commands",
+        "Previous admin panel kept at <code>/webapp/index.admin.html</code>",
+    ],
     "v3.5.1": [
         "Fixed the photo and video filters returning the wrong media",
         "A successful download no longer aborts the run with a stale rate limit",

@@ -15,7 +15,7 @@ if str(BASE_DIR) not in sys.path:
 
 from bot import app as tg_app, tasks, GLOBAL_SEMAPHORE, is_video_path, build_caption, choose_thumbnail, _get_video_duration
 from utils.cleanup import cleanup_worker
-from database import count_users, get_unzip_task
+from database import count_users, get_unzip_task, get_or_create_user, get_user_settings
 
 fastapi_app = FastAPI(title="Serena Unzip Web Service v3")
 
@@ -56,6 +56,40 @@ async def stats():
     except Exception:
         total_users = 0
     return {"users": total_users, "tasks": len(tasks), "files": 0}
+
+
+@fastapi_app.get("/api/me/{uid}")
+async def api_me(uid: int):
+    """Live figures for the Mini App header: quota, usage, plan.
+
+    The Mini App previously showed hardcoded numbers; this lets it show
+    the signed-in user's real state.
+    """
+    from config import Config as _C
+    try:
+        u = await get_or_create_user(uid)
+    except Exception:
+        u = {}
+    st = (u or {}).get("stats", {}) or {}
+    try:
+        from bot import is_premium_user
+        premium = bool(await is_premium_user(uid))
+    except Exception:
+        premium = False
+
+    used = int(st.get("daily_tasks", 0) or 0)
+    limit = int(_C.FREE_DAILY_TASK_LIMIT)
+    return {
+        "uid": uid,
+        "premium": premium,
+        "tasks_used": used,
+        "tasks_limit": limit,
+        "tasks_left": max(0, limit - used) if not premium else None,
+        "data_used_mb": round(float(st.get("daily_size_mb", 0) or 0), 1),
+        "data_limit_mb": int(_C.FREE_DAILY_SIZE_MB),
+        "max_file_mb": int(_C.YTDL_MAX_SIZE_MB),
+        "total_tasks": int(st.get("total_tasks", 0) or 0),
+    }
 
 
 # ── Mini App entry points ─────────────────────────────────────────────────────

@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Serena Bot</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth;height:100%}
+
+:root{
+  --p:#8b5cf6;--p2:#6d28d9;
+  --b:#3b82f6;--b2:#1d4ed8;
+  --g:#10b981;--r:#ef4444;
+  --y:#f59e0b;
+  --bg:#060612;
+  --card:rgba(255,255,255,0.04);
+  --border:rgba(255,255,255,0.09);
+  --text:#e2e8f0;--muted:#64748b;
+}
+
+body{
+  background:var(--bg);
+  background-image:
+    radial-gradient(ellipse 100% 70% at 10% -20%,rgba(139,92,246,.18) 0%,transparent 55%),
+    radial-gradient(ellipse 70% 60% at 90% 120%,rgba(59,130,246,.15) 0%,transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 50%,rgba(16,185,129,.05) 0%,transparent 60%);
+  min-height:100vh;color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif;
+  overflow-x:hidden;padding-bottom:80px;
+}
+
+/* ── MESH GRID ── */
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+  background-size:60px 60px;
+  pointer-events:none;z-index:0;
+}
+
+/* ── PARTICLES ── */
+.particles{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+.p{position:absolute;border-radius:50%;animation:drift linear infinite;opacity:0}
+@keyframes drift{
+  0%{transform:translateY(100vh) scale(0);opacity:0}
+  10%{opacity:.6}
+  90%{opacity:.4}
+  100%{transform:translateY(-20vh) scale(1.5);opacity:0}
+}
+
+/* ── LAYOUT ── */
+.wrap{position:relative;z-index:1;max-width:440px;margin:0 auto;padding:0 16px}
+
+/* ── HEADER ── */
+.header{
+  padding:28px 0 20px;text-align:center;
+  animation:fadeUp .7s ease both;
+}
+.logo-wrap{position:relative;display:inline-block;margin-bottom:16px}
+.logo-bg{
+  width:88px;height:88px;border-radius:28px;
+  background:linear-gradient(135deg,var(--p),var(--b));
+  display:flex;align-items:center;justify-content:center;
+  font-size:2.6rem;
+  box-shadow:0 8px 40px rgba(139,92,246,.45),0 2px 8px rgba(0,0,0,.4);
+  animation:logoFloat 5s ease-in-out infinite;
+}
+@keyframes logoFloat{0%,100%{transform:translateY(0) rotate(-1deg)}50%{transform:translateY(-8px) rotate(1deg)}}
+.logo-badge{
+  position:absolute;bottom:-6px;right:-6px;
+  background:linear-gradient(135deg,var(--g),#059669);
+  color:#fff;font-size:10px;font-weight:700;padding:2px 8px;
+  border-radius:999px;letter-spacing:.5px;
+  box-shadow:0 2px 8px rgba(16,185,129,.5);
+}
+.header h1{font-size:26px;font-weight:800;letter-spacing:-.5px;
+  background:linear-gradient(135deg,#fff 30%,rgba(139,92,246,.9));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.header p{font-size:13px;color:var(--muted);margin-top:4px}
+.tags{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin-top:14px}
+.tag{
+  padding:4px 12px;border-radius:999px;font-size:11px;font-weight:600;letter-spacing:.3px;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  color:rgba(255,255,255,.65);
+}
+
+/* ── CARDS ── */
+.card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:20px;
+  padding:18px;
+  transition:transform .25s,box-shadow .25s,border-color .25s;
+  animation:fadeUp .6s ease both;
+}
+.card:active{transform:scale(.98)}
+.card.clickable:hover{
+  transform:translateY(-3px);
+  box-shadow:0 16px 40px rgba(139,92,246,.15);
+  border-color:rgba(139,92,246,.25);
+}
+
+/* ── SECTION ── */
+.sec{margin-bottom:20px}
+.sec-label{
+  font-size:10px;font-weight:700;letter-spacing:1.5px;
+  color:var(--muted);text-transform:uppercase;
+  margin-bottom:10px;padding-left:4px;
+}
+
+/* ── STATS GRID ── */
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.stat-card{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:16px;padding:14px 10px;text-align:center;
+  animation:fadeUp .6s ease both;
+}
+.stat-icon{font-size:20px;margin-bottom:6px}
+.stat-val{
+  font-size:22px;font-weight:800;
+  background:linear-gradient(135deg,var(--p),var(--b));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.stat-lbl{font-size:10px;color:var(--muted);margin-top:2px;font-weight:500}
+
+/* ── MENU GRID ── */
+.menu-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.menu-item{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:18px;padding:18px 14px;
+  display:flex;flex-direction:column;gap:8px;
+  cursor:pointer;transition:all .2s;
+  position:relative;overflow:hidden;
+}
+.menu-item::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,var(--clr,.2),transparent);
+  opacity:0;transition:opacity .3s;border-radius:inherit;
+}
+.menu-item:hover::before{opacity:1}
+.menu-item:active{transform:scale(.96)}
+.menu-icon{font-size:28px}
+.menu-name{font-size:13px;font-weight:700;color:#fff}
+.menu-desc{font-size:11px;color:var(--muted);line-height:1.4}
+
+/* ── PANELS ── */
+.panel{
+  position:fixed;inset:0;z-index:100;
+  background:rgba(6,6,18,.85);backdrop-filter:blur(24px);
+  display:flex;flex-direction:column;
+  transform:translateY(100%);transition:transform .4s cubic-bezier(.4,0,.2,1);
+}
+.panel.open{transform:translateY(0)}
+.panel-header{
+  padding:20px 20px 16px;
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border);
+}
+.panel-title{font-size:17px;font-weight:700}
+.panel-close{
+  width:32px;height:32px;border-radius:50%;
+  background:rgba(255,255,255,.08);border:none;color:#fff;
+  font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:background .2s;
+}
+.panel-close:hover{background:rgba(255,255,255,.15)}
+.panel-body{flex:1;overflow-y:auto;padding:16px 20px}
+
+/* ── INPUTS ── */
+.inp{
+  width:100%;background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);border-radius:12px;
+  padding:12px 16px;color:#fff;font-size:14px;outline:none;
+  transition:border-color .2s;font-family:inherit;
+  resize:vertical;min-height:80px;
+}
+.inp:focus{border-color:var(--p)}
+input.inp{min-height:unset;resize:none}
+
+/* ── BUTTONS ── */
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  width:100%;padding:14px;border-radius:14px;border:none;
+  font-size:15px;font-weight:700;color:#fff;cursor:pointer;
+  transition:all .2s;letter-spacing:.2px;
+}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:linear-gradient(135deg,var(--p),var(--b));box-shadow:0 4px 20px rgba(139,92,246,.3)}
+.btn-primary:hover{box-shadow:0 6px 30px rgba(139,92,246,.5)}
+.btn-danger{background:linear-gradient(135deg,var(--r),#b91c1c)}
+.btn-success{background:linear-gradient(135deg,var(--g),#047857)}
+.btn-ghost{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12)}
+
+/* ── LIST ── */
+.list-item{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 0;border-bottom:1px solid rgba(255,255,255,.06);
+}
+.list-item:last-child{border-bottom:none}
+.list-avatar{
+  width:40px;height:40px;border-radius:12px;
+  background:linear-gradient(135deg,var(--p),var(--b));
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  flex-shrink:0;
+}
+.list-info{flex:1;min-width:0}
+.list-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.badge{
+  font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;
+}
+.badge-green{background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.2)}
+.badge-red{background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.2)}
+.badge-yellow{background:rgba(245,158,11,.15);color:#fbbf24;border:1px solid rgba(245,158,11,.2)}
+
+/* ── SWITCH ── */
+.switch-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0}
+.switch-info .switch-name{font-size:14px;font-weight:600}
+.switch-info .switch-desc{font-size:12px;color:var(--muted);margin-top:2px}
+.switch{position:relative;width:48px;height:26px}
+.switch input{opacity:0;width:0;height:0}
+.slider{
+  position:absolute;inset:0;cursor:pointer;
+  background:rgba(255,255,255,.15);border-radius:999px;transition:.3s;
+}
+.slider::before{
+  content:'';position:absolute;
+  width:20px;height:20px;left:3px;top:3px;
+  background:#fff;border-radius:50%;transition:.3s;
+  box-shadow:0 2px 6px rgba(0,0,0,.3);
+}
+input:checked+.slider{background:linear-gradient(135deg,var(--p),var(--b))}
+input:checked+.slider::before{transform:translateX(22px)}
+
+/* ── TOAST ── */
+.toast{
+  position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:rgba(30,30,50,.95);backdrop-filter:blur(20px);
+  border:1px solid rgba(255,255,255,.12);border-radius:14px;
+  padding:10px 20px;font-size:14px;font-weight:600;
+  opacity:0;transition:all .3s;pointer-events:none;z-index:200;
+  white-space:nowrap;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── BOTTOM NAV ── */
+.nav{
+  position:fixed;bottom:0;left:0;right:0;z-index:50;
+  background:rgba(6,6,18,.9);backdrop-filter:blur(24px);
+  border-top:1px solid var(--border);
+  display:flex;padding:8px 0 calc(8px + env(safe-area-inset-bottom));
+}
+.nav-item{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:4px 0;cursor:pointer;transition:all .2s;border:none;background:none;
+  color:var(--muted);
+}
+.nav-item.active{color:var(--p)}
+.nav-icon{font-size:20px;transition:transform .2s}
+.nav-item.active .nav-icon{transform:scale(1.15)}
+.nav-label{font-size:10px;font-weight:600;letter-spacing:.3px}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.d1{animation-delay:.05s}.d2{animation-delay:.1s}.d3{animation-delay:.15s}
+.d4{animation-delay:.2s}.d5{animation-delay:.25s}.d6{animation-delay:.3s}
+
+/* ── EMPTY STATE ── */
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty-icon{font-size:48px;margin-bottom:12px;opacity:.5}
+.empty-text{font-size:14px}
+
+/* ── LOADING ── */
+.spin{animation:spin .8s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.divider{height:1px;background:linear-gradient(90deg,transparent,rgba(139,92,246,.3),transparent);margin:8px 0 20px}
+</style>
+</head>
+<body>
+
+<!-- PARTICLES -->
+<div class="particles" id="particles"></div>
+
+<!-- PAGES -->
+<div id="page-home" class="page wrap">
+  <!-- Header -->
+  <div class="header">
+    <div class="logo-wrap">
+      <div class="logo-bg">📦</div>
+      <span class="logo-badge">LIVE</span>
+    </div>
+    <h1>Serena Unzip Bot</h1>
+    <p>Advanced Telegram File Processing</p>
+    <div class="tags">
+      <span class="tag">⚡ Pyrogram</span>
+      <span class="tag">🍃 MongoDB</span>
+      <span class="tag">🎬 FFmpeg</span>
+      <span class="tag">📥 yt-dlp</span>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="sec">
+    <div class="sec-label">Live Stats</div>
+    <div class="stats-grid">
+      <div class="stat-card d1"><div class="stat-icon">👥</div><div class="stat-val" id="su">—</div><div class="stat-lbl">Users</div></div>
+      <div class="stat-card d2"><div class="stat-icon">⚡</div><div class="stat-val" id="st">—</div><div class="stat-lbl">Tasks</div></div>
+      <div class="stat-card d3"><div class="stat-icon">📁</div><div class="stat-val" id="sf">—</div><div class="stat-lbl">Files</div></div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Control Menu -->
+  <div class="sec">
+    <div class="sec-label">Bot Control</div>
+    <div class="menu-grid">
+      <div class="menu-item clickable d1" style="--clr:rgba(139,92,246,.3)" onclick="openPanel('broadcast')">
+        <span class="menu-icon">📢</span>
+        <span class="menu-name">Broadcast</span>
+        <span class="menu-desc">Message all users</span>
+      </div>
+      <div class="menu-item clickable d2" style="--clr:rgba(59,130,246,.3)" onclick="openPanel('queue')">
+        <span class="menu-icon">📦</span>
+        <span class="menu-name">Queue</span>
+        <span class="menu-desc">Manage ZIP queues</span>
+      </div>
+      <div class="menu-item clickable d3" style="--clr:rgba(239,68,68,.3)" onclick="openPanel('users')">
+        <span class="menu-icon">👤</span>
+        <span class="menu-name">Users</span>
+        <span class="menu-desc">Ban / Unban users</span>
+      </div>
+      <div class="menu-item clickable d4" style="--clr:rgba(16,185,129,.3)" onclick="openPanel('settings')">
+        <span class="menu-icon">⚙️</span>
+        <span class="menu-name">Settings</span>
+        <span class="menu-desc">Bot configuration</span>
+      </div>
+      <div class="menu-item clickable d5" style="--clr:rgba(245,158,11,.3)" onclick="openPanel('logs')">
+        <span class="menu-icon">📊</span>
+        <span class="menu-name">Activity</span>
+        <span class="menu-desc">Recent activity log</span>
+      </div>
+      <div class="menu-item clickable d6" style="--clr:rgba(139,92,246,.3)" onclick="openPanel('cmds')">
+        <span class="menu-icon">💬</span>
+        <span class="menu-name">Commands</span>
+        <span class="menu-desc">Quick reference</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Features -->
+  <div class="sec">
+    <div class="sec-label">Features</div>
+    <div class="card d1" style="margin-bottom:10px">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:24px">📦</span>
+          <div><div style="font-size:14px;font-weight:700;color:#c4b5fd">ZIP Queue • 100 Files</div><div style="font-size:12px;color:var(--muted);margin-top:3px">Batch extract in order. Auto-retry. Resume after crash.</div></div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:24px">🎬</span>
+          <div><div style="font-size:14px;font-weight:700;color:#93c5fd">Video Suite</div><div style="font-size:12px;color:var(--muted);margin-top:3px">Compress, resize, watermark, merge, split, screenshot.</div></div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:24px">📥</span>
+          <div><div style="font-size:14px;font-weight:700;color:#6ee7b7">Universal Downloader</div><div style="font-size:12px;color:var(--muted);margin-top:3px">Instagram, YouTube, Twitter, TikTok, Google Drive, Dropbox.</div></div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:24px">🎵</span>
+          <div><div style="font-size:14px;font-weight:700;color:#fda4af">Song Search</div><div style="font-size:12px;color:var(--muted);margin-top:3px">/song — search by name, download MP3 with metadata.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Credits -->
+  <div class="sec">
+    <div class="sec-label">Credits</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="card clickable d1" onclick="openTg('TechnicalSerena')">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#7c3aed,#2563eb);display:flex;align-items:center;justify-content:center;font-size:20px">🛠</div>
+          <div style="flex:1"><div style="font-size:14px;font-weight:700;color:#c4b5fd">@TechnicalSerena</div><div style="font-size:12px;color:var(--muted)">Developer & Owner</div></div>
+          <span style="color:var(--muted);font-size:16px">›</span>
+        </div>
+      </div>
+      <div class="card clickable d2" onclick="openTg('Xioqui_Xin')">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#0369a1,#0891b2);display:flex;align-items:center;justify-content:center;font-size:20px">🎨</div>
+          <div style="flex:1"><div style="font-size:14px;font-weight:700;color:#93c5fd">@Xioqui_Xin</div><div style="font-size:12px;color:var(--muted)">Co-Developer</div></div>
+          <span style="color:var(--muted);font-size:16px">›</span>
+        </div>
+      </div>
+      <div class="card clickable d3" onclick="openLink('https://instagram.com/Prince572002')">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,#be185d,#ea580c);display:flex;align-items:center;justify-content:center;font-size:20px">📸</div>
+          <div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fda4af">@Prince572002</div><div style="font-size:12px;color:var(--muted)">Instagram</div></div>
+          <span style="color:var(--muted);font-size:16px">›</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="text-align:center;padding:16px 0;font-size:11px;color:rgba(100,116,139,.5)">Serena Unzip Bot v2 • All rights reserved</div>
+</div>
+
+<!-- ═══ PANELS ═══ -->
+
+<!-- Broadcast Panel -->
+<div class="panel" id="panel-broadcast">
+  <div class="panel-header">
+    <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">📢</span><span class="panel-title">Broadcast Message</span></div>
+    <button class="panel-close" onclick="closePanel('broadcast')">×</button>
+  </div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:14px">
+    <div class="card" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.2)">
+      <div style="font-size:12px;color:#fbbf24">⚠️ Message will be sent to ALL users. Use carefully.</div>
+    </div>
+    <div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">MESSAGE TEXT</div>
+      <textarea class="inp" id="bc-text" placeholder="Type your broadcast message here…&#10;&#10;HTML formatting supported: &lt;b&gt;bold&lt;/b&gt;, &lt;i&gt;italic&lt;/i&gt;, &lt;code&gt;code&lt;/code&gt;"></textarea>
+    </div>
+    <div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">PIN MESSAGE?</div>
+      <label class="switch-row" style="cursor:pointer">
+        <div class="switch-info"><div class="switch-name">Pin in all chats</div><div class="switch-desc">Pin message after sending</div></div>
+        <label class="switch"><input type="checkbox" id="bc-pin"><span class="slider"></span></label>
+      </label>
+    </div>
+    <button class="btn btn-primary" onclick="sendBroadcast()">📢 Send Broadcast</button>
+    <button class="btn btn-ghost" onclick="closePanel('broadcast')">Cancel</button>
+  </div>
+</div>
+
+<!-- Queue Panel -->
+<div class="panel" id="panel-queue">
+  <div class="panel-header">
+    <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">📦</span><span class="panel-title">ZIP Queue Sessions</span></div>
+    <button class="panel-close" onclick="closePanel('queue')">×</button>
+  </div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-success" style="flex:1" onclick="loadQueues()">🔄 Refresh</button>
+      <button class="btn btn-danger" style="flex:1" onclick="deleteAllQueues()">🗑 Delete All</button>
+    </div>
+    <div id="queue-list"><div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Loading sessions…</div></div></div>
+  </div>
+</div>
+
+<!-- Users Panel -->
+<div class="panel" id="panel-users">
+  <div class="panel-header">
+    <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">👤</span><span class="panel-title">User Management</span></div>
+    <button class="panel-close" onclick="closePanel('users')">×</button>
+  </div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:14px">
+    <div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">USER ID OR @USERNAME</div>
+      <input type="text" class="inp" id="uid-input" placeholder="e.g. 123456789 or @username" style="min-height:unset">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="btn btn-danger" onclick="banUser()">🚫 Ban User</button>
+      <button class="btn btn-success" onclick="unbanUser()">✅ Unban User</button>
+    </div>
+    <div style="height:1px;background:var(--border)"></div>
+    <div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">GROUP AUTHORIZATION</div>
+      <input type="text" class="inp" id="auth-input" placeholder="User ID or @username" style="min-height:unset;margin-bottom:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <button class="btn btn-primary" onclick="authorizeUser()">✅ Authorize</button>
+        <button class="btn btn-ghost" onclick="deauthUser()">❌ Deauth</button>
+      </div>
+    </div>
+    <div style="height:1px;background:var(--border)"></div>
+    <div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">PREMIUM</div>
+      <div style="display:flex;gap:8px">
+        <input type="text" class="inp" id="prem-id" placeholder="User ID" style="min-height:unset;flex:1">
+        <input type="text" class="inp" id="prem-days" placeholder="Days" style="min-height:unset;width:80px">
+      </div>
+      <button class="btn btn-primary" style="margin-top:8px" onclick="givePremium()">⭐ Give Premium</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Panel -->
+<div class="panel" id="panel-settings">
+  <div class="panel-header">
+    <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">⚙️</span><span class="panel-title">Bot Settings</span></div>
+    <button class="panel-close" onclick="closePanel('settings')">×</button>
+  </div>
+  <div class="panel-body" style="display:flex;flex-direction:column;gap:6px">
+    <div class="card">
+      <div class="switch-row">
+        <div class="switch-info"><div class="switch-name">Group Access</div><div class="switch-desc">Allow users in groups</div></div>
+        <label class="switch"><input type="checkbox" id="sw-group" checked onchange="toggleSetting('group_access',this.checked)"><span class="slider"></span></label>
+      </div>
+      <div style="height:1px;background:var(--border);margin:4px 0"></div>
+      <div class="switch-row">
+        <div class="switch-info"><div class="switch-name">Force Subscribe</div><div class="switch-desc">Require channel join</div></div>
+        <label class="switch"><input type="checkbox" id="sw-force" onchange="toggleSetting('force_sub',this.checked)"><span class="slider"></span></label>
+      </div>
+      <div style="height:1px;background:var(--border);margin:4px 0"></div>
+      <div class="switch-row">
+        <div class="switch-info"><div class="switch-name">Maintenance Mode</div><div class="switch-desc">Only owners can use</div></div>
+        <label class="switch"><input type="checkbox" id="sw-maint" onchange="toggleSetting('maintenance',this.checked)"><span class="slider"></span></label>
+      </div>
+    </div>
+    <div class="card" style="margin-top:8px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px;font-weight:600">QUICK ACTIONS</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-ghost" onclick="botAction('cleanup')">🗑 Force Cleanup Temp Files</button>
+        <button class="btn btn-ghost" onclick="botAction('restart')">🔄 Restart Bot</button>
+        <button class="btn btn-danger" onclick="botAction('clear_queues')">⚠️ Clear All Queues</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Logs Panel -->
+<div class="panel" id="panel-logs">
+  <div class="panel-header">
+    <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">📊</span><span class="panel-title">Activity Log</span></div>
+    <button class="panel-close" onclick="closePanel('logs')">×</button>
+  </div>
+  <div class="panel-body">
+    <div id="log-list">
+      <div class="list-item"><div class="list-avatar">📥</div><div class="list-info"><div class="list-name">User downloaded Instagram reel</div><div class="list-sub">2 min ago • UID 16655531</div></div><span class="badge badge-green">Done</span></div>
+      <div class="list-item"><div class="list-avatar">📦</div><div class="list-info"><div class="list-name">ZIP Queue • 45 files extracted</div><div class="list-sub">15 min ago • UID 16655531</div></div><span class="badge badge-green">Done</span></div>
+      <div class="list-item"><div class="list-avatar">🎬</div><div class="list-info"><div class="list-name">Video compressed 720p→360p</div><div class="list-sub">1 hr ago • UID 985234</div></div><span class="badge badge-green">Done</span></div>
+      <div class="list-item"><div class="list-avatar">🎵</div><div class="list-info"><div class="list-name">/song Kesariya downloaded</div><div class="list-sub">2 hr ago • UID 774411</div></div><span class="badge badge-yellow">MP3</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Commands Panel -->
+<div class="panel" id="panel-cmds">
+  <div class="panel-header">
+    <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">💬</span><span class="panel-title">Commands</span></div>
+    <button class="panel-close" onclick="closePanel('cmds')">×</button>
+  </div>
+  <div class="panel-body">
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div><div style="font-size:11px;font-weight:700;color:#a78bfa;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">📦 Archives</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/unzip</span>
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/zq</span>
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/zipqueue</span>
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/zqpass</span>
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/continue</span>
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/cancelqueue</span>
+        </div>
+      </div>
+      <div><div style="font-size:11px;font-weight:700;color:#60a5fa;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">🎬 Video</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/compress</span>
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/resize</span>
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/watermark</span>
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/merge</span>
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/split</span>
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/audio</span>
+          <span class="badge badge-yellow" style="font-size:12px;padding:5px 10px">/screenshot</span>
+        </div>
+      </div>
+      <div><div style="font-size:11px;font-weight:700;color:#34d399;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">📥 Download</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/ytdl [url]</span>
+          <span class="badge badge-green" style="font-size:12px;padding:5px 10px">/song [name]</span>
+        </div>
+      </div>
+      <div><div style="font-size:11px;font-weight:700;color:#f472b6;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">👑 Admin</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <span class="badge badge-red" style="font-size:12px;padding:5px 10px">/authorize</span>
+          <span class="badge badge-red" style="font-size:12px;padding:5px 10px">/deauth</span>
+          <span class="badge badge-red" style="font-size:12px;padding:5px 10px">/ban</span>
+          <span class="badge badge-red" style="font-size:12px;padding:5px 10px">/broadcast</span>
+          <span class="badge badge-red" style="font-size:12px;padding:5px 10px">/groupaccess</span>
+          <span class="badge badge-red" style="font-size:12px;padding:5px 10px">/status</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM NAV -->
+<nav class="nav">
+  <button class="nav-item active" onclick="showTab('home')"><span class="nav-icon">🏠</span><span class="nav-label">Home</span></button>
+  <button class="nav-item" onclick="openPanel('queue')"><span class="nav-icon">📦</span><span class="nav-label">Queue</span></button>
+  <button class="nav-item" onclick="openPanel('broadcast')"><span class="nav-icon">📢</span><span class="nav-label">Broadcast</span></button>
+  <button class="nav-item" onclick="openPanel('users')"><span class="nav-icon">👤</span><span class="nav-label">Users</span></button>
+  <button class="nav-item" onclick="openPanel('settings')"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+</nav>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Telegram Web App ──────────────────────────────────────────────────────
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); tg.enableClosingConfirmation(); }
+
+function openLink(url) { tg ? tg.openLink(url) : window.open(url,'_blank'); }
+function openTg(username) { openLink('https://t.me/'+username); }
+
+// ── Auth header ───────────────────────────────────────────────────────────
+function authHeaders() {
+  const initData = tg?.initData || '';
+  return { 'Content-Type':'application/json', 'X-Telegram-Init-Data': initData };
+}
+
+// ── API calls to bot ──────────────────────────────────────────────────────
+async function api(path, body=null) {
+  const opts = { method: body ? 'POST' : 'GET', headers: authHeaders() };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json().catch(()=>({ok:false}));
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, type='info') {
+  const el = document.getElementById('toast');
+  const icons = {info:'ℹ️',ok:'✅',err:'❌',warn:'⚠️'};
+  el.textContent = (icons[type]||'') + ' ' + msg;
+  el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'), 2800);
+}
+
+// ── Panels ────────────────────────────────────────────────────────────────
+function openPanel(name) {
+  document.getElementById('panel-'+name)?.classList.add('open');
+  if (name === 'queue') loadQueues();
+  if (tg) tg.BackButton.show();
+}
+function closePanel(name) {
+  document.getElementById('panel-'+name)?.classList.remove('open');
+  if (tg) tg.BackButton.hide();
+}
+if (tg) tg.BackButton.onClick(() => {
+  document.querySelectorAll('.panel.open').forEach(p=>p.classList.remove('open'));
+  tg.BackButton.hide();
+});
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+function countUp(el, target) {
+  let v=0; const step=Math.ceil(target/50);
+  const t=setInterval(()=>{
+    v=Math.min(v+step,target);
+    el.textContent=v>=1000?(v/1000).toFixed(1)+'K':v;
+    if(v>=target)clearInterval(t);
+  },20);
+}
+async function loadStats() {
+  try {
+    const d = await api('/stats');
+    countUp(document.getElementById('su'), d.users||0);
+    countUp(document.getElementById('st'), d.tasks||0);
+    countUp(document.getElementById('sf'), d.files||0);
+  } catch {
+    countUp(document.getElementById('su'),1247);
+    countUp(document.getElementById('st'),8931);
+    countUp(document.getElementById('sf'),42016);
+  }
+}
+
+// ── Queue Management ──────────────────────────────────────────────────────
+async function loadQueues() {
+  document.getElementById('queue-list').innerHTML =
+    '<div class="empty"><div class="spin">⏳</div><div class="empty-text">Loading…</div></div>';
+  try {
+    const d = await api('/api/queues');
+    const list = d.sessions || [];
+    if (!list.length) {
+      document.getElementById('queue-list').innerHTML =
+        '<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">No active sessions</div></div>';
+      return;
+    }
+    document.getElementById('queue-list').innerHTML = list.map(s=>`
+      <div class="card" style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+          <div>
+            <div style="font-size:14px;font-weight:700">User ${s.uid}</div>
+            <div style="font-size:12px;color:var(--muted)">${s.total} ZIPs • ✅${s.ok} ❌${s.fail} ⏳${s.pending}</div>
+          </div>
+          <span class="badge badge-yellow">Paused</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-success" style="font-size:13px;padding:10px" onclick="resumeQueue(${s.uid})">▶️ Resume</button>
+          <button class="btn btn-danger" style="font-size:13px;padding:10px" onclick="deleteQueue(${s.uid})">🗑 Delete</button>
+        </div>
+      </div>`).join('');
+  } catch {
+    document.getElementById('queue-list').innerHTML =
+      '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Could not load sessions</div></div>';
+  }
+}
+async function resumeQueue(uid) {
+  const r = await api('/api/queue/resume', {uid});
+  toast(r.ok ? 'Queue resumed!' : (r.msg||'Failed'), r.ok?'ok':'err');
+  if(r.ok) loadQueues();
+}
+async function deleteQueue(uid) {
+  if (!confirm(`Delete queue for user ${uid}?`)) return;
+  const r = await api('/api/queue/delete', {uid});
+  toast(r.ok ? 'Deleted!' : 'Failed', r.ok?'ok':'err');
+  if(r.ok) loadQueues();
+}
+async function deleteAllQueues() {
+  const r = await api('/api/queue/delete_all', {});
+  toast(r.ok ? 'All queues deleted!' : 'Failed', r.ok?'ok':'err');
+  if(r.ok) loadQueues();
+}
+
+// ── User Management ───────────────────────────────────────────────────────
+async function banUser() {
+  const uid = document.getElementById('uid-input').value.trim();
+  if (!uid) { toast('Enter user ID or username','warn'); return; }
+  const r = await api('/api/user/ban', {uid});
+  toast(r.ok ? `User ${uid} banned!` : (r.msg||'Failed'), r.ok?'ok':'err');
+}
+async function unbanUser() {
+  const uid = document.getElementById('uid-input').value.trim();
+  if (!uid) { toast('Enter user ID or username','warn'); return; }
+  const r = await api('/api/user/unban', {uid});
+  toast(r.ok ? `User ${uid} unbanned!` : (r.msg||'Failed'), r.ok?'ok':'err');
+}
+async function authorizeUser() {
+  const uid = document.getElementById('auth-input').value.trim();
+  if (!uid) { toast('Enter user ID','warn'); return; }
+  const r = await api('/api/user/authorize', {uid, chat_id: tg?.initDataUnsafe?.chat?.id});
+  toast(r.ok ? 'User authorized!' : (r.msg||'Failed'), r.ok?'ok':'err');
+}
+async function deauthUser() {
+  const uid = document.getElementById('auth-input').value.trim();
+  if (!uid) { toast('Enter user ID','warn'); return; }
+  const r = await api('/api/user/deauth', {uid, chat_id: tg?.initDataUnsafe?.chat?.id});
+  toast(r.ok ? 'User deauthorized!' : (r.msg||'Failed'), r.ok?'ok':'err');
+}
+async function givePremium() {
+  const uid = document.getElementById('prem-id').value.trim();
+  const days = parseInt(document.getElementById('prem-days').value) || 30;
+  if (!uid) { toast('Enter user ID','warn'); return; }
+  const r = await api('/api/user/premium', {uid, days});
+  toast(r.ok ? `Premium given for ${days} days!` : (r.msg||'Failed'), r.ok?'ok':'err');
+}
+
+// ── Broadcast ─────────────────────────────────────────────────────────────
+async function sendBroadcast() {
+  const text = document.getElementById('bc-text').value.trim();
+  if (!text) { toast('Write a message first','warn'); return; }
+  if (!confirm(`Send to ALL users?`)) return;
+  toast('Sending…','info');
+  const r = await api('/api/broadcast', {text, pin: document.getElementById('bc-pin').checked});
+  toast(r.ok ? `Sent to ${r.count||'all'} users!` : (r.msg||'Failed'), r.ok?'ok':'err');
+  if (r.ok) document.getElementById('bc-text').value = '';
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────
+async function toggleSetting(key, val) {
+  const r = await api('/api/setting', {key, value: val});
+  toast(r.ok ? `${key} ${val?'enabled':'disabled'}` : 'Failed', r.ok?'ok':'err');
+}
+async function botAction(action) {
+  if (action === 'restart' && !confirm('Restart bot?')) return;
+  if (action === 'clear_queues' && !confirm('Delete ALL queues?')) return;
+  const r = await api('/api/action', {action});
+  toast(r.ok ? 'Done!' : (r.msg||'Failed'), r.ok?'ok':'err');
+}
+
+// ── Particles ─────────────────────────────────────────────────────────────
+(function(){
+  const c = document.getElementById('particles');
+  const colors = ['rgba(139,92,246,.7)','rgba(59,130,246,.7)','rgba(16,185,129,.5)','rgba(245,158,11,.5)'];
+  for(let i=0;i<18;i++){
+    const p=document.createElement('div');
+    p.className='p';
+    const s=Math.random()*4+2;
+    Object.assign(p.style,{
+      width:s+'px',height:s+'px',
+      left:Math.random()*100+'%',
+      background:colors[Math.floor(Math.random()*colors.length)],
+      animationDuration:(Math.random()*15+8)+'s',
+      animationDelay:(Math.random()*10)+'s',
+    });
+    c.appendChild(p);
+  }
+})();
+
+// ── Init ──────────────────────────────────────────────────────────────────
+loadStats();
+
+// Intersection observer for card animations
+const io=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{if(e.isIntersecting){e.target.style.animation='fadeUp .5s ease both';io.unobserve(e.target);}});
+},{threshold:.08});
+document.querySelectorAll('.stat-card,.menu-item,.card').forEach(el=>{el.style.opacity='0';io.observe(el);});
+</script>
+</body>
+</html>
