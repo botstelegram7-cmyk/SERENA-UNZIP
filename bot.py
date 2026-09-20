@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.4.0"
-BOT_CODENAME = "Reels Restored"
+BOT_VERSION  = "v3.5.0"
+BOT_CODENAME = "Paced Profiles"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.5.0": [
+        "<code>/profile</code> now reaches the whole timeline, not just six posts",
+        "It asks how many posts and whether to fetch videos, photos or both",
+        "Requests are paced with widening random pauses to avoid automation flags",
+        "<code>/cancel</code> stops a running profile job within half a second",
+    ],
     "v3.4.0": [
         "Fixed reel, story and highlight downloads failing to parse",
         "Instagram embed now requested with full browser headers",
@@ -404,6 +410,8 @@ user_cancelled:   Dict[int,bool]          = {}
 zip_sessions:     Dict[int,Dict[str,Any]] = {}
 merge_sessions:   Dict[int,Dict[str,Any]] = {}
 LINK_SESSIONS: Dict[Tuple[int,int],Dict[str,Any]] = {}
+# /profile waiting on the user to choose a count and media type
+PROFILE_PENDING: Dict[int,Dict[str,Any]] = {}
 ZIP_QUEUE_SESSIONS: Dict[int,Dict[str,Any]] = {}  # uid → queue session
 USER_TASKS: Dict[int,asyncio.Task] = {}           # uid → running asyncio Task
 log_chat_info: Optional[Chat] = None
@@ -1087,6 +1095,7 @@ async def cancel_cmd(client, message):
     # Clear all sessions
     zip_sessions.pop(uid,None); merge_sessions.pop(uid,None)
     pending_state.pop(uid,None); pending_password.pop(uid,None)
+    PROFILE_PENDING.pop(uid,None)
     # Also clear ZIP queue if active
     q=ZIP_QUEUE_SESSIONS.get(uid)
     if q: q["cancelled"]=True; ZIP_QUEUE_SESSIONS.pop(uid,None)
@@ -1410,33 +1419,75 @@ async def profile_cmd(client, message):
             "<b>Profile Bulk Downloader</b>\n\n"
             "Usage: <code>/profile &lt;username&gt; [count]</code>\n\n"
             "Examples:\n"
-            "• <code>/profile natgeo</code> — latest 6 posts\n"
-            "• <code>/profile @natgeo 12</code> — latest 12 posts\n\n"
-            "<i>Max 50. Private accounts ke liye aapka account unhe follow karta ho.</i>")
+            "<code>/profile natgeo</code> - asks how many and which type\n"
+            "<code>/profile natgeo 25</code> - fetches 25 straight away\n\n"
+            "<i>Up to 200. Private accounts must be followed by the "
+            "configured session.</i>")
         return
 
     username = extract_username(args[0])
     if not username:
         await message.reply_text("Provide a valid username, for example <code>/profile natgeo</code>"); return
 
-    limit = 6
-    if len(args) > 1:
-        try: limit = max(1, min(int(args[1]), 50))
-        except ValueError: pass
+    # No count given: ask, rather than silently choosing one.
+    if len(args) < 2:
+        PROFILE_PENDING[uid] = {"username": username, "chat_id": message.chat.id}
+        await message.reply_text(
+            f"<b>@{username}</b>\n\nHow many posts, and which kind?",
+            reply_markup=InlineKeyboardMarkup([
+                [_btn("10", f"pf|10|all|{uid}", "primary"),
+                 _btn("25", f"pf|25|all|{uid}", "primary"),
+                 _btn("50", f"pf|50|all|{uid}", "primary")],
+                [_btn("All videos", f"pf|200|videos|{uid}", "success"),
+                 _btn("All photos", f"pf|200|photos|{uid}", "success")],
+                [_btn("Everything (200)", f"pf|200|all|{uid}", "success")],
+                [_btn("Cancel", f"pf|0|cancel|{uid}", "danger")],
+            ]))
+        return
+
+    limit = 25
+    try: limit = max(1, min(int(args[1]), 200))
+    except ValueError: pass
+    kind = "all"
+    if len(args) > 2 and args[2].lower() in ("videos", "photos", "all"):
+        kind = args[2].lower()
 
     if not await check_rate_limit(uid, message): return
     await get_or_create_user(uid)
-    status = await message.reply_text(f"<b>@{username}</b> ke posts fetch in progress…")
+    await _run_profile_download(client, message, message.from_user,
+                                username, limit, kind)
+
+
+async def _run_profile_download(client, message, user, username: str,
+                                limit: int, kind: str = "all"):
+    """Fetch and deliver a profile's posts, pacing the requests.
+
+    Instagram flags rapid sequential access as automation - which is what
+    gets an account challenged - so each download is spaced out and the
+    gap widens as the run gets longer.
+    """
+    from utils.instagram import (InstagramError, RateLimited,
+                                 fetch_profile_posts, rate_limit_remaining,
+                                 _fmt_duration)
+
+    uid = user.id
+    user_cancelled.pop(uid, None)
+    label = {"videos": "videos", "photos": "photos"}.get(kind, "posts")
+    status = await message.reply_text(
+        f"Reading <b>@{username}</b> - collecting up to {limit} {label}...")
+
+    async def _on_progress(found, target):
+        await _safe_edit(
+            status, f"Reading <b>@{username}</b> - {found}/{target} {label} found...")
 
     try:
-        posts, info = await fetch_profile_posts(username, limit)
+        posts, info = await fetch_profile_posts(username, limit, kind=kind,
+                                                on_progress=_on_progress)
     except RateLimited as e:
         await _safe_edit(status, _api_wall_message("profile", e.remaining)); return
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
-        # A bare "0, message=''" is aiohttp reporting a dropped connection,
-        # which reads like a crash. Say what actually happened.
         detail = str(e)
         if detail.startswith("0,") or "message=''" in detail:
             await _safe_edit(
@@ -1447,26 +1498,38 @@ async def profile_cmd(client, message):
                 "Reels and posts still work - send a link directly.\n"
                 "<i>See <code>/limits</code> for details.</i>")
         else:
-            await _safe_edit(status, f"Profile fetch failed:\n<code>{detail[:300]}</code>")
+            await _safe_edit(status, f"Profile lookup failed:\n<code>{detail[:300]}</code>")
         return
 
     if not posts:
-        await _safe_edit(status, f"<b>@{username}</b> has no public posts."); return
+        await _safe_edit(status, f"<b>@{username}</b> has no matching posts."); return
 
-    await _safe_edit(
-        status,
-        f"<b>{info['full_name'] or info['username']}</b> (@{info['username']})\n"
-        f"{info['followers']:,} followers • {info['posts_total']:,} posts\n\n"
-        f"<b>{len(posts)}</b> posts download ho rahe hain…")
+    capped = info.get("embed_capped") and len(posts) < limit
+    header = (f"<b>{info.get('full_name') or info['username']}</b> "
+              f"(@{info['username']})\n"
+              f"{info.get('followers', 0):,} followers - "
+              f"{info.get('posts_total', 0):,} posts\n\n"
+              f"Downloading <b>{len(posts)}</b> {label}...")
+    if capped:
+        header += ("\n\n<i>Only the six most recent are reachable without a "
+                   "working session; set INSTAGRAM_COOKIES for the full "
+                   "timeline.</i>")
+    await _safe_edit(status, header)
 
     done = failed = 0
+    total = len(posts)
     for i, post in enumerate(posts, 1):
         if user_cancelled.get(uid):
-            await client.send_message(message.chat.id, "Cancelled.",
-                                      reply_to_message_id=message.id)
-            break
+            await _safe_edit(
+                status,
+                f"<b>Cancelled.</b>\n\nDelivered {done} of {total} before stopping.")
+            user_cancelled.pop(uid, None)
+            return
         try:
-            await _safe_edit(status, f"Post <b>{i}/{len(posts)}</b> — @{info['username']}")
+            await _safe_edit(
+                status,
+                f"<b>{i}/{total}</b> - @{info['username']}\n"
+                f"Delivered: {done}" + (f"  Failed: {failed}" if failed else ""))
             task_id = uuid.uuid4().hex
             temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
             temp_root.mkdir(parents=True, exist_ok=True)
@@ -1479,25 +1542,33 @@ async def profile_cmd(client, message):
         except Exception:
             failed += 1
 
-        # If Instagram started rate-limiting mid-batch, stop and report the ETA
-        from utils.instagram import rate_limit_remaining
         rl = rate_limit_remaining()
         if rl > 0:
-            from utils.instagram import _fmt_duration
             await client.send_message(
                 message.chat.id,
-                f"⏳ <b>Rate limit reached</b> — {done}/{len(posts)} posts, the run stopped.\n\n"
-                f"⏱ <b>{_fmt_duration(rl)}</b> until the next attempt "
-                f"(<code>{rl}s</code>).",
+                f"<b>Rate limit reached</b> after {done}/{total}.\n\n"
+                f"Try again in <b>{_fmt_duration(rl)}</b>.",
                 reply_to_message_id=message.id)
             break
-        await asyncio.sleep(1.2)          # be gentle with Instagram
+
+        if i < total:
+            # Randomised, lengthening pauses look far less like a script.
+            base = 4.0 if i < 10 else (7.0 if i < 30 else 11.0)
+            delay = random.uniform(base, base * 1.8)
+            waited = 0.0
+            while waited < delay:
+                if user_cancelled.get(uid):
+                    break
+                step = min(0.5, delay - waited)
+                await asyncio.sleep(step)
+                waited += step
 
     user_cancelled.pop(uid, None)
-    await _safe_edit(
-        status,
-        f"<b>@{info['username']}</b> done!\n\n"
-        f"Downloaded: <b>{done}</b>" + (f"\nFailed: <b>{failed}</b>" if failed else ""))
+    summary = (f"<b>@{info['username']}</b> complete.\n\n"
+               f"Delivered: <b>{done}</b>")
+    if failed:
+        summary += f"\nFailed: <b>{failed}</b>"
+    await _safe_edit(status, summary)
 
 
 @app.on_message(filters.command(["story", "stories", "igstory"]))
@@ -2954,6 +3025,28 @@ async def callbacks(client, cq: CallbackQuery):
             await cq.message.reply_text(build_help(page),
                                         reply_markup=help_keyboard(page),
                                         disable_web_page_preview=True)
+        return
+    if data.startswith("pf|"):
+        try:
+            _, cnt, kind, owner = data.split("|", 3)
+            owner = int(owner)
+        except Exception:
+            await cq.answer(); return
+        if cq.from_user.id != owner:
+            await cq.answer("This prompt is not yours.", show_alert=True); return
+        pending = PROFILE_PENDING.pop(owner, None)
+        if not pending:
+            await cq.answer("This prompt has expired.", show_alert=True); return
+        if kind == "cancel":
+            await cq.answer("Cancelled")
+            try: await cq.message.edit_text("Cancelled.")
+            except Exception: pass
+            return
+        await cq.answer()
+        try: await cq.message.delete()
+        except Exception: pass
+        await _run_profile_download(client, cq.message, cq.from_user,
+                                    pending["username"], int(cnt), kind)
         return
     if data=="show_mystats":
         await cq.answer()

@@ -30,13 +30,14 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import random
 import os
 import re
 import time
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 
@@ -1542,65 +1543,174 @@ async def _profile_posts_from_embed(username: str, limit: int) -> Tuple[List[Dic
     return posts, info
 
 
-async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict], Dict]:
-    """Return (list of {shortcode,url,is_video,caption}, profile info)."""
-    username = (username or "").lstrip("@")
+async def _profile_posts_paginated(username: str, limit: int,
+                                   kind: str = "all",
+                                   on_progress=None) -> Tuple[List[Dict], Dict]:
+    """Walk a profile's timeline via the private API, page by page.
 
-    # The public embed is tried FIRST, always. web_profile_info answers 429
-    # to hosted addresses on every single call, so gating the embed behind
-    # "only when a cooldown is active" meant one failed embed attempt
-    # surfaced the cooldown wall instead of simply retrying — which is
-    # exactly the "instant timer" users saw.
+    The embed only ever exposes the six most recent posts, whatever the
+    account holds. This uses web_profile_info for the first page and then
+    follows end_cursor, which is the only way to reach older posts.
+    Requires working cookies; raises so the caller can fall back.
+    """
+    username = (username or "").strip().lstrip("@").lower()
+    jar = cookies_as_dict()
+    posts: List[Dict] = []
+    info: Dict = {}
+
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+        if jar:
+            session.cookie_jar.update_cookies(
+                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+
+        user = await _profile_info(session, username)
+        if user.get("is_private") and not user.get("followed_by_viewer"):
+            raise InstagramError(
+                f"<b>@{username}</b> is private and not followed by this account.")
+
+        user_id = user.get("id") or ""
+        info = {
+            "username": user.get("username") or username,
+            "full_name": _clean_text(user.get("full_name") or ""),
+            "biography": _clean_text(user.get("biography") or ""),
+            "followers": ((user.get("edge_followed_by") or {}).get("count")) or 0,
+            "posts_total": ((user.get("edge_owner_to_timeline_media") or {}).get("count")) or 0,
+            "is_private": bool(user.get("is_private")),
+            "profile_pic": user.get("profile_pic_url_hd") or user.get("profile_pic_url") or "",
+            "source": "api",
+        }
+
+        media = user.get("edge_owner_to_timeline_media") or {}
+        edges = media.get("edges") or []
+        page_info = media.get("page_info") or {}
+        cursor = page_info.get("end_cursor")
+        has_next = bool(page_info.get("has_next_page"))
+
+        while True:
+            for edge in edges:
+                node = edge.get("node") or {}
+                sc = node.get("shortcode")
+                if not sc:
+                    continue
+                is_video = bool(node.get("is_video"))
+                typename = (node.get("__typename") or "").lower()
+                is_carousel = "sidecar" in typename
+                # Honour the user's choice of what to collect
+                if kind == "videos" and not is_video:
+                    continue
+                if kind == "photos" and is_video:
+                    continue
+                cap = ""
+                ce = ((node.get("edge_media_to_caption") or {}).get("edges")) or []
+                if ce:
+                    cap = _clean_text(((ce[0] or {}).get("node") or {}).get("text") or "")
+                posts.append({
+                    "shortcode": sc,
+                    "url": f"https://www.instagram.com/p/{sc}/",
+                    "is_video": is_video,
+                    "is_carousel": is_carousel,
+                    "caption": cap,
+                })
+                if len(posts) >= limit:
+                    break
+
+            if len(posts) >= limit or not has_next or not cursor or not user_id:
+                break
+
+            if on_progress:
+                try:
+                    await on_progress(len(posts), limit)
+                except Exception:
+                    pass
+
+            # Pace the walk: Instagram flags rapid sequential paging as
+            # automation, which is what gets an account challenged.
+            await asyncio.sleep(random.uniform(2.5, 5.0))
+
+            edges, page_info = await _graphql_timeline_page(
+                session, user_id, cursor)
+            if not edges:
+                break
+            cursor = page_info.get("end_cursor")
+            has_next = bool(page_info.get("has_next_page"))
+
+    return posts[:limit], info
+
+
+async def _graphql_timeline_page(session: aiohttp.ClientSession, user_id: str,
+                                 cursor: str) -> Tuple[List[Dict], Dict]:
+    """One page of a profile timeline after the first."""
+    variables = json.dumps({"id": str(user_id), "first": 12, "after": cursor})
+    headers = _base_headers()
+    jar = cookies_as_dict()
+    if jar.get("csrftoken"):
+        headers["X-CSRFToken"] = jar["csrftoken"]
+
+    # query_hash form first, then the newer doc_id form.
+    attempts = [
+        ("https://www.instagram.com/graphql/query/"
+         f"?query_hash=e769aa130647d2354c40ea6a439bfc08&variables={quote(variables)}"),
+        ("https://www.instagram.com/graphql/query/"
+         f"?query_hash=58b6785bea111c67129decbe6a448951&variables={quote(variables)}"),
+    ]
+    for url in attempts:
+        try:
+            async with session.get(url, proxy=ig_proxy(), headers=headers,
+                                   timeout=aiohttp.ClientTimeout(total=30)) as r:
+                if r.status == 429:
+                    note_rate_limit()
+                    return [], {}
+                if r.status != 200:
+                    continue
+                data = await r.json(content_type=None)
+        except Exception:
+            continue
+        media = (((data.get("data") or {}).get("user") or {})
+                 .get("edge_owner_to_timeline_media")) or {}
+        edges = media.get("edges") or []
+        if edges:
+            return edges, (media.get("page_info") or {})
+    return [], {}
+
+
+async def fetch_profile_posts(username: str, limit: int = 12,
+                              kind: str = "all",
+                              on_progress=None) -> Tuple[List[Dict], Dict]:
+    """Return (posts, profile info) for a profile.
+
+    `kind` filters what is collected: "all", "videos" or "photos".
+
+    The paginated private API is tried first because it can reach the
+    whole timeline; the public embed is the fallback but only ever
+    exposes the six most recent posts, whatever the account holds.
+    """
+    username = (username or "").strip().lstrip("@").lower()
+
+    if has_cookies():
+        try:
+            posts, info = await _profile_posts_paginated(
+                username, limit, kind=kind, on_progress=on_progress)
+            if posts:
+                return posts, info
+        except RateLimited:
+            pass          # fall through to the embed
+        except InstagramError:
+            raise         # private / missing account: report it
+        except Exception:
+            pass
+
     posts, info = await _profile_posts_from_embed(username, limit)
     if posts:
+        if kind == "videos":
+            posts = [p for p in posts if p.get("is_video")]
+        elif kind == "photos":
+            posts = [p for p in posts if not p.get("is_video")]
+        info = dict(info)
+        info["embed_capped"] = True
         return posts, info
 
-    jar = cookies_as_dict()
-    cookie_jar = aiohttp.CookieJar(unsafe=True)
-    try:
-        async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
-            if jar:
-                session.cookie_jar.update_cookies(
-                    jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
-            user = await _profile_info(session, username)
-    except InstagramError:
-        posts, info = await _profile_posts_from_embed(username, limit)
-        if posts:
-            return posts, info
-        raise
-
-    if user.get("is_private") and not user.get("followed_by_viewer"):
-        raise InstagramError(
-            f"<b>@{username}</b> private hai aur aap follow nahi karte.")
-
-    edges = ((user.get("edge_owner_to_timeline_media") or {}).get("edges")) or []
-    posts: List[Dict] = []
-    for edge in edges[: max(1, min(limit, 50))]:
-        node = edge.get("node") or {}
-        sc = node.get("shortcode")
-        if not sc:
-            continue
-        cap = ""
-        cap_edges = ((node.get("edge_media_to_caption") or {}).get("edges")) or []
-        if cap_edges:
-            cap = _clean_text(((cap_edges[0] or {}).get("node") or {}).get("text") or "")
-        posts.append({
-            "shortcode": sc,
-            "url": f"https://www.instagram.com/p/{sc}/",
-            "is_video": bool(node.get("is_video")),
-            "caption": cap,
-        })
-
-    info = {
-        "username": user.get("username") or username,
-        "full_name": _clean_text(user.get("full_name") or ""),
-        "biography": _clean_text(user.get("biography") or ""),
-        "followers": ((user.get("edge_followed_by") or {}).get("count")) or 0,
-        "posts_total": ((user.get("edge_owner_to_timeline_media") or {}).get("count")) or 0,
-        "is_private": bool(user.get("is_private")),
-        "profile_pic": user.get("profile_pic_url_hd") or user.get("profile_pic_url") or "",
-    }
-    return posts, info
+    raise InstagramError(_friendly_error("profile"))
 
 
 async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
