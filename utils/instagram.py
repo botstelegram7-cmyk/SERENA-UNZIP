@@ -222,6 +222,11 @@ def cookies_as_dict() -> Dict[str, str]:
     return {k: v for k, v in jar.items() if k and v}
 
 
+def ig_proxy() -> Optional[str]:
+    """Configured Instagram proxy, if any."""
+    return (Config.INSTAGRAM_PROXY or "").strip() or None
+
+
 def _base_headers(mobile: bool = False) -> Dict[str, str]:
     return {
         "User-Agent": MOBILE_UA if mobile else DESKTOP_UA,
@@ -437,7 +442,7 @@ async def _ensure_csrf(session: aiohttp.ClientSession) -> Optional[str]:
     try:
         async with session.get(
             "https://www.instagram.com/",
-            headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
+            proxy=ig_proxy(), headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
             timeout=aiohttp.ClientTimeout(total=25),
         ) as r:
             await r.read()
@@ -507,7 +512,7 @@ async def _try_api_v1(session: aiohttp.ClientSession, shortcode: str) -> Tuple[L
             headers["X-CSRFToken"] = csrf
         try:
             async with session.get(
-                url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)
+                url, proxy=ig_proxy(), headers=headers, timeout=aiohttp.ClientTimeout(total=30)
             ) as r:
                 if r.status == 429:
                     note_rate_limit()
@@ -530,7 +535,7 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[Li
     try:
         async with session.get(
             url,
-            headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
+            proxy=ig_proxy(), headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
             if r.status != 200:
@@ -612,7 +617,7 @@ async def _try_opengraph(session: aiohttp.ClientSession, url: str) -> Tuple[List
     try:
         async with session.get(
             url,
-            headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
+            proxy=ig_proxy(), headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
             if r.status != 200:
@@ -857,7 +862,7 @@ async def _download_one(
             # sock_read guards against a CDN that stalls mid-body: without
             # it a stalled transfer hangs until the total timeout expires.
             async with session.get(
-                media_url, headers=headers,
+                media_url, proxy=ig_proxy(), headers=headers,
                 timeout=aiohttp.ClientTimeout(total=900, sock_read=45,
                                               sock_connect=30)
             ) as r:
@@ -1001,7 +1006,8 @@ async def _ytdlp_fallback(url: str, output_dir: str, write_info: bool = False) -
         # Prefer a single progressive MP4 (no ffmpeg merge needed), then fall
         # back to merging. Avoids failures on hosts without ffmpeg.
         "--format",
-        "best[ext=mp4][vcodec!=none][acodec!=none]/bestvideo*+bestaudio/best",
+        "best[ext=mp4][vcodec!=none][acodec!=none]/"
+        "bestvideo*+bestaudio/bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "--output", out_tmpl,
         "--yes-playlist",
@@ -1385,7 +1391,7 @@ async def _profile_info(session: aiohttp.ClientSession, username: str) -> Dict:
     if jar.get("csrftoken"):
         headers["X-CSRFToken"] = jar["csrftoken"]
     url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
-    async with session.get(url, headers=headers,
+    async with session.get(url, proxy=ig_proxy(), headers=headers,
                            timeout=aiohttp.ClientTimeout(total=30)) as r:
         if r.status == 404:
             raise InstagramError(f"<b>@{username}</b> nahi mila.")
@@ -1431,7 +1437,7 @@ async def _profile_posts_from_embed(username: str, limit: int) -> Tuple[List[Dic
                         jar,
                         response_url=aiohttp.helpers.URL("https://www.instagram.com"))
                 async with session.get(
-                        url, headers=_base_headers(), allow_redirects=True,
+                        url, proxy=ig_proxy(), headers=_base_headers(), allow_redirects=True,
                         timeout=aiohttp.ClientTimeout(total=30)) as r:
                     if r.status == 200:
                         raw = await r.text()
@@ -1573,7 +1579,7 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
             headers["X-CSRFToken"] = jar["csrftoken"]
         url = ("https://i.instagram.com/api/v1/feed/reels_media/"
                f"?reel_ids={uid}")
-        async with session.get(url, headers=headers,
+        async with session.get(url, proxy=ig_proxy(), headers=headers,
                                timeout=aiohttp.ClientTimeout(total=30)) as r:
             if r.status in (401, 403):
                 raise InstagramError(_friendly_error("story"))
@@ -1695,7 +1701,7 @@ async def validate_cookies(force: bool = False) -> Tuple[bool, str]:
                 headers["X-CSRFToken"] = jar["csrftoken"]
             async with session.get(
                 "https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram",
-                headers=headers, timeout=aiohttp.ClientTimeout(total=20),
+                proxy=ig_proxy(), headers=headers, timeout=aiohttp.ClientTimeout(total=20),
             ) as r:
                 if r.status == 200:
                     try:
@@ -1765,50 +1771,65 @@ async def diagnose() -> str:
         probes = [
             ("web_profile_info",
              "https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram"),
+            # A real, permanently-public profile embed. The previous probe
+            # used an invented shortcode, so its result said nothing about
+            # whether the embed path actually works.
             ("embed page",
-             "https://www.instagram.com/p/C1234567890/embed/captioned/"),
+             "https://www.instagram.com/instagram/embed/"),
         ]
         results: Dict[str, int] = {}
         for name, url in probes:
-            try:
-                async with session.get(
-                    url, headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=15)) as r:
-                    body = await r.read()
-                    results[name] = r.status
-                    icon = {200: "", 401: "", 403: "",
-                            429: "⏳", 404: ""}.get(r.status, "")
-                    note = ""
-                    if r.status == 429:
-                        note = " — rate-limited"
-                    elif r.status in (401, 403):
-                        note = " — login required / cookies rejected"
-                    elif r.status == 200 and len(body) < 100:
-                        note = " — empty response"
-                    out.append(f"{icon} {name}: <b>HTTP {r.status}</b>"
-                               f" ({len(body)} bytes){note}")
-            except Exception as e:
+            last_exc = None
+            for attempt in range(2):
+                try:
+                    async with session.get(
+                        url, proxy=ig_proxy(), headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=15)) as r:
+                        body = await r.read()
+                        results[name] = r.status
+                        break
+                except Exception as e:
+                    last_exc = e
+                    if attempt == 0:
+                        await asyncio.sleep(1.0)
+            else:
                 results[name] = -1
+                out.append(f"{name}: <code>{str(last_exc)[:60]}</code>")
+                continue
+            try:
+                status = results[name]
+                note = ""
+                if status == 429:
+                    note = " - rate-limited"
+                elif status in (401, 403):
+                    note = " - login required / cookies rejected"
+                elif status == 200 and len(body) < 100:
+                    note = " - empty response"
+                out.append(f"{name}: <b>HTTP {status}</b>"
+                           f" ({len(body)} bytes){note}")
+            except Exception as e:
                 out.append(f"{name}: <code>{str(e)[:60]}</code>")
 
     api_ok = results.get("web_profile_info") == 200
     embed_ok = results.get("embed page") == 200
     out.append("")
     if api_ok and embed_ok:
-        out.append("<b>Verdict:</b> Sab endpoints kaam kar rahe hain.")
+        out.append("<b>Verdict:</b> all endpoints are responding.")
     elif embed_ok and not api_ok:
         out.append(
-            "<b>Verdict:</b> Embed chal raha hai, private API rate-limited hai.\n"
-            "• <b>Reels/posts</b> download honge (embed se)\n"
-            "• <b>Stories aur /profile</b> nahi chalenge — unke liye API zaroori hai\n\n"
-            "<i>Ye IP ka partial block hai. Kuch ghante baad API khud "
-            "khul jati hai; permanent fix ke liye residential proxy chahiye.</i>")
+            "<b>Verdict:</b> the embed works; the private API is refused.\n"
+            "- <b>Reels and posts</b> download normally\n"
+            "- <b>/profile</b> uses the embed and returns recent posts\n"
+            "- <b>Stories</b> need the private API and will not work\n\n"
+            "<i>A partial address block. Set INSTAGRAM_PROXY for a "
+            "permanent fix.</i>")
     elif not embed_ok and not api_ok:
         out.append(
-            "<b>Verdict:</b> Koi endpoint kaam nahi kar raha — IP block hai.\n"
-            "<i>Cookies se fix nahi hoga; proxy ya doosra host chahiye.</i>")
+            "<b>Verdict:</b> no endpoint responded.\n"
+            "<i>Cookies cannot fix an address block - set INSTAGRAM_PROXY "
+            "or move to a different host.</i>")
     else:
-        out.append("<b>Verdict:</b> Mila-jula response — upar details dekho.")
+        out.append("<b>Verdict:</b> mixed results - see the details above.")
     return "\n".join(out)
 
 

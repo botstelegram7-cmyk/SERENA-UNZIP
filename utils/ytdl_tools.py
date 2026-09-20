@@ -245,11 +245,13 @@ async def download_video(url: str, output_dir: str, format_id: str = "best", hei
                 f"best[ext=mp4][height<={height}][vcodec!=none][acodec!=none]"
                 f"/best[height<={height}][ext=mp4]"
                 f"/bestvideo[height<={height}]+bestaudio"
+                f"/bestvideo*[height<={height}]+bestaudio"
                 f"/best[height<={height}]/best"
             )
         else:
             fmt_str = (
                 "best[ext=mp4][vcodec!=none][acodec!=none]"
+                "/bestvideo*+bestaudio"
                 "/bestvideo+bestaudio"
                 "/best[ext=mp4]/best"
             )
@@ -330,6 +332,76 @@ BLOCKED_PLATFORMS = [
 def is_supported_url(url: str) -> bool:
     u = (url or "").lower()
     return not any(b in u for b in BLOCKED_PLATFORMS)
+
+
+async def youtube_diagnose() -> str:
+    """Report whether YOUTUBE_COOKIES is usable, and what YouTube says.
+
+    The user set cookies and still saw failures, so the useful question is
+    whether the file is well formed and actually being accepted.
+    """
+    out = ["<b>YouTube Diagnostics</b>", ""]
+
+    raw = (Config.YOUTUBE_COOKIES or "")
+    if not raw.strip():
+        out.append("Cookies: <b>not set</b>")
+    else:
+        path = write_youtube_cookie_file()
+        lines = names = 0
+        essential = set()
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    lines += 1
+                    parts = re.split(r"\t+|\s{2,}", line)
+                    if len(parts) >= 7:
+                        names += 1
+                        essential.add(parts[5])
+        except Exception as e:
+            out.append(f"Cookies: <b>unreadable</b> ({str(e)[:40]})")
+            lines = -1
+
+        if lines == 0:
+            out.append("Cookies: <b>set but no valid rows parsed</b>")
+            out.append("<i>The value must be Netscape cookies.txt: seven "
+                       "TAB-separated fields per line. A browser 'k=v; k=v' "
+                       "string will not work here.</i>")
+        elif lines > 0:
+            out.append(f"Cookies: <b>{names} parsed</b> from {lines} rows")
+            have = [k for k in ("SID", "__Secure-1PSID", "__Secure-3PSID",
+                                "LOGIN_INFO", "HSID", "SSID") if k in essential]
+            out.append("Session keys: " +
+                       (", ".join(f"<code>{k}</code>" for k in have)
+                        if have else "<b>none found</b>"))
+            if not have:
+                out.append("<i>Without a login cookie such as LOGIN_INFO or "
+                           "__Secure-1PSID, YouTube treats the request as "
+                           "signed out. Export while logged in.</i>")
+
+    out += ["", f"Proxy: {'set' if Config.YTDL_PROXY else 'not set'}", ""]
+
+    # Ask yt-dlp itself, using exactly the flags the bot would use
+    cmd = ["yt-dlp", "--no-warnings", "--simulate",
+           *ytdl_network_args("https://www.youtube.com/"),
+           "--print", "%(title)s",
+           "https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+    ret, sout, serr = await _run(cmd, timeout=60)
+    if ret == 0 and sout.strip():
+        out.append(f"Live check: <b>working</b> - {sout.strip()[:60]}")
+    else:
+        msg = (serr or "").strip().splitlines()
+        first = next((l for l in msg if "ERROR" in l), (msg[-1] if msg else ""))
+        low = first.lower()
+        if "not a bot" in low or "player response" in low:
+            out.append("Live check: <b>refused</b> - bot verification")
+            out.append("<i>Cookies are missing, expired, or from a signed-out "
+                       "session.</i>")
+        else:
+            out.append(f"Live check: <b>failed</b>\n<code>{first[:160]}</code>")
+    return "\n".join(out)
 
 
 def youtube_block_help() -> str:

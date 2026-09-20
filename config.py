@@ -88,6 +88,11 @@ class Config:
     # Optional proxy for yt-dlp (YouTube and friends). Same format as
     # TERABOX_PROXY: http://user:pass@host:port or socks5://host:1080
     YTDL_PROXY         = os.getenv("YTDL_PROXY", "").strip()
+
+    # Optional proxy for Instagram. The private API refuses hosted
+    # addresses regardless of cookie validity, so this is the only
+    # dependable fix for /story and for profiles beyond the embed window.
+    INSTAGRAM_PROXY    = os.getenv("INSTAGRAM_PROXY", "").strip()
     YTDL_MAX_SIZE_MB   = int(os.getenv("YTDL_MAX_SIZE_MB", "2000"))
     YTDL_TIMEOUT_SEC   = int(os.getenv("YTDL_TIMEOUT_SEC", "600"))   # 10 min max per download
     COOKIE_FILE_PATH   = "/tmp/yt_cookies.txt"

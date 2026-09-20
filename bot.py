@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.2.0"
-BOT_CODENAME = "Rich Messages"
+BOT_VERSION  = "v3.2.1"
+BOT_CODENAME = "Honest Diagnostics"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.2.1": [
+        "Fixed YouTube \"Requested format is not available\" - selectors now always end in a usable fallback",
+        "New <code>/ytcheck</code> verifies the YouTube cookie file and reports what is wrong",
+        "<code>/igtest</code> no longer probes an invented URL, so its verdict is trustworthy",
+        "<code>INSTAGRAM_PROXY</code> added for the private API",
+    ],
     "v3.2.0": [
         "<code>/limits</code> now renders as a real table with coloured buttons",
         "Rich message support added over the raw Bot API, including ephemeral messages",
@@ -1172,6 +1178,18 @@ async def tbtest_cmd(client, message):
         await _safe_edit(st, await diagnose(args[0] if args else ""))
     except Exception as e:
         await _safe_edit(st, f"<code>{str(e)[:250]}</code>")
+
+
+@app.on_message(filters.command(["ytcheck", "ytdiag", "yttest"]))
+async def ytcheck_cmd(client, message):
+    """Owner: verify the YouTube cookie file is well formed and accepted."""
+    if not message.from_user or not is_owner(message.from_user.id): return
+    from utils.ytdl_tools import youtube_diagnose
+    st = await message.reply_text("Checking YouTube access...")
+    try:
+        await _safe_edit(st, await youtube_diagnose())
+    except Exception as e:
+        await _safe_edit(st, f"Diagnostics failed:\n<code>{str(e)[:250]}</code>")
 
 
 @app.on_message(filters.command(["igtest", "igdiag", "diagnose"]))
@@ -4619,8 +4637,12 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
            "--no-playlist",
            "--max-filesize", f"{Config.YTDL_MAX_SIZE_MB}M",
            # Prefer a ready-made MP4 so no ffmpeg merge is required
+           # A progressive MP4 avoids an ffmpeg merge when one exists, but
+           # YouTube rarely offers them now, so every fallback ends in a
+           # bare "best" - otherwise the selector can match nothing and
+           # yt-dlp reports "Requested format is not available".
            "--format", ("best[ext=mp4][vcodec!=none][acodec!=none]/"
-                        "bestvideo*+bestaudio/best"),
+                        "bestvideo*+bestaudio/bestvideo+bestaudio/best"),
            "--merge-output-format", "mp4",
            "--output", str(out_dir/"%(title).80s.%(ext)s")]
     if cookie_path:
