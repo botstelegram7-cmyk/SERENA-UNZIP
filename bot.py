@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.1.0"
-BOT_CODENAME = "YouTube Restored"
+BOT_VERSION  = "v3.1.1"
+BOT_CODENAME = "Steadier Fallbacks"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.1.1": [
+        "Profile lookups survive Instagram dropping the connection - retried, then explained",
+        "YouTube refusals recognised in all their wordings and answered with guidance",
+        "yt-dlp pinned to a current release; stale builds fail to read YouTube's player",
+    ],
     "v3.1.0": [
         "Fixed YouTube links being rejected - they were on an internal blocklist",
         "<code>/profile</code> now falls back to the public embed when the private API refuses",
@@ -1194,7 +1199,20 @@ async def profile_cmd(client, message):
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
-        await _safe_edit(status, f"Profile fetch failed:\n<code>{str(e)[:300]}</code>"); return
+        # A bare "0, message=''" is aiohttp reporting a dropped connection,
+        # which reads like a crash. Say what actually happened.
+        detail = str(e)
+        if detail.startswith("0,") or "message=''" in detail:
+            await _safe_edit(
+                status,
+                "<b>Instagram closed the connection.</b>\n\n"
+                "The request was refused before any reply was sent, which is "
+                "how Instagram turns away hosted servers.\n\n"
+                "Reels and posts still work - send a link directly.\n"
+                "<i>See <code>/limits</code> for details.</i>")
+        else:
+            await _safe_edit(status, f"Profile fetch failed:\n<code>{detail[:300]}</code>")
+        return
 
     if not posts:
         await _safe_edit(status, f"<b>@{username}</b> has no public posts."); return
@@ -4585,24 +4603,15 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
                 if "ERROR" in line:
                     detail = line.strip()[:200]; break
         low = detail.lower()
+        # "Failed to extract any player response" is the same YouTube wall,
+        # just worded differently depending on the extraction path taken.
         blocked = any(k in low for k in (
             "sign in to confirm", "not a bot", "429", "too many requests",
-            "unable to download webpage", "http error 403"))
+            "unable to download webpage", "http error 403",
+            "failed to extract any player response", "player response"))
         if blocked:
-            from utils.ytdl_tools import has_youtube_cookies
-            await _safe_edit(
-                status,
-                "<b>This site refused the request.</b>\n\n"
-                "It is rejecting the server's address rather than the link "
-                "itself, which is why the same URL opens fine in a browser.\n\n"
-                + ("<i>Cookies are configured; the address is still being "
-                   "refused. A proxy in <code>YTDL_PROXY</code> is the "
-                   "remaining option.</i>"
-                   if has_youtube_cookies() else
-                   "<i>Operator: set <code>YOUTUBE_COOKIES</code> with a "
-                   "cookies.txt export from a signed-in browser, or set "
-                   "<code>YTDL_PROXY</code>.</i>")
-                + "\n\nSee <code>/limits</code> for details.")
+            from utils.ytdl_tools import youtube_block_help
+            await _safe_edit(status, youtube_block_help())
         elif detail:
             await _safe_edit(status, f"<code>{detail}</code>")
         return False

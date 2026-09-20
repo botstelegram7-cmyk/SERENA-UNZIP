@@ -17,7 +17,7 @@ python-dotenv==1.0.1
 fastapi==0.115.0
 uvicorn==0.30.6
 
-yt-dlp
+yt-dlp>=2026.08.19
 Pillow>=10.0.0
 pillow-heif>=0.16.0
 mutagen>=1.47.0

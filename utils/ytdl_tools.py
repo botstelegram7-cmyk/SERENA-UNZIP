@@ -332,6 +332,28 @@ def is_supported_url(url: str) -> bool:
     return not any(b in u for b in BLOCKED_PLATFORMS)
 
 
+def youtube_block_help() -> str:
+    """Guidance for YouTube's bot-detection wall.
+
+    Seen as either "Sign in to confirm you're not a bot" or "Failed to
+    extract any player response" - the same refusal, worded differently
+    depending on which extraction path was tried.
+    """
+    if has_youtube_cookies():
+        return (
+            "<b>YouTube refused this download.</b>\n\n"
+            "Cookies are configured but were still rejected. Either they have "
+            "expired, or this address is flagged regardless of the session.\n\n"
+            "<i>Export fresh cookies from a signed-in browser, or set "
+            "<code>YTDL_PROXY</code>.</i>")
+    return (
+        "<b>YouTube refused this download.</b>\n\n"
+        "It asks hosted servers to confirm they are not a bot. The link is "
+        "fine - the address making the request is the problem.\n\n"
+        "<i>Operator: set <code>YOUTUBE_COOKIES</code> to a cookies.txt "
+        "export from a signed-in browser. See <code>/limits</code>.</i>")
+
+
 def blocked_reason(url: str) -> str:
     """Explain a refusal, so it does not look like a malfunction."""
     u = (url or "").lower()

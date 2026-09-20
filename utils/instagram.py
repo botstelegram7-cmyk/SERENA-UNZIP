@@ -1416,16 +1416,36 @@ async def _profile_posts_from_embed(username: str, limit: int) -> Tuple[List[Dic
     """
     url = f"https://www.instagram.com/{username}/embed/"
     jar = cookies_as_dict()
-    cookie_jar = aiohttp.CookieJar(unsafe=True)
-    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
-        if jar:
-            session.cookie_jar.update_cookies(
-                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
-        async with session.get(url, headers=_base_headers(),
-                               timeout=aiohttp.ClientTimeout(total=30)) as r:
-            if r.status != 200:
-                return [], {}
-            raw = await r.text()
+
+    # Instagram sometimes drops the connection outright rather than
+    # answering with a status code; aiohttp surfaces that as
+    # ClientResponseError(status=0) or a ClientError. Retry briefly and
+    # never let it escape - the caller treats an empty result as "no data".
+    raw = ""
+    for attempt in range(3):
+        cookie_jar = aiohttp.CookieJar(unsafe=True)
+        try:
+            async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+                if jar:
+                    session.cookie_jar.update_cookies(
+                        jar,
+                        response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+                async with session.get(
+                        url, headers=_base_headers(), allow_redirects=True,
+                        timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    if r.status == 200:
+                        raw = await r.text()
+                        if raw:
+                            break
+                    elif r.status == 429:
+                        note_rate_limit()
+        except Exception:
+            pass
+        if attempt < 2:
+            await asyncio.sleep(1.5 * (attempt + 1))
+
+    if not raw:
+        return [], {}
 
     try:
         txt = raw.encode("utf-8", "ignore").decode("unicode_escape", "ignore")
