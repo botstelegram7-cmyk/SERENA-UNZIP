@@ -1212,9 +1212,9 @@ def build_post_caption(meta: Dict, url: str = "", extra: str = "") -> str:
         music = f"{tag}: <b>{_esc(label)}</b>"
 
     stats = []
-    if meta.get("likes"):
+    if (meta.get("likes") or 0) > 0:
         stats.append(f"Likes <b>{int(meta['likes']):,}</b>")
-    if meta.get("views"):
+    if (meta.get("views") or 0) > 0:
         stats.append(f"Views <b>{int(meta['views']):,}</b>")
     if stats:
         parts.append("  \u2022  ".join(stats))
@@ -1509,18 +1509,32 @@ async def _profile_posts_from_embed(username: str, limit: int) -> Tuple[List[Dic
         txt = raw
     txt = txt.replace("\\/", "/")
 
-    seen, codes = set(), []
-    for sc in re.findall(r'"shortcode"\s*:\s*"([A-Za-z0-9_-]{5,})"', txt):
-        if sc not in seen:
-            seen.add(sc)
-            codes.append(sc)
-    if not codes:
+    # Pair each shortcode with the is_video flag that follows it. Marking
+    # everything as a photo made the "All photos" filter hand back reels.
+    seen, entries = set(), []
+    pending = None
+    for key, val in re.findall(
+            r'"(shortcode|is_video)"\s*:\s*"?([A-Za-z0-9_-]+)"?', txt):
+        if key == "shortcode":
+            if pending and pending not in seen:
+                seen.add(pending)
+                entries.append((pending, False))
+            pending = val
+        elif pending is not None:
+            if pending not in seen:
+                seen.add(pending)
+                entries.append((pending, val == "true"))
+            pending = None
+    if pending and pending not in seen:
+        seen.add(pending)
+        entries.append((pending, False))
+    if not entries:
         return [], {}
 
     posts = [{"shortcode": sc,
-              "url": f"https://www.instagram.com/p/{sc}/",
-              "is_video": False, "caption": ""}
-             for sc in codes[: max(1, min(limit, 50))]]
+              "url": f"https://www.instagram.com/{'reel' if vid else 'p'}/{sc}/",
+              "is_video": vid, "caption": ""}
+             for sc, vid in entries[: max(1, min(limit, 50))]]
 
     def _first_int(pattern: str) -> int:
         m = re.search(pattern, txt)

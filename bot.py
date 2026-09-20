@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.5.0"
-BOT_CODENAME = "Paced Profiles"
+BOT_VERSION  = "v3.5.1"
+BOT_CODENAME = "Correct Filters"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.5.1": [
+        "Fixed the photo and video filters returning the wrong media",
+        "A successful download no longer aborts the run with a stale rate limit",
+        "Hidden like counts are omitted instead of showing -1",
+        "Empty filter results now explain what happened",
+    ],
     "v3.5.0": [
         "<code>/profile</code> now reaches the whole timeline, not just six posts",
         "It asks how many posts and whether to fetch videos, photos or both",
@@ -1502,7 +1508,15 @@ async def _run_profile_download(client, message, user, username: str,
         return
 
     if not posts:
-        await _safe_edit(status, f"<b>@{username}</b> has no matching posts."); return
+        what = {"videos": "videos", "photos": "photos"}.get(kind)
+        if what:
+            await _safe_edit(
+                status,
+                f"<b>@{username}</b> has no {what} in the posts that could be "
+                f"read.\n\n<i>Try 'Everything' instead.</i>")
+        else:
+            await _safe_edit(status, f"<b>@{username}</b> has no readable posts.")
+        return
 
     capped = info.get("embed_capped") and len(posts) < limit
     header = (f"<b>{info.get('full_name') or info['username']}</b> "
@@ -1525,6 +1539,7 @@ async def _run_profile_download(client, message, user, username: str,
                 f"<b>Cancelled.</b>\n\nDelivered {done} of {total} before stopping.")
             user_cancelled.pop(uid, None)
             return
+        sent = False
         try:
             await _safe_edit(
                 status,
@@ -1542,11 +1557,18 @@ async def _run_profile_download(client, message, user, username: str,
         except Exception:
             failed += 1
 
+        # A cooldown flag set by one strategy that later succeeded is stale:
+        # the item downloaded fine, so do not abort the run on it. Only stop
+        # when the item actually failed AND Instagram is refusing us.
         rl = rate_limit_remaining()
-        if rl > 0:
+        if rl > 0 and sent:
+            from utils.instagram import clear_rate_limit
+            clear_rate_limit()
+        elif rl > 0:
             await client.send_message(
                 message.chat.id,
-                f"<b>Rate limit reached</b> after {done}/{total}.\n\n"
+                f"<b>Instagram is rate limiting this account.</b>\n\n"
+                f"Delivered {done} of {total} before stopping.\n"
                 f"Try again in <b>{_fmt_duration(rl)}</b>.",
                 reply_to_message_id=message.id)
             break
