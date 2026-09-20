@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.3.0"
-BOT_CODENAME = "Rich Throughout"
+BOT_VERSION  = "v3.4.0"
+BOT_CODENAME = "Reels Restored"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.4.0": [
+        "Fixed reel, story and highlight downloads failing to parse",
+        "Instagram embed now requested with full browser headers",
+        "Rich messages extended to start, help, settings, stats and version",
+        "Embed parser handles Instagram's deeper escaping",
+    ],
     "v3.3.0": [
         "Fixed <code>/profile</code> returning nothing for usernames with capital letters",
         "Rich messages now used across help, version and status notices",
@@ -686,6 +692,40 @@ async def start_cmd(client, message):
          f"1800 other sites \u2014 simply paste a link.\n\n"
          f"Plan: <b>{prem}</b>\n"
          f"Send a file or a link to begin, or browse <code>/help</code>.")
+    try:
+        from utils import richmsg as R
+        blocks = [
+            R.paragraph(R.bold(f"Welcome, {name}")),
+            R.paragraph(f"{Config.BOT_NAME} handles the tedious part of "
+                        "moving files through Telegram - extracting, "
+                        "converting and fetching, without leaving the chat."),
+            R.table(
+                [[R.cell(R.bold("Capability"), header=True),
+                  R.cell(R.bold("Details"), header=True)],
+                 [R.cell("Archives"), R.cell("Twenty formats, encrypted included")],
+                 [R.cell("Media"),    R.cell("Compress, merge, split, watermark")],
+                 [R.cell("Downloads"),R.cell("Instagram, Drive, direct links")],
+                 [R.cell("Plan"),     R.cell(prem)]],
+                bordered=True, striped=True, compact=True),
+            R.expandable_quote(
+                "Forward any archive and the extraction menu appears. Paste "
+                "a link and the download starts on its own. No command is "
+                "needed for either.",
+                credit="Getting started"),
+            R.buttons([
+                R.button("Commands", callback_data="show_help", style="primary"),
+                R.button("Settings", callback_data="open_settings", style="primary"),
+                R.button("My Stats", callback_data="show_mystats", style="primary"),
+            ]),
+            R.buttons([
+                R.button("Premium", callback_data="premium_info", style="success"),
+                R.button("Limitations", callback_data="help:limits", style="danger"),
+            ]),
+        ]
+        if await R.send(message.chat.id, blocks, reply_to=message.id):
+            return
+    except Exception:
+        pass
     if Config.START_PIC: await message.reply_photo(Config.START_PIC,caption=cap,reply_markup=main_keyboard())
     else: await message.reply_text(cap,reply_markup=main_keyboard())
 
@@ -2818,6 +2858,32 @@ async def _send_mystats(client, user, dest):
         f"Caption: <code>{cfg.get('caption_base') or 'None'}</code>\n"
         f"Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>"
     )
+    try:
+        from utils import richmsg as R
+        blocks = [
+            R.paragraph(R.bold("Your Account")),
+            R.table(
+                [[R.cell(R.bold("Item"), header=True),
+                  R.cell(R.bold("Value"), header=True)],
+                 [R.cell("Name"),        R.cell(str(user.first_name or "-"))],
+                 [R.cell("ID"),          R.cell(R.code(str(uid)))],
+                 [R.cell("Plan"),        R.cell(prem_str)],
+                 [R.cell("Tasks today"), R.cell(
+                     f"{stats.get('daily_tasks',0)} / {Config.FREE_DAILY_TASK_LIMIT}")],
+                 [R.cell("Data today"),  R.cell(
+                     f"{stats.get('daily_size_mb',0):.1f} / {Config.FREE_DAILY_SIZE_MB} MB")],
+                 [R.cell("Total tasks"), R.cell(str(stats.get('total_tasks',0)))],
+                 [R.cell("Referrals"),   R.cell(str(ref_count))]],
+                bordered=True, striped=True, compact=True),
+            R.buttons([
+                R.button("Settings", callback_data="open_settings", style="primary"),
+                R.button("Premium", callback_data="premium_info", style="success"),
+            ]),
+        ]
+        if await R.send(dest.chat.id, blocks, reply_to=dest.id):
+            return
+    except Exception:
+        pass
     await dest.reply_text(text)
 
 
@@ -2832,6 +2898,38 @@ async def _send_settings(client, user, dest):
         f"Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
         "Use buttons below:"
     )
+    try:
+        from utils import richmsg as R
+        blocks = [
+            R.paragraph(R.bold("Your Settings")),
+            R.table(
+                [[R.cell(R.bold("Setting"), header=True),
+                  R.cell(R.bold("Current"), header=True)],
+                 [R.cell("Caption base"), R.cell(R.code(cfg.get("caption_base") or "None"))],
+                 [R.cell("Replace from"), R.cell(R.code(cfg.get("replace_from") or "None"))],
+                 [R.cell("Replace to"),   R.cell(R.code(cfg.get("replace_to") or "None"))],
+                 [R.cell("Thumbnail"),    R.cell(R.code(cfg.get("thumb_mode", "random")))]],
+                bordered=True, striped=True, compact=True),
+            R.expandable_quote(
+                "The caption base is prefixed to every uploaded file and "
+                "numbered automatically. Replace rules rewrite filenames "
+                "before upload.",
+                credit="What these do"),
+            R.buttons([
+                R.button("Caption", callback_data="settings:caption", style="primary"),
+                R.button("Replace", callback_data="settings:replace", style="primary"),
+                R.button("Orig Thumb", callback_data="settings:thumb:original",
+                         style="primary"),
+            ]),
+            R.buttons([
+                R.button("Reset", callback_data="settings:reset", style="danger"),
+                R.button("Back", callback_data="show_help", style="success"),
+            ]),
+        ]
+        if await R.send(dest.chat.id, blocks, reply_to=dest.id):
+            return
+    except Exception:
+        pass
     await dest.reply_text(text, reply_markup=settings_keyboard())
 
 

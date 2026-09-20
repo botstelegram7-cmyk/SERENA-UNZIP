@@ -529,13 +529,36 @@ async def _try_api_v1(session: aiohttp.ClientSession, shortcode: str) -> Tuple[L
     return [], _empty_meta()
 
 
+def _deep_unescape(text: str) -> str:
+    """Collapse Instagram's nested backslash escaping.
+
+    The embed payload is JSON inside JSON inside HTML, so a single slash
+    can arrive as \\/ or \\\\/ or deeper, and the depth has changed over
+    time. Unescaping repeatedly until it settles keeps the parser working
+    when Instagram adds another layer.
+    """
+    prev = None
+    out = text or ""
+    for _ in range(6):
+        if out == prev:
+            break
+        prev = out
+        out = out.replace('\\\\/', '/').replace('\\/', '/').replace('\\"', '"')
+    return out
+
+
 async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[List[Dict], Dict]:
     """Embed page needs no auth — great fallback for single public photos."""
     url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
     try:
+        # Use the full browser-like header set. With only User-Agent and
+        # Accept-Language, Instagram serves a 628 KB shell that contains no
+        # media at all; the same URL with _base_headers() returns the real
+        # 273 KB payload carrying video_url. That difference is what broke
+        # reel and story downloads.
         async with session.get(
             url,
-            proxy=ig_proxy(), headers={"User-Agent": DESKTOP_UA, "Accept-Language": "en-US,en;q=0.9"},
+            proxy=ig_proxy(), headers=_base_headers(),
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
             if r.status != 200:
@@ -562,6 +585,21 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[Li
             if items:
                 return items, _meta_from_graphql(node)
 
+    # Video first: reels have no usable image, and the embed inlines the
+    # real CDN link. Instagram escapes it heavily and the depth varies -
+    # currently \\\/ per slash - so normalise every depth before matching
+    # rather than assuming one shape.
+    flat = _deep_unescape(body)
+    vm = re.search(r'"video_url"\s*:\s*"(https://[^"\\\s]+)"', flat)
+    if vm:
+        vurl = html.unescape(vm.group(1)).replace("\\u0026", "&")
+        if "cdninstagram" in vurl or "fbcdn" in vurl:
+            thumb = ""
+            tm = re.search(r'"display_url"\s*:\s*"(https://[^"\\\s]+)"', flat)
+            if tm:
+                thumb = html.unescape(tm.group(1)).replace("\\u0026", "&")
+            return [_item(vurl, True, 1, thumb)], _meta_from_embed(body)
+
     # Plain scrape of the <img class="EmbeddedMediaImage"> / og:image
     for pattern in (
         r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"',
@@ -573,6 +611,13 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[Li
             img = html.unescape(m.group(1)).replace("\\u0026", "&").replace("\\/", "/")
             if "scontent" in img or "cdninstagram" in img or "fbcdn" in img:
                 return [_item(img, False, 1)], _meta_from_embed(body)
+
+    # Last resort: pull any media CDN link out of the flattened payload
+    for pat in (r'(https://[^"\\\s]*cdninstagram[^"\\\s]*\.mp4[^"\\\s]*)',
+                r'(https://[^"\\\s]*fbcdn[^"\\\s]*\.mp4[^"\\\s]*)'):
+        m = re.search(pat, flat)
+        if m:
+            return [_item(html.unescape(m.group(1)), True, 1)], _meta_from_embed(body)
     return [], _empty_meta()
 
 
