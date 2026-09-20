@@ -350,20 +350,41 @@
     setTimeout(() => t.remove(), 2200);
   }
 
-  // Send a command back to the chat. The Mini App cannot post messages
-  // itself, so hand it to Telegram and close, which drops the user back
-  // in the conversation with the bot.
+  // Put a command or link into the chat's input field.
+  //
+  // NOTE: do NOT use tg.sendData() here. Telegram closes the Mini App the
+  // moment it is called, and it only works for apps opened from a keyboard
+  // button - which is why sending a link appeared to crash the app.
+  // switchInlineQuery keeps the app open and drops the text into the chat.
   function dispatch(text) {
     if (!text) return;
     haptic("medium");
-    if (tg && tg.sendData) {
-      try { tg.sendData(JSON.stringify({ cmd: text })); return; } catch (e) {}
+
+    if (tg && typeof tg.switchInlineQuery === "function") {
+      try { tg.switchInlineQuery(text, ["users"]); return; } catch (e) {}
     }
-    if (tg && tg.openTelegramLink && tg.initDataUnsafe.user) {
-      toast("Copied - paste it in the chat");
+
+    // Fallback: copy it so the user can paste it themselves.
+    let copied = false;
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      copied = document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e) { copied = false; }
+
+    if (!copied && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function () {});
+      copied = true;
     }
-    try { navigator.clipboard.writeText(text); } catch (e) {}
-    toast("Copied: " + text);
+
+    toast(copied ? "Copied - paste it in the chat"
+                 : "Close the app and send: " + text);
   }
 
   window.injectCommand = function (cmd) {
@@ -382,14 +403,23 @@
     dispatch("/cancel");
   };
 
+  function submitInput() {
+    const input = document.getElementById("quickCommandInput");
+    if (!input) return;
+    const val = (input.value || "").trim();
+    if (!val) { toast("Type a link or a command first"); return; }
+    input.value = "";
+    dispatch(val);
+  }
+
   const submit = document.getElementById("btnSubmitDispatch");
-  if (submit) {
-    submit.addEventListener("click", () => {
-      const input = document.getElementById("quickCommandInput");
-      if (!input || !input.value.trim()) return;
-      const val = input.value.trim();
-      input.value = "";
-      dispatch(val);
+  if (submit) submit.addEventListener("click", submitInput);
+
+  // Enter should send too - on a phone keyboard that is the obvious action.
+  const qinput = document.getElementById("quickCommandInput");
+  if (qinput) {
+    qinput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); submitInput(); }
     });
   }
 
