@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.0.0"
-BOT_CODENAME = "Transparency"
+BOT_VERSION  = "v3.1.0"
+BOT_CODENAME = "YouTube Restored"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.1.0": [
+        "Fixed YouTube links being rejected - they were on an internal blocklist",
+        "<code>/profile</code> now falls back to the public embed when the private API refuses",
+        "Reel captions show the audio track or original sound credit",
+        "Blocked paid-course platforms now explain why they are excluded",
+    ],
     "v3.0.0": [
         "New <code>/limits</code> page explaining exactly what is blocked and why",
         "<code>YOUTUBE_COOKIES</code> setting added - clears the bot-verification challenge",
@@ -932,11 +938,16 @@ async def ytdl_cmd(client, message):
     if not args:
         await message.reply_text(
             "Usage: <code>/ytdl &lt;URL&gt;</code>\n\n"
-            "Supported: Instagram, Twitter/X, Facebook, TikTok,\nVimeo, Dailymotion, Reddit + 1000 more\n\n"
-            "<i>Note: YouTube and paid education platforms are not supported.</i>"); return
+            "Supported: YouTube, Instagram, Twitter/X, Facebook, TikTok,\n"
+            "Vimeo, Dailymotion, Reddit and roughly 1800 more\n\n"
+            "<i>Paid course platforms are deliberately excluded. "
+            "See <code>/limits</code> for services that block hosted "
+            "servers.</i>"); return
     url=args[0].strip()
     if not is_supported_url(url):
-        await message.reply_text("That URL is not supported."); return
+        from utils.ytdl_tools import blocked_reason
+        await message.reply_text(
+            blocked_reason(url) or "That URL is not supported."); return
     # Instagram needs no quality menu — download straight away
     if _is_instagram_url(url):
         await get_or_create_user(uid)

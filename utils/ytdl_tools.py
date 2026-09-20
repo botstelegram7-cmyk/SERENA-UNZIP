@@ -314,17 +314,33 @@ def _clean_err(err: str) -> str:
     return err[:400]
 
 
+# Paid course platforms. These stay blocked deliberately: their content sits
+# behind a paywall, so pulling it down is straightforward piracy. YouTube was
+# previously lumped in with them, which was the wrong call - it serves public
+# content and yt-dlp supports it - so it has been removed from this list.
+BLOCKED_PLATFORMS = [
+    "classplus.co", "classplusapp", "cpapp.live",
+    "unacademy.com", "byjus.com",
+    "physicswallah.live", "pw.live",
+    "vedantu.com", "toppr.com",
+    "doubtnut.com", "extramarks.com",
+]
+
+
 def is_supported_url(url: str) -> bool:
-    blocked_keywords = [
-        "youtube.com", "youtu.be",
-        "classplus.co", "classplusapp", "cpapp.live",
-        "unacademy.com", "byjus.com",
-        "physicswallah.live", "pw.live",
-        "vedantu.com", "toppr.com",
-        "doubtnut.com", "extramarks.com",
-    ]
-    u = url.lower()
-    return not any(b in u for b in blocked_keywords)
+    u = (url or "").lower()
+    return not any(b in u for b in BLOCKED_PLATFORMS)
+
+
+def blocked_reason(url: str) -> str:
+    """Explain a refusal, so it does not look like a malfunction."""
+    u = (url or "").lower()
+    for b in BLOCKED_PLATFORMS:
+        if b in u:
+            return ("<b>This platform is not supported.</b>\n\n"
+                    "It hosts paid course material, and downloading it would "
+                    "bypass the paywall. That is deliberate, not a fault.")
+    return ""
 
 
 def get_site_name(url: str) -> str:

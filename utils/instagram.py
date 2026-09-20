@@ -299,6 +299,34 @@ def _clean_text(txt: str) -> str:
     return txt.strip()
 
 
+def _extract_music(node: Dict) -> Dict:
+    """Pull audio attribution out of a media node.
+
+    Instagram exposes this as clips_metadata: music_info for a licensed
+    track, original_sound_info when the creator recorded their own.
+    Returns empty strings when neither is present (ordinary photo posts).
+    """
+    out = {"music_title": "", "music_artist": "", "music_is_original": False}
+    clips = node.get("clips_metadata") or {}
+    if not isinstance(clips, dict):
+        return out
+
+    mi = ((clips.get("music_info") or {}).get("music_asset_info")) or {}
+    if mi.get("title") or mi.get("display_artist"):
+        out["music_title"] = _clean_text(mi.get("title") or "")
+        out["music_artist"] = _clean_text(mi.get("display_artist") or "")
+        return out
+
+    osi = clips.get("original_sound_info") or {}
+    if osi:
+        out["music_title"] = _clean_text(osi.get("original_audio_title") or "")
+        artist = osi.get("ig_artist") or {}
+        out["music_artist"] = _clean_text(
+            artist.get("username") or osi.get("username") or "")
+        out["music_is_original"] = True
+    return out
+
+
 def _meta_from_v1(node: Dict) -> Dict:
     """Pull caption / owner / title / stats from a v1 API media object."""
     cap = node.get("caption")
@@ -316,6 +344,7 @@ def _meta_from_v1(node: Dict) -> Dict:
         "likes": node.get("like_count") or 0,
         "views": node.get("play_count") or node.get("view_count") or 0,
         "taken_at": node.get("taken_at") or 0,
+        **_extract_music(node),
     }
 
 
@@ -341,7 +370,10 @@ def _meta_from_graphql(node: Dict) -> Dict:
 
 def _empty_meta() -> Dict:
     return {"caption": "", "title": "", "username": "", "full_name": "",
-            "likes": 0, "views": 0, "taken_at": 0}
+            "likes": 0, "views": 0, "taken_at": 0,
+            # Audio attribution: reels carry either a licensed track or the
+            # creator's own recording, under clips_metadata.
+            "music_title": "", "music_artist": "", "music_is_original": False}
 
 
 def _parse_v1_media(node: Dict) -> List[Dict]:
@@ -1114,25 +1146,34 @@ def build_post_caption(meta: Dict, url: str = "", extra: str = "") -> str:
     if username:
         who = f"<b>{_esc(full_name)}</b>\n" if full_name and full_name != username else ""
         parts.append(
-            f"{who}\U0001F464 <a href=\"https://www.instagram.com/{_esc(username)}/\">"
+            f"{who}<a href=\"https://www.instagram.com/{_esc(username)}/\">"
             f"<b>@{_esc(username)}</b></a>"
         )
     elif full_name:
-        parts.append(f"\U0001F464 <b>{_esc(full_name)}</b>")
+        parts.append(f"<b>{_esc(full_name)}</b>")
+
+    music = ""
+    mt, ma = (meta.get("music_title") or "").strip(), (meta.get("music_artist") or "").strip()
+    if mt or ma:
+        label = f"{mt} - {ma}" if (mt and ma) else (mt or ma)
+        tag = "Original audio" if meta.get("music_is_original") else "Audio"
+        music = f"{tag}: <b>{_esc(label)}</b>"
 
     stats = []
     if meta.get("likes"):
-        stats.append(f"\u2764\uFE0F <b>{int(meta['likes']):,}</b>")
+        stats.append(f"Likes <b>{int(meta['likes']):,}</b>")
     if meta.get("views"):
-        stats.append(f"\U0001F441 <b>{int(meta['views']):,}</b>")
+        stats.append(f"Views <b>{int(meta['views']):,}</b>")
     if stats:
         parts.append("  \u2022  ".join(stats))
+    if music:
+        parts.append(music)
 
     header = "\n".join(p for p in parts if p)
 
     footer = ""
     if url:
-        footer = f'<a href="{_esc(url)}">\U0001F517 <b>Open on Instagram</b></a>'
+        footer = f'<a href="{_esc(url)}"><b>Open on Instagram</b></a>'
 
     extra = (extra or "").strip()
 
@@ -1181,7 +1222,7 @@ def build_description_messages(meta: Dict, url: str = "") -> List[str]:
     if not caption:
         return []
 
-    header = "\U0001F4DD <b>Full Description</b>"
+    header = "<b>Full Description</b>"
     # Room for the wrapper tags, header and a safety margin
     chunk_budget = TG_MESSAGE_LIMIT - _visible_len(header) - 40
 
@@ -1218,7 +1259,7 @@ def build_description_messages(meta: Dict, url: str = "") -> List[str]:
 
     out: List[str] = []
     for i, chunk in enumerate(chunks):
-        head = header if i == 0 else f"\U0001F4DD <b>Full Description ({i + 1}/{len(chunks)})</b>"
+        head = header if i == 0 else f"<b>Full Description ({i + 1}/{len(chunks)})</b>"
         out.append(f"{head}\n<blockquote expandable>{_esc(chunk)}</blockquote>")
     return out
 
@@ -1362,17 +1403,97 @@ async def _profile_info(session: aiohttp.ClientSession, username: str) -> Dict:
     return user
 
 
-async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict], Dict]:
-    """Return (list of {shortcode,url,is_video,caption}, profile info)."""
-    username = (username or "").lstrip("@")
-    raise_if_rate_limited()
+async def _profile_posts_from_embed(username: str, limit: int) -> Tuple[List[Dict], Dict]:
+    """Read a profile's recent posts from the public embed page.
+
+    The private web_profile_info API is refused outright to hosted
+    addresses (HTTP 429), but /<user>/embed/ still answers 200 and its
+    payload carries real shortcodes. Values are JSON-escaped inside the
+    HTML, so the page is unescaped before scanning.
+
+    Returns fewer posts than the API - the embed only exposes a recent
+    window - but it works where the API cannot.
+    """
+    url = f"https://www.instagram.com/{username}/embed/"
     jar = cookies_as_dict()
     cookie_jar = aiohttp.CookieJar(unsafe=True)
     async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
         if jar:
             session.cookie_jar.update_cookies(
                 jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
-        user = await _profile_info(session, username)
+        async with session.get(url, headers=_base_headers(),
+                               timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status != 200:
+                return [], {}
+            raw = await r.text()
+
+    try:
+        txt = raw.encode("utf-8", "ignore").decode("unicode_escape", "ignore")
+    except Exception:
+        txt = raw
+    txt = txt.replace("\\/", "/")
+
+    seen, codes = set(), []
+    for sc in re.findall(r'"shortcode"\s*:\s*"([A-Za-z0-9_-]{5,})"', txt):
+        if sc not in seen:
+            seen.add(sc)
+            codes.append(sc)
+    if not codes:
+        return [], {}
+
+    posts = [{"shortcode": sc,
+              "url": f"https://www.instagram.com/p/{sc}/",
+              "is_video": False, "caption": ""}
+             for sc in codes[: max(1, min(limit, 50))]]
+
+    def _first_int(pattern: str) -> int:
+        m = re.search(pattern, txt)
+        try:
+            return int(m.group(1)) if m else 0
+        except (TypeError, ValueError):
+            return 0
+
+    info = {
+        "username": username,
+        "full_name": "",
+        "biography": "",
+        "followers": _first_int(r'"edge_followed_by"\s*:\s*\{"count"\s*:\s*(\d+)'),
+        "posts_total": _first_int(
+            r'"edge_owner_to_timeline_media"\s*:\s*\{"count"\s*:\s*(\d+)'),
+        "is_private": '"is_private":true' in txt.replace(" ", ""),
+        "profile_pic": "",
+        "source": "embed",
+    }
+    return posts, info
+
+
+async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict], Dict]:
+    """Return (list of {shortcode,url,is_video,caption}, profile info)."""
+    username = (username or "").lstrip("@")
+
+    # Try the public embed FIRST when a cooldown is active, and as a
+    # fallback whenever the private API refuses us. Hosted addresses get
+    # HTTP 429 from web_profile_info on every call, so without this
+    # /profile could never succeed from a server.
+    if rate_limit_remaining() > 0:
+        posts, info = await _profile_posts_from_embed(username, limit)
+        if posts:
+            return posts, info
+        raise_if_rate_limited()
+
+    jar = cookies_as_dict()
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    try:
+        async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+            if jar:
+                session.cookie_jar.update_cookies(
+                    jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+            user = await _profile_info(session, username)
+    except InstagramError:
+        posts, info = await _profile_posts_from_embed(username, limit)
+        if posts:
+            return posts, info
+        raise
 
     if user.get("is_private") and not user.get("followed_by_viewer"):
         raise InstagramError(
