@@ -214,6 +214,8 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
 | `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. A full Netscape `cookies.txt` export, a `k=v; k=v` string, or the bare `ndus` value are all accepted. |
+| `YOUTUBE_COOKIES` | ➖ | Netscape `cookies.txt` export from a signed-in browser. Clears YouTube's "Sign in to confirm you're not a bot" challenge, which hosted servers hit routinely. |
+| `YTDL_PROXY` | ➖ | Proxy for yt-dlp traffic, e.g. `http://user:pass@host:port`. |
 | `TERABOX_PROXY` | ➖ | HTTP/SOCKS proxy for TeraBox, e.g. `http://user:pass@host:port`. TeraBox withholds signed download links from datacenter IPs even with a valid cookie, so a residential proxy is the only reliable fix. |
 | `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
@@ -502,3 +504,22 @@ removing it is a licence violation.
 *Star ⭐ this repo if it helped you!*
 
 </div>
+
+---
+
+## Known limitations
+
+Several platforms refuse requests originating from data centres. Because the
+bot runs on hosted infrastructure, those services see a server address rather
+than a home connection. This is an address-level restriction, so a valid
+cookie alone does not lift it.
+
+| Platform | Status | Workaround |
+| --- | --- | --- |
+| **YouTube** | Partially affected — downloads may hit a bot-verification challenge | Set `YOUTUBE_COOKIES`, or route through `YTDL_PROXY` |
+| **TeraBox** | Usually affected — files list, but the signed download link is withheld | Residential proxy in `TERABOX_PROXY` |
+| **Instagram** | Reels and posts work via the public embed; profiles and stories need the private API and are refused | Residential proxy |
+| **Google Drive, direct links, m3u8, archives, media tools** | Unaffected | — |
+
+Operators can check the live state with `/igtest` and `/tbtest <link>`.
+Users can read the same summary in the bot via `/limits`.

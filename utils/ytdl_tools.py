@@ -32,6 +32,52 @@ def _cookie_file_exists() -> bool:
     return bool(Config.INSTAGRAM_COOKIES and Config.INSTAGRAM_COOKIES.strip())
 
 
+def write_youtube_cookie_file() -> Optional[str]:
+    """Materialise YOUTUBE_COOKIES into a Netscape cookies.txt for yt-dlp.
+
+    YouTube increasingly serves datacenter IPs a "Sign in to confirm you're
+    not a bot" challenge. Cookies exported from a signed-in browser clear
+    it, so this is the single most effective YouTube fix available.
+    """
+    content = (Config.YOUTUBE_COOKIES or "").strip()
+    if not content:
+        return None
+    # Hosting panels commonly store newlines as the literal two characters \n
+    if "\\n" in content and "\n" not in content:
+        content = content.replace("\\n", "\n")
+    try:
+        with open(Config.YOUTUBE_COOKIE_FILE, "w", encoding="utf-8") as f:
+            if not content.lstrip().startswith("# Netscape"):
+                f.write("# Netscape HTTP Cookie File\n")
+            f.write(content)
+            if not content.endswith("\n"):
+                f.write("\n")
+        return Config.YOUTUBE_COOKIE_FILE
+    except Exception:
+        return None
+
+
+def has_youtube_cookies() -> bool:
+    return bool((Config.YOUTUBE_COOKIES or "").strip())
+
+
+def _is_youtube(url: str) -> bool:
+    u = (url or "").lower()
+    return any(h in u for h in ("youtube.com", "youtu.be", "youtube-nocookie.com"))
+
+
+def ytdl_network_args(url: str = "") -> List[str]:
+    """Proxy and cookie flags shared by every yt-dlp invocation."""
+    args: List[str] = []
+    if Config.YTDL_PROXY:
+        args += ["--proxy", Config.YTDL_PROXY]
+    if _is_youtube(url) and has_youtube_cookies():
+        cf = write_youtube_cookie_file()
+        if cf:
+            args += ["--cookies", cf]
+    return args
+
+
 async def _run(cmd: List[str], timeout: int = 300) -> Tuple[int, str, str]:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -49,10 +95,17 @@ async def _run(cmd: List[str], timeout: int = 300) -> Tuple[int, str, str]:
 
 def _build_cmd(url: str, extra_args: List[str], use_cookies: bool = True, use_impersonation: bool = True) -> List[str]:
     cmd = ["yt-dlp"]
-    if use_cookies and _cookie_file_exists():
+    # YouTube gets its own cookie jar; everything else uses the Instagram one
+    if _is_youtube(url) and has_youtube_cookies():
+        cf = write_youtube_cookie_file()
+        if cf:
+            cmd += ["--cookies", cf]
+    elif use_cookies and _cookie_file_exists():
         cf = _write_cookie_file()
         if cf:
             cmd += ["--cookies", cf]
+    if Config.YTDL_PROXY:
+        cmd += ["--proxy", Config.YTDL_PROXY]
     if use_impersonation:
         cmd += [
             "--user-agent",
@@ -376,6 +429,7 @@ async def search_and_download_audio(query: str, output_dir: str) -> str:
     out_tmpl = os.path.join(output_dir, "%(title).80s.%(ext)s")
     cmd = [
         "yt-dlp", "ytsearch1:" + query,
+        *ytdl_network_args("https://www.youtube.com/"),
         "--format", "bestaudio/best",
         "--extract-audio", "--audio-format", "mp3",
         "--audio-quality", "192K",

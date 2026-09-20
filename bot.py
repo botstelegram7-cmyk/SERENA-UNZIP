@@ -281,11 +281,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.9.0"
-BOT_CODENAME = "Refined Interface"
+BOT_VERSION  = "v3.0.0"
+BOT_CODENAME = "Transparency"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.0.0": [
+        "New <code>/limits</code> page explaining exactly what is blocked and why",
+        "<code>YOUTUBE_COOKIES</code> setting added - clears the bot-verification challenge",
+        "<code>YTDL_PROXY</code> setting for routing YouTube traffic",
+        "Site refusals now explain the cause instead of showing a raw error",
+        "Removed <code>/song</code>, which depended on blocked search",
+        "Added a direct Bot API transport for fields the library cannot send",
+    ],
     "v2.9.0": [
         "Interface rewritten in plain English with a calmer, uncluttered tone",
         "Pictographic icons removed throughout for a cleaner reading experience",
@@ -713,14 +721,45 @@ HELP_PAGES = {
             "Example: <code>/profile natgeo 12</code>\n\n"
             "<b>Video platforms</b>\n"
             "<code>/ytdl &lt;link&gt;</code> — YouTube, TikTok, X, Facebook,\n"
-            "Reddit, Vimeo and roughly 1800 further sites\n"
-            "<code>/song &lt;name&gt;</code> — search and fetch audio\n\n"
+            "Reddit, Vimeo and roughly 1800 further sites\n\n"
             "<b>Cloud storage</b>\n"
             "Google Drive files and entire folders resolve automatically.\n"
             "<code>/terabox &lt;link&gt;</code> — TeraBox shares\n\n"
             "<b>Also handled</b>\n"
             "Direct file URLs, m3u8 and DASH streams, and .txt files\n"
-            "containing lists of links."
+            "containing lists of links.\n\n"
+            "<blockquote expandable><b>Known limitations</b>\n"
+            "Some services refuse hosted servers outright. See "
+            "<code>/limits</code> for what is affected and why.</blockquote>"
+        ),
+    },
+    "limits": {
+        "title": "Known Limitations",
+        "body": (
+            "Some platforms block requests coming from data centres. The bot\n"
+            "runs on hosted infrastructure, so those services see a server\n"
+            "address rather than a home connection and refuse it.\n\n"
+            "<b>YouTube</b>  ·  partially affected\n"
+            "Downloads may fail with a bot-verification challenge. Metadata\n"
+            "usually still resolves.\n"
+            "<i>Fix:</i> set <code>YOUTUBE_COOKIES</code> with a Netscape\n"
+            "cookies.txt export from a signed-in browser, or route traffic\n"
+            "through <code>YTDL_PROXY</code>.\n\n"
+            "<b>TeraBox</b>  ·  usually affected\n"
+            "Files are listed correctly, but the signed download link is\n"
+            "withheld from server addresses. A valid cookie is not enough,\n"
+            "because the restriction is applied to the address, not the\n"
+            "session.\n"
+            "<i>Fix:</i> a residential proxy in <code>TERABOX_PROXY</code>.\n\n"
+            "<b>Instagram</b>  ·  partially affected\n"
+            "Reels and posts work through the public embed. Profiles and\n"
+            "stories need the private API and are refused from hosted\n"
+            "addresses, regardless of cookies.\n\n"
+            "<b>Unaffected</b>\n"
+            "Google Drive, direct links, m3u8 streams, archives and every\n"
+            "media tool work normally.\n\n"
+            "<i>Operators can confirm the current state with "
+            "<code>/igtest</code> and <code>/tbtest &lt;link&gt;</code>.</i>"
         ),
     },
     "account": {
@@ -774,6 +813,7 @@ _HELP_NAV = [
     [("Archives", "archives"), ("Media Tools", "media")],
     [("Downloaders", "download"), ("Account", "account")],
     [("Groups", "groups"), ("Administration", "admin")],
+    [("Known Limitations", "limits")],
 ]
 
 
@@ -787,7 +827,8 @@ def help_keyboard(page: str = "home") -> InlineKeyboardMarkup:
         # Offer the page's headline command as a one-tap copy
         sample = {"archives": "/zip", "media": "/compress",
                   "download": "/profile natgeo 12", "account": "/mystats",
-                  "groups": "/authorize", "admin": "/status"}.get(page)
+                  "groups": "/authorize", "admin": "/status",
+                  "limits": "/igtest"}.get(page)
         if sample:
             rows.append([_copy_btn(f"Copy  {sample}", sample)])
         rows.append([_btn("Back", "help:home", "primary")])
@@ -799,6 +840,14 @@ def build_help(page: str = "home") -> str:
     data = HELP_PAGES.get(page) or HELP_PAGES["home"]
     return (f"<b>{Config.BOT_NAME}</b>  ·  {data['title']}\n"
             f"{'─' * 28}\n\n{data['body']}")
+
+
+@app.on_message(filters.command(["limits", "known", "notes"]))
+async def limits_cmd(client, message):
+    """What does not work from a hosted server, and why."""
+    await message.reply_text(build_help("limits"),
+                             reply_markup=help_keyboard("limits"),
+                             disable_web_page_preview=True)
 
 
 @app.on_message(filters.command(["help", "cmds", "commands", "bothelp"]))
@@ -4483,7 +4532,9 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
     except Exception:
         pass
 
+    from utils.ytdl_tools import ytdl_network_args
     cmd = ["yt-dlp", "--no-warnings", "--ignore-errors", "--no-abort-on-error",
+           *ytdl_network_args(url),
            "--retries", "10", "--fragment-retries", "10",
            "--retry-sleep", "exp=1:30", "--socket-timeout", "30",
            "--concurrent-fragments", "4",
@@ -4522,7 +4573,26 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
             for line in err.decode("utf-8", "ignore").splitlines():
                 if "ERROR" in line:
                     detail = line.strip()[:200]; break
-        if detail:
+        low = detail.lower()
+        blocked = any(k in low for k in (
+            "sign in to confirm", "not a bot", "429", "too many requests",
+            "unable to download webpage", "http error 403"))
+        if blocked:
+            from utils.ytdl_tools import has_youtube_cookies
+            await _safe_edit(
+                status,
+                "<b>This site refused the request.</b>\n\n"
+                "It is rejecting the server's address rather than the link "
+                "itself, which is why the same URL opens fine in a browser.\n\n"
+                + ("<i>Cookies are configured; the address is still being "
+                   "refused. A proxy in <code>YTDL_PROXY</code> is the "
+                   "remaining option.</i>"
+                   if has_youtube_cookies() else
+                   "<i>Operator: set <code>YOUTUBE_COOKIES</code> with a "
+                   "cookies.txt export from a signed-in browser, or set "
+                   "<code>YTDL_PROXY</code>.</i>")
+                + "\n\nSee <code>/limits</code> for details.")
+        elif detail:
             await _safe_edit(status, f"<code>{detail}</code>")
         return False
 
@@ -4718,60 +4788,6 @@ async def handle_links_download_all(client, cq, original_msg):
         try: await client.unpin_chat_message(chat_id,reply_to)
         except Exception: pass
         # (no extra "finished" ping — the summary above already says it)
-
-# ════════════════════════════════════════════════════════════════════════════
-# /song — Search & download song by name via YouTube
-# ════════════════════════════════════════════════════════════════════════════
-@app.on_message(filters.command(["song", "music", "audio"]))
-async def song_cmd(client, message):
-    if not message.from_user: return
-    uid = message.from_user.id
-    if await is_banned(uid): return
-    if not await check_force_sub(client, message): return
-    await get_or_create_user(uid)
-    query = " ".join(message.command[1:]).strip()
-    if not query:
-        await _safe_reply(message,
-            "<b>Song Search</b>\n\n"
-            "Usage: <code>/song song name artist</code>\n\n"
-            "Examples:\n"
-            "• <code>/song artist - track name</code>\n"
-            "• <code>/song Kesariya Brahmastra</code>\n"
-            "• <code>/song Bohemian Rhapsody Queen</code>"
-        ); return
-    if not await check_rate_limit(uid, message): return
-    if not await _check_disk_space_ok(message): return
-    temp_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
-    temp_root.mkdir(parents=True, exist_ok=True)
-    await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
-    status = await _safe_reply(message,
-        f"Searching: <b>{query}</b>\n⏳ Downloading audio…"
-    )
-    try:
-        audio_path = await search_and_download_audio(query, str(temp_root))
-        fname = Path(audio_path).name
-        cap = await build_caption(uid, fname)
-        start_u = time.time()
-        if status:
-            try: await status.edit_text(f"Uploading: <code>{fname}</code>…")
-            except Exception: pass
-        sent = await client.send_audio(
-            message.chat.id, audio_path, caption=cap,
-            reply_to_message_id=message.id,
-        )
-        if status:
-            try: await status.delete()
-            except Exception: pass
-        await log_output(client, message.from_user, sent, f"song: {query}")
-        await update_user_stats(uid, Path(audio_path).stat().st_size / 1048576)
-    except Exception as e:
-        err = str(e)[:300]
-        if status:
-            try: await status.edit_text(f"Failed: <code>{err}</code>")
-            except Exception: pass
-    finally:
-        _safe_cleanup(str(temp_root))
-
 
 # ════════════════════════════════════════════════════════════════════════════
 # MAIN

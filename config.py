@@ -78,6 +78,16 @@ class Config:
     # the share lists fine, so a residential proxy is the only reliable
     # fix. Example: http://user:pass@host:port  or  socks5://host:1080
     TERABOX_PROXY      = os.getenv("TERABOX_PROXY", "").strip()
+
+    # YouTube cookies, in Netscape cookies.txt format. YouTube increasingly
+    # answers datacenter IPs with a "Sign in to confirm you're not a bot"
+    # challenge; exporting cookies from a logged-in browser clears it.
+    YOUTUBE_COOKIES    = os.getenv("YOUTUBE_COOKIES", "")
+    YOUTUBE_COOKIE_FILE = "/tmp/yt_dlp_cookies.txt"
+
+    # Optional proxy for yt-dlp (YouTube and friends). Same format as
+    # TERABOX_PROXY: http://user:pass@host:port or socks5://host:1080
+    YTDL_PROXY         = os.getenv("YTDL_PROXY", "").strip()
     YTDL_MAX_SIZE_MB   = int(os.getenv("YTDL_MAX_SIZE_MB", "2000"))
     YTDL_TIMEOUT_SEC   = int(os.getenv("YTDL_TIMEOUT_SEC", "600"))   # 10 min max per download
     COOKIE_FILE_PATH   = "/tmp/yt_cookies.txt"
