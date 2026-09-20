@@ -1491,15 +1491,14 @@ async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict
     """Return (list of {shortcode,url,is_video,caption}, profile info)."""
     username = (username or "").lstrip("@")
 
-    # Try the public embed FIRST when a cooldown is active, and as a
-    # fallback whenever the private API refuses us. Hosted addresses get
-    # HTTP 429 from web_profile_info on every call, so without this
-    # /profile could never succeed from a server.
-    if rate_limit_remaining() > 0:
-        posts, info = await _profile_posts_from_embed(username, limit)
-        if posts:
-            return posts, info
-        raise_if_rate_limited()
+    # The public embed is tried FIRST, always. web_profile_info answers 429
+    # to hosted addresses on every single call, so gating the embed behind
+    # "only when a cooldown is active" meant one failed embed attempt
+    # surfaced the cooldown wall instead of simply retrying — which is
+    # exactly the "instant timer" users saw.
+    posts, info = await _profile_posts_from_embed(username, limit)
+    if posts:
+        return posts, info
 
     jar = cookies_as_dict()
     cookie_jar = aiohttp.CookieJar(unsafe=True)

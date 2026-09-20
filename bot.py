@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.1.1"
-BOT_CODENAME = "Steadier Fallbacks"
+BOT_VERSION  = "v3.2.0"
+BOT_CODENAME = "Rich Messages"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.2.0": [
+        "<code>/limits</code> now renders as a real table with coloured buttons",
+        "Rich message support added over the raw Bot API, including ephemeral messages",
+        "Fixed <code>/profile</code> showing a cooldown instead of using the public fallback",
+        "Coloured buttons are finally reachable, through rich messages",
+    ],
     "v3.1.1": [
         "Profile lookups survive Instagram dropping the connection - retried, then explained",
         "YouTube refusals recognised in all their wordings and answered with guidance",
@@ -853,9 +859,52 @@ def build_help(page: str = "home") -> str:
             f"{'─' * 28}\n\n{data['body']}")
 
 
+async def _send_limits_rich(chat_id: int, reply_to: int = None) -> bool:
+    """Render /limits as a native rich message: a real table plus styled
+    buttons. Returns False if the server does not implement the method,
+    so the caller can fall back to the HTML version."""
+    from utils import richmsg as R
+
+    def row(name, status, fix):
+        return [R.cell(name), R.cell(status), R.cell(fix)]
+
+    blocks = [
+        R.paragraph(R.bold("Known Limitations")),
+        R.paragraph("Some platforms refuse requests from data centres. "
+                    "This bot runs on hosted infrastructure, so those "
+                    "services see a server address and turn it away."),
+        R.table(
+            [[R.cell(R.bold("Service"), header=True),
+              R.cell(R.bold("Status"), header=True),
+              R.cell(R.bold("Remedy"), header=True)],
+             row("YouTube", "Partly blocked", "YOUTUBE_COOKIES"),
+             row("TeraBox", "Link withheld", "TERABOX_PROXY"),
+             row("Instagram", "Reels work", "Proxy for profiles"),
+             row("Drive, direct, m3u8", "Working", "-")],
+            bordered=True, striped=True, compact=True),
+        R.expandable_quote(
+            "A cookie proves who you are; it does not change where the "
+            "request comes from. When a platform blocks an address, the "
+            "same cookie that works in your browser is still refused from "
+            "a server. Only a residential proxy changes that.",
+            credit="Why cookies alone are not enough"),
+        R.buttons([
+            R.button("Copy /igtest", copy_text="/igtest", style="primary"),
+            R.button("Copy /tbtest", copy_text="/tbtest", style="primary"),
+        ]),
+    ]
+    res = await R.send(chat_id, blocks, reply_to=reply_to)
+    return res is not None
+
+
 @app.on_message(filters.command(["limits", "known", "notes"]))
 async def limits_cmd(client, message):
     """What does not work from a hosted server, and why."""
+    try:
+        if await _send_limits_rich(message.chat.id, message.id):
+            return
+    except Exception:
+        pass
     await message.reply_text(build_help("limits"),
                              reply_markup=help_keyboard("limits"),
                              disable_web_page_preview=True)
