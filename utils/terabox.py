@@ -261,9 +261,9 @@ def _find_js_token(html: str) -> Optional[str]:
 
 # TeraBox errno meanings, confirmed by probing the live API.
 _ERRNO_HELP = {
-    105: ("❌ <b>Ye TeraBox link valid nahi hai.</b>\n\n"
+    105: ("<b>Ye TeraBox link valid nahi hai.</b>\n\n"
           "Link galat hai, expire ho gaya, ya delete kar diya gaya."),
-    -9:  ("🔑 <b>Is share par password laga hai.</b>\n\n"
+    -9:  ("<b>Is share par password laga hai.</b>\n\n"
           "Password-protected TeraBox links abhi support nahi hain."),
 }
 
@@ -272,18 +272,18 @@ def _wall_message() -> str:
     """errno 140 / 400210: real link, but the server IP is refused."""
     if has_cookie():
         return (
-            "🚫 <b>TeraBox ne is request ko block kar diya.</b>\n\n"
+            "<b>TeraBox ne is request ko block kar diya.</b>\n\n"
             "Cookie set hai lekin phir bhi refuse kar raha hai. Wajah:\n"
             "• Cookie expire ho gayi hai\n"
             "• File adult/restricted flag wali hai\n"
             "• Server IP par temporary limit hai\n\n"
-            "✅ <b>Fix:</b> browser se fresh <code>ndus</code> cookie "
+            "<b>Fix:</b> browser se fresh <code>ndus</code> cookie"
             "lekar <code>TERABOX_COOKIE</code> update karo.")
     return (
-        "🚫 <b>TeraBox ne server IP se access block kiya.</b>\n\n"
+        "<b>TeraBox ne server IP se access block kiya.</b>\n\n"
         "<i>Link bilkul sahi hai</i> — TeraBox anonymous datacenter IPs ko "
         "file list nahi deta. Browser me khulta hai, server se nahi.\n\n"
-        "✅ <b>Fix:</b> TeraBox me login karke browser se <code>ndus</code> "
+        "<b>Fix:</b> TeraBox me login karke browser se <code>ndus</code>"
         "cookie copy karo aur <code>TERABOX_COOKIE</code> env var me daalo.\n\n"
         "<i>Chrome → F12 → Application → Cookies → terabox.com → ndus</i>")
 
@@ -386,17 +386,17 @@ async def list_files(url: str) -> List[Dict]:
     Each entry: {name, size, fs_id, dlink, is_dir, path}
     """
     if not is_terabox_url(url):
-        raise TeraboxError("❌ Ye TeraBox ka link nahi hai.")
+        raise TeraboxError("Ye TeraBox ka link nahi hai.")
     surl = extract_surl(url)
     if not surl:
         raise TeraboxError(
-            "❌ <b>Is link se share ID nahi mila.</b>\n\n"
+            "<b>Is link se share ID nahi mila.</b>\n\n"
             "Format aisa hona chahiye: <code>terabox.com/s/1xxxxxxx</code>")
 
     problem = cookie_problem()
     if problem and problem != "not set":
         raise TeraboxError(
-            f"🍪 <b>TERABOX_COOKIE thik nahi hai:</b> {problem}.\n\n"
+            f"<b>TERABOX_COOKIE thik nahi hai:</b> {problem}.\n\n"
             "Chrome → F12 → Application → Cookies → terabox.com → "
             "<code>ndus</code> → poori value copy karo.")
 
@@ -426,24 +426,24 @@ async def list_files(url: str) -> List[Dict]:
                     if not any(f.get("dlink") for f in files):
                         names = ", ".join(f["name"][:40] for f in files[:2])
                         raise TeraboxError(
-                            "🔒 <b>File mil gayi, par TeraBox download link "
+                            "<b>File mil gayi, par TeraBox download link"
                             "nahi de raha.</b>\n\n"
-                            f"📄 <i>{names}</i>\n\n"
+                            f"<i>{names}</i>\n\n"
                             + ("Cookie set hai lekin TeraBox ne phir bhi mana "
                                "kiya. Aksar wajah: file adult/restricted flag "
                                "wali hai, ya cookie expire ho gayi.\n\n"
-                               "✅ Browser se fresh <code>ndus</code> cookie lo, "
+                               "Browser se fresh <code>ndus</code> cookie lo,"
                                "ya <code>TERABOX_PROXY</code> set karo "
                                "(residential proxy) — IP block ka yahi pakka fix hai."
                                if has_cookie() else
                                "Iske liye login zaroori hai.\n\n"
-                               "✅ <code>TERABOX_COOKIE</code> me apni "
+                               "<code>TERABOX_COOKIE</code> me apni"
                                "<code>ndus</code> cookie daalo — "
                                "<i>Chrome → F12 → Application → Cookies "
                                "→ terabox.com → ndus</i>"))
                     return files
                 raise TeraboxError(
-                    "📭 <b>Is share me koi file nahi mili.</b>\n\n"
+                    "<b>Is share me koi file nahi mili.</b>\n\n"
                     "Folder khali hai ya uska content hata diya gaya hai.")
             if errno:
                 seen_errno = errno
@@ -458,13 +458,13 @@ async def list_files(url: str) -> List[Dict]:
     if not seen_errno and transport:
         # Never reached TeraBox at all — say so rather than blaming its API
         raise TeraboxError(
-            "❌ <b>TeraBox tak request pahunch hi nahi payi.</b>\n\n"
+            "<b>TeraBox tak request pahunch hi nahi payi.</b>\n\n"
             f"<i>Reason: {transport}</i>\n\n"
-            + ("✅ Cookie check karo — usme newline ya extra character to nahi?"
+            + ("Cookie check karo — usme newline ya extra character to nahi?"
                if "header" in transport.lower()
-               else "✅ Thodi der baad try karo."))
+               else "Thodi der baad try karo."))
     raise TeraboxError(
-        "❌ <b>TeraBox se file list nahi mili.</b>"
+        "<b>TeraBox se file list nahi mili.</b>"
         + (f"\n\n<i>errno: {seen_errno}</i>" if seen_errno else "")
         + (f"\n<i>{transport}</i>" if transport else "")
         + "\n\n<i>Owner: <code>/tbtest</code> chala kar mirrors ka status dekho.</i>")
@@ -653,21 +653,21 @@ def human_size(n: int) -> str:
 
 async def diagnose(url: str = "") -> str:
     """Owner-facing probe, mirrored on /igtest's style."""
-    out = ["🔬 <b>TeraBox Diagnostics</b>", ""]
+    out = ["<b>TeraBox Diagnostics</b>", ""]
     problem = cookie_problem()
     if not has_cookie():
-        out.append("🍪 Cookie: ❌ <b>not set</b>")
+        out.append("Cookie: <b>not set</b>")
     elif problem:
-        out.append(f"🍪 Cookie: ⚠️ <b>{problem}</b>")
+        out.append(f"Cookie: <b>{problem}</b>")
     else:
         ck = _cookie_header()
         m = re.search(r"ndus=([^;]+)", ck, re.I)
         val = m.group(1) if m else ""
-        out.append(f"🍪 Cookie: ✅ set (ndus, {len(val)} chars)")
+        out.append(f"Cookie: set (ndus, {len(val)} chars)")
     px = _proxy()
-    out.append(f"🌐 Proxy: {'✅ ' + px.split('@')[-1][:32] if px else '❌ not set'}")
+    out.append(f"Proxy: {'' + px.split('@')[-1][:32] if px else ' not set'}")
     if url:
-        out.append(f"🔗 surl: <code>{extract_surl(url) or 'not parsed'}</code>")
+        out.append(f"surl: <code>{extract_surl(url) or 'not parsed'}</code>")
     out.append("")
 
     surl = extract_surl(url) if url else ""
@@ -681,7 +681,7 @@ async def diagnose(url: str = "") -> str:
             entries, errno = await _list_on_mirror(session, mirror,
                                                    surl or "", token)
             if entries is not None:
-                line = f"✅ {mirror}: {len(entries)} entries"
+                line = f"{mirror}: {len(entries)} entries"
                 # Listing working is only half the job — report whether a
                 # download link can actually be minted, which is the step
                 # that fails on a walled IP.
@@ -693,25 +693,25 @@ async def diagnose(url: str = "") -> str:
                             await _mint_dlinks(session, mirror, surl, token, files)
                             have = sum(1 for f in files if f.get("dlink"))
                         line += (f" · dlink {have}/{len(files)} "
-                                 + ("✅" if have else "❌ withheld"))
+                                 + ("" if have else "withheld"))
                 except Exception:
                     pass
                 out.append(line)
             elif not surl:
                 # No link given: reaching the API at all is the useful signal
-                out.append(f"{'✅' if token else '⚠️'} {mirror}: reachable"
-                           f" (jsToken {'✅' if token else '❌'})")
+                out.append(f"{'' if token else ''} {mirror}: reachable"
+                           f" (jsToken {'' if token else ''})")
             else:
                 tag = {105: "share not found", 140: "IP walled",
                        2: "download refused (IP/cookie)",
                        4000020: "token rejected", -9: "password protected",
                        400210: "verification required"}.get(errno, f"errno {errno}")
-                out.append(f"⚠️ {mirror}: {tag}"
-                           + (f" (jsToken {'✅' if token else '❌'})"))
-    out += ["", "<i>Listing ✅ lekin dlink ❌ = TeraBox file dikhata hai par "
+                out.append(f"{mirror}: {tag}"
+                           + (f" (jsToken {'' if token else ''})"))
+    out += ["", "<i>Listing lekin dlink = TeraBox file dikhata hai par"
             "download link rok raha hai. Ye IP-level block hai — cookie se "
             "theek nahi hota.</i>"]
     if not _proxy():
-        out.append("<i>✅ Fix: residential proxy laga kar "
+        out.append("<i> Fix: residential proxy laga kar"
                    "<code>TERABOX_PROXY</code> set karo.</i>")
     return "\n".join(out)

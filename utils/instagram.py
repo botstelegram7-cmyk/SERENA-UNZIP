@@ -1295,7 +1295,7 @@ def rate_limit_message(remaining: Optional[int] = None) -> str:
         remaining = rate_limit_remaining()
     if remaining <= 0:
         return ("⏳ Instagram ne rate-limit kar diya tha.\n\n"
-                "✅ Ab try kar sakte ho.")
+                "Ab try kar sakte ho.")
     return (
         "⏳ <b>Instagram ne rate-limit kar diya.</b>\n\n"
         f"⏱ <b>{_fmt_duration(remaining)}</b> baad try karo  "
@@ -1347,14 +1347,14 @@ async def _profile_info(session: aiohttp.ClientSession, username: str) -> Dict:
     async with session.get(url, headers=headers,
                            timeout=aiohttp.ClientTimeout(total=30)) as r:
         if r.status == 404:
-            raise InstagramError(f"❌ <b>@{username}</b> nahi mila.")
+            raise InstagramError(f"<b>@{username}</b> nahi mila.")
         if r.status in (401, 403):
             raise InstagramError(_friendly_error("profile"))
         if r.status == 429:
             note_rate_limit()
             raise RateLimited()
         if r.status != 200:
-            raise InstagramError(f"❌ Instagram ne HTTP {r.status} diya.")
+            raise InstagramError(f"Instagram ne HTTP {r.status} diya.")
         data = await r.json(content_type=None)
     user = (data.get("data") or {}).get("user")
     if not user:
@@ -1376,7 +1376,7 @@ async def fetch_profile_posts(username: str, limit: int = 12) -> Tuple[List[Dict
 
     if user.get("is_private") and not user.get("followed_by_viewer"):
         raise InstagramError(
-            f"🔒 <b>@{username}</b> private hai aur aap follow nahi karte.")
+            f"<b>@{username}</b> private hai aur aap follow nahi karte.")
 
     edges = ((user.get("edge_owner_to_timeline_media") or {}).get("edges")) or []
     posts: List[Dict] = []
@@ -1414,8 +1414,8 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
     raise_if_rate_limited()
     if not has_cookies():
         raise InstagramError(
-            "🔒 Stories ke liye login zaroori hai.\n\n"
-            "✅ <b>Fix:</b> <code>INSTAGRAM_COOKIES</code> set karo.")
+            "Stories ke liye login zaroori hai.\n\n"
+            "<b>Fix:</b> <code>INSTAGRAM_COOKIES</code> set karo.")
 
     jar = cookies_as_dict()
     cookie_jar = aiohttp.CookieJar(unsafe=True)
@@ -1426,7 +1426,7 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
         user = await _profile_info(session, username)
         uid = user.get("id")
         if not uid:
-            raise InstagramError(f"❌ <b>@{username}</b> ki ID nahi mili.")
+            raise InstagramError(f"<b>@{username}</b> ki ID nahi mili.")
 
         headers = _base_headers()
         if jar.get("csrftoken"):
@@ -1438,7 +1438,7 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
             if r.status in (401, 403):
                 raise InstagramError(_friendly_error("story"))
             if r.status != 200:
-                raise InstagramError(f"❌ Stories fetch failed (HTTP {r.status}).")
+                raise InstagramError(f"Stories fetch failed (HTTP {r.status}).")
             data = await r.json(content_type=None)
 
     reels = data.get("reels") or data.get("reels_media") or {}
@@ -1447,7 +1447,7 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
         node = reels[0]
     items_raw = (node or {}).get("items") or []
     if not items_raw:
-        raise InstagramError(f"📭 <b>@{username}</b> ki koi active story nahi hai.")
+        raise InstagramError(f"<b>@{username}</b> ki koi active story nahi hai.")
 
     items: List[Dict] = []
     for i, it in enumerate(items_raw, 1):
@@ -1592,24 +1592,24 @@ async def diagnose() -> str:
     instead of guessing.
     """
     jar = cookies_as_dict()
-    out = ["🔬 <b>Instagram Diagnostics</b>", ""]
+    out = ["<b>Instagram Diagnostics</b>", ""]
 
     # 1. Cookie presence and shape
     if not jar:
-        out.append("🍪 Cookies: ❌ <b>none configured</b>")
+        out.append("Cookies: <b>none configured</b>")
     else:
         keys = ", ".join(sorted(jar.keys())[:8])
-        out.append(f"🍪 Cookies: ✅ {len(jar)} keys")
+        out.append(f"Cookies: {len(jar)} keys")
         out.append(f"   <code>{keys}</code>")
         for need in ("sessionid", "csrftoken", "ds_user_id"):
-            out.append(f"   {'✅' if jar.get(need) else '❌'} {need}")
+            out.append(f"   {'' if jar.get(need) else ''} {need}")
         sid = jar.get("sessionid", "")
         if sid and "%3A" not in sid and ":" not in sid:
-            out.append("   ⚠️ <i>sessionid looks malformed</i>")
+            out.append("<i>sessionid looks malformed</i>")
 
     # 2. Current cooldown
     rl = rate_limit_remaining()
-    out += ["", f"⏳ Cooldown: {'<b>' + _fmt_duration(rl) + '</b> left' if rl else '✅ clear'}"]
+    out += ["", f"⏳ Cooldown: {'<b>' + _fmt_duration(rl) + '</b> left' if rl else ' clear'}"]
 
     # 3. Live endpoint probes
     out += ["", "<b>Endpoint checks</b>"]
@@ -1636,8 +1636,8 @@ async def diagnose() -> str:
                     timeout=aiohttp.ClientTimeout(total=15)) as r:
                     body = await r.read()
                     results[name] = r.status
-                    icon = {200: "✅", 401: "🔒", 403: "🔒",
-                            429: "⏳", 404: "❓"}.get(r.status, "⚠️")
+                    icon = {200: "", 401: "", 403: "",
+                            429: "⏳", 404: ""}.get(r.status, "")
                     note = ""
                     if r.status == 429:
                         note = " — rate-limited"
@@ -1649,26 +1649,26 @@ async def diagnose() -> str:
                                f" ({len(body)} bytes){note}")
             except Exception as e:
                 results[name] = -1
-                out.append(f"⚠️ {name}: <code>{str(e)[:60]}</code>")
+                out.append(f"{name}: <code>{str(e)[:60]}</code>")
 
     api_ok = results.get("web_profile_info") == 200
     embed_ok = results.get("embed page") == 200
     out.append("")
     if api_ok and embed_ok:
-        out.append("<b>Verdict:</b> ✅ Sab endpoints kaam kar rahe hain.")
+        out.append("<b>Verdict:</b> Sab endpoints kaam kar rahe hain.")
     elif embed_ok and not api_ok:
         out.append(
-            "<b>Verdict:</b> ⚠️ Embed chal raha hai, private API rate-limited hai.\n"
+            "<b>Verdict:</b> Embed chal raha hai, private API rate-limited hai.\n"
             "• <b>Reels/posts</b> download honge (embed se)\n"
             "• <b>Stories aur /profile</b> nahi chalenge — unke liye API zaroori hai\n\n"
             "<i>Ye IP ka partial block hai. Kuch ghante baad API khud "
             "khul jati hai; permanent fix ke liye residential proxy chahiye.</i>")
     elif not embed_ok and not api_ok:
         out.append(
-            "<b>Verdict:</b> ❌ Koi endpoint kaam nahi kar raha — IP block hai.\n"
+            "<b>Verdict:</b> Koi endpoint kaam nahi kar raha — IP block hai.\n"
             "<i>Cookies se fix nahi hoga; proxy ya doosra host chahiye.</i>")
     else:
-        out.append("<b>Verdict:</b> ⚠️ Mila-jula response — upar details dekho.")
+        out.append("<b>Verdict:</b> Mila-jula response — upar details dekho.")
     return "\n".join(out)
 
 
@@ -1698,23 +1698,23 @@ def _friendly_error(kind: str) -> str:
                 "jo embed fallback se nahi milti — isliye reels chalne ke "
                 "bawajood stories fail ho sakti hain.\n")
         return (
-            "🔒 <b>Instagram ne ye request block kar di.</b>\n"
+            "<b>Instagram ne ye request block kar di.</b>\n"
             f"{story_note}\n"
             "Possible wajah:\n"
             "• Server IP par API rate-limit (sabse aam)\n"
             "• Story expire ho gayi / delete ho gayi\n"
             "• Account private hai aur aap follow nahi karte\n"
             "• Session sach me expire ho gayi\n\n"
-            "🩺 <b>Pehle ye chalao:</b> <code>/igtest</code> — "
+            "<b>Pehle ye chalao:</b> <code>/igtest</code> —"
             "wo batayega ki cookies ka issue hai ya IP ka.\n"
             "<i>Agar embed 200 aur API 429 dikhe, to cookies theek hain; "
             "IP block hai aur kuch ghante baad khud chalne lagega.</i>"
         )
     extra = " (Stories/Highlights ke liye login zaroori hai.)" if kind in ("story", "highlight") else ""
     return (
-        f"🔒 <b>Instagram login required.</b>{extra}\n\n"
+        f"<b>Instagram login required.</b>{extra}\n\n"
         "Instagram ab bina login ke server se media nahi deta.\n\n"
-        "✅ <b>Fix:</b> <code>INSTAGRAM_COOKIES</code> env variable mein "
+        "<b>Fix:</b> <code>INSTAGRAM_COOKIES</code> env variable mein"
         "Netscape-format cookies paste karo (browser extension "
         "'Get cookies.txt' se export karo), phir bot restart karo."
     )
@@ -1791,7 +1791,7 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
     if detail:
         low = detail.lower()
         if "not installed" in low:
-            msg = ("❌ <b>yt-dlp server par installed nahi hai.</b>\n\n"
+            msg = ("<b>yt-dlp server par installed nahi hai.</b>\n\n"
                    "Owner: <code>pip install -U yt-dlp</code> chalao "
                    "ya requirements.txt se redeploy karo.")
         elif "login" in low or "rate-limit" in low or "429" in low:

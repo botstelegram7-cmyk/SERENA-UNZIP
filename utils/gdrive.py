@@ -103,7 +103,7 @@ def _friendly(err: str, kind: str = "file") -> str:
     what = "folder" if kind == "folder" else "file"
     if "permission" in low or "public link" in low or "anyone with the link" in low:
         return (
-            f"🔒 <b>Ye Drive {what} public nahi hai.</b>\n\n"
+            f"<b>Ye Drive {what} public nahi hai.</b>\n\n"
             "Owner ko bolo sharing badalne ke liye:\n"
             "<b>Share → General access → Anyone with the link</b>\n\n"
             "<i>Private files bina login ke download nahi ho sakti.</i>")
@@ -115,13 +115,13 @@ def _friendly(err: str, kind: str = "file") -> str:
             "copy karke uska link bhejo.</i>")
     if "status code 500" in low or "retrieve folder" in low:
         return (
-            "❌ <b>Folder ka content nahi mil paya.</b>\n\n"
+            "<b>Folder ka content nahi mil paya.</b>\n\n"
             "Wajah: folder private hai, ya usme bahut zyada files hain.\n"
             "<i>Sharing 'Anyone with the link' karo, ya andar ki "
             "files ka direct link bhejo.</i>")
     if "not found" in low or "404" in low:
-        return f"❌ <b>Drive {what} nahi mila</b> — link galat hai ya delete ho chuka hai."
-    return f"❌ Google Drive {what} download failed:\n<code>{(err or '')[:200]}</code>"
+        return f"<b>Drive {what} nahi mila</b> — link galat hai ya delete ho chuka hai."
+    return f"Google Drive {what} download failed:\n<code>{(err or '')[:200]}</code>"
 
 
 async def download_gdrive_file(url: str, output_dir: str) -> str:
@@ -130,7 +130,7 @@ async def download_gdrive_file(url: str, output_dir: str) -> str:
 
     file_id = _extract_file_id(url)
     if not file_id:
-        raise GDriveError("❌ Is link se Drive file ID nahi mila.")
+        raise GDriveError("Is link se Drive file ID nahi mila.")
     os.makedirs(output_dir, exist_ok=True)
 
     def _run() -> str:
@@ -255,10 +255,10 @@ async def download_gdrive_folder(url: str, output_dir: str,
 
     if not saved and blocked:
         raise GDriveError(
-            f"🚫 <b>Google ne saari {blocked} files block kar di.</b>\n\n"
+            f"<b>Google ne saari {blocked} files block kar di.</b>\n\n"
             "Ye folder itni baar download ho chuka hai ki Google ne "
             "quota limit laga di hai (ya files public nahi hain).\n\n"
-            "✅ <b>Fix:</b> folder ko apni Drive me copy karke uska link "
+            "<b>Fix:</b> folder ko apni Drive me copy karke uska link"
             "bhejo, ya kuch ghante baad try karo.")
     return saved
 

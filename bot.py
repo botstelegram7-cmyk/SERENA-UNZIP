@@ -29,7 +29,7 @@ from pyrogram.types import (
 # otherwise fall back to a coloured emoji prefix so the intent still reads
 # visually. Upgrading pyrofork later turns on real colours with no other
 # code change.
-_STYLE_DOT = {"success": "🟢", "danger": "🔴", "primary": "🔵"}
+_STYLE_DOT = {"success": "", "danger": "", "primary": ""}
 
 try:                                    # probed once at import
     import inspect as _inspect
@@ -209,8 +209,8 @@ async def _check_disk_space_ok(message) -> bool:
         free_gb = usage.free / (1024**3)
         if free_gb < 0.5:   # less than 500MB free
             await _safe_reply(message,
-                f"⚠️ <b>Low disk space!</b> Only {free_gb:.1f} GB free.\n"
-                "Try again in a few minutes."
+                f"<b>Low disk space!</b> Only {free_gb:.1f} GB free.\n"
+                "Please try again in a few minutes."
             )
             return False
     except Exception:
@@ -281,130 +281,46 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v2.8.0"
-BOT_CODENAME = "Dlink Minting"
+BOT_VERSION  = "v2.9.0"
+BOT_CODENAME = "Refined Interface"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v2.9.0": [
+        "Interface rewritten in plain English with a calmer, uncluttered tone",
+        "Pictographic icons removed throughout for a cleaner reading experience",
+        "New paginated <code>/help</code> with sections and tap-to-copy commands",
+        "Every command is now documented with a worked example",
+        "Redesigned welcome screen and navigation",
+    ],
     "v2.8.0": [
-        "🔑 <b>TeraBox dlink minting</b> — ab signed list + <code>/share/download</code> se download link banane ki koshish hoti hai, pehle bina try kiye haar maan leta tha",
-        "🌐 <code>TERABOX_PROXY</code> support — IP block ka asli fix (residential proxy)",
-        "🩺 <code>/tbtest</code> ab dlink status bhi dikhata hai: <code>dlink 1/1 ✅</code> ya <code>❌ withheld</code>",
-        "🎨 Button colours: pyrofork ke MTProto layer me abhi possible nahi — 16 raw button types check kiye, kisi me colour flag nahi",
+        "TeraBox download links are now minted through the signed listing and <code>/share/download</code>",
+        "New <code>TERABOX_PROXY</code> setting for routing around blocked addresses",
+        "<code>/tbtest</code> reports link-minting status alongside the listing",
     ],
     "v2.7.1": [
-        "🚫 <code>/profile</code> aur <code>/story</code> ab jhoota auto-retry nahi dikhate — saaf batate hain ki IP block hai",
-        "🩺 <code>/tbtest</code> bina link ke ab 'invalid link' nahi bolta — reachability test karta hai",
-        "🔍 TeraBox errno ab detail me: token rejected, download refused, verification required",
-        "📄 MIT LICENSE file add ki",
-        "🤝 CONTRIBUTING.md add ki — setup, code style, naya platform kaise jode",
-        "⚠️ Credit na hataane ki request README aur CONTRIBUTING dono me",
+        "<code>/profile</code> and <code>/story</code> no longer promise a retry that cannot succeed",
+        "<code>/tbtest</code> without a link now performs a reachability check",
+        "TeraBox error codes reported in detail",
+        "MIT LICENSE and CONTRIBUTING guide added",
     ],
     "v2.7.0": [
-        "🐞 <b>TeraBox fix:</b> valid links 'invalid' bata raha tha — ab surl ke dono form try hote hain",
-        "🔒 File mil jaye par download link na mile to saaf batata hai (pehle chup-chaap fail)",
-        "🎨 Buttons par colour dots — 🟢 safe, 🔴 cancel, 🔵 normal",
-        "💬 Link menu ab aasan bhasha me: 'Google Drive', 'Video site' — 'telegram: 1' jaisa nahi",
-        "✅ Result message saaf: 'Success: 0 Failed: 1' ki jagah kaam ki baat",
-        "🛑 <code>/cancel</code> ka message chhota aur seedha",
+        "Fixed valid TeraBox links being rejected as invalid",
+        "Clearer link menu and result summaries",
+        "Colour accents on action buttons",
     ],
     "v2.6.2": [
-        "🍪 <b>Netscape format cookies ab support hain</b> — pehle poori file <code>ndus=</code> ke aage chipak jati thi (0 chars error)",
-        "📂 <b>Bade Drive folders fix</b> — 86 files wala folder chup-chaap hang ho jata tha, ab file-by-file download hota hai",
-        "📊 Folder download me live progress: kaun si file, kitni ho gayin",
-        "🛑 Folder ke beech me <code>/cancel</code> kaam karta hai",
-        "🩹 Kuch files block hon to baaki phir bhi milti hain",
-        "💬 Google quota block ab saaf batata hai, chup-chaap fail nahi hota",
-    ],
-    "v2.6.1": [
-        "🐞 <b>Fix:</b> cookie me newline hone par har request crash ho jati thi — devtools se paste karne par ye aam hai",
-        "🍪 Cookie ab automatically clean hoti hai (newline, tab, quotes, extra space)",
-        "🔎 Galat cookie pehle hi pakdi jati hai, saaf message ke saath",
-        "💬 Network/transport error ab 'TeraBox ne API badla' nahi bolta — asli wajah batata hai",
-        "🩺 <code>/tbtest</code> aur <code>/version</code> me cookie ka status dikhta hai",
-    ],
-    "v2.6.0": [
-        "📦 <b>TeraBox download support</b> — yt-dlp me TeraBox ka extractor hai hi nahi, isliye native resolver banaya",
-        "🔗 Saare TeraBox mirrors: terabox.com, 1024terabox, teraboxapp, 4funbox, terasharelink, terafileshare aur baaki",
-        "📂 Folder shares recursive walk hote hain, saari files milti hain",
-        "⚡ Naya <code>/terabox</code> command (alias <code>/tb</code>) — ya seedha link paste karo",
-        "🍪 <code>TERABOX_COOKIE</code> env var support (ndus cookie)",
-        "🩺 <code>/tbtest</code> — mirrors ka live status dekho",
-        "💬 errno 140 ab sahi samjhaya jata hai: link sahi hai, IP block hai — cookie daalo",
-        "💾 Har file upload ke baad disk se hat jati hai (Render 512MB safe)",
-    ],
-    "v2.5.1": [
-        "📂 <b>Google Drive folder links ab kaam karte hain</b> — pehle sirf single file support thi, folder seedha fail hota tha",
-        "📱 Mobile ke nested folder links (<code>/drive/mobile/folders/a/b/c</code>) se sahi folder pick hota hai",
-        "🔐 Bade files ka 'virus scan' confirm token handle hota hai (gdown se)",
-        "💬 Drive errors ab asli wajah batate hain: private hai, quota khatam, ya link galat",
-        "🧩 Folder ki saari files ek-ek karke upload hoti hain, progress ke saath",
-        "🩹 Fail hone par bhi jo files download ho chuki hain wo deliver hoti hain",
-        "🌐 Fix: <code>HEAD /</code> par 405 aata tha — uptime monitors ab theek se ping kar payenge",
+        "Netscape cookie files are now accepted",
+        "Large Google Drive folders download file by file with live progress",
     ],
     "v2.5.0": [
-        "🎬 <b>YouTube ab kaam karta hai!</b> Pehle wo 'unknown' tha aur HTML page download kar raha tha",
-        "🌍 88 sites ka fast-path: TikTok, Twitter/X, FB, Spotify, SoundCloud, Pinterest, LinkedIn, Rumble, Hotstar, JioCinema, ShareChat aur bahut kuch",
-        "📦 File hosts detect hote hain: MEGA, MediaFire, Terabox, Pixeldrain, GoFile, WeTransfer",
-        "🔍 <b>Indirect links</b>: extension na ho to bot server se poochta hai ki file hai ya page, phir sahi handler chunta hai",
-        "🤖 Pehchan na aane wale links ab yt-dlp ko diye jate hain (1800+ sites support)",
-        "🎵 Audio files ab audio player me jate hain, document ki tarah nahi",
-        "🐞 Fix: <code>is_direct_download_url</code> do baar defined tha, doosra pehle wale ko chup-chaap override kar raha tha",
-        "🛡 Domain matching ab hostname-based hai — <code>ok.co</code> ab <code>ex.com</code> se match nahi karta",
+        "YouTube and 88 further sites recognised directly",
+        "Links without a file extension are probed and routed correctly",
+        "MEGA, MediaFire, Terabox and other file hosts detected",
     ],
     "v2.4.0": [
-        "🔁 Har media file ab 4 baar retry hoti hai — pehle ek network glitch = poora download fail",
-        "⏭ Adhoore download <b>resume</b> hote hain (Range request), shuru se nahi",
-        "✂️ Truncated/half files detect hokar dobara try hoti hain",
-        "🎠 Carousel ka koi item fail ho to baaki phir bhi milenge (pehle sab fail hota tha)",
-        "🔄 CDN link expire ho jaye to metadata refresh karke dobara koshish",
-        "⏱ Stall hone par timeout — pehle download ghanton latka rehta tha",
-        "🚀 yt-dlp fallback: 10 retries + exponential backoff, ffmpeg ke bina bhi chalta hai",
-        "💬 Fail hone par asli technical wajah dikhti hai, generic message nahi",
-    ],
-    "v2.3.3": [
-        "🩺 <code>/igtest</code> ab sahi verdict deta hai — pehle galat 'IP blocked' bolta tha jabki embed chal raha tha",
-        "🔇 Story videos ka silent rendition avoid karta hai (audio wali copy prefer)",
-        "🔊 Agar phir bhi audio na mile to caption me saaf likha jayega",
-        "💬 Story error ab galat tarike se 'cookies expire' nahi bolta — asli wajah batata hai",
-        "🖼 Story videos ke saath proper thumbnail",
-    ],
-    "v2.3.2": [
-        "🐞 <b>Fix:</b> ek hi attempt ke andar ke saare 429 alag-alag gine ja rahe the — cooldown bewajah 10 min/1 hour tak chala jata tha",
-        "🔄 Cooldown khatam hone par download <b>apne aap</b> retry hota hai (max 3 baar)",
-        "🍪 Naye cookies daalte hi purana cooldown clear ho jata hai",
-        "🩺 <code>/igtest</code> — har Instagram endpoint ka actual response dekho",
-        "🟢 <code>/resetlimit</code> — cooldown zabardasti clear karo",
-        "🔇 Background cookie-check ab cooldown nahi badhata",
-    ],
-    "v2.3.1": [
-        "⏱ Rate-limit ab exact ETA deta hai — kitne second baad retry karna hai",
-        "🔁 Live countdown message jo apne aap update hota hai",
-        "📈 Baar-baar limit lagne par wait time badhta hai (1 min → 1 hour)",
-        "🚦 Cooldown ke dauran request bheji hi nahi jaati — turant ETA milta hai",
-        "🛑 <code>/profile</code> bulk download rate-limit par ruk jata hai, ETA ke saath",
-        "🧩 <code>/version</code> me live rate-limit status",
-    ],
-    "v2.3.0": [
-        "🔐 Owner IDs moved to the <code>OWNER_IDS</code> env var (no longer in the code)",
-        "🐞 Fixed a crash in group admin checks when no owner was configured",
-        "🧯 Replaced all 103 bare <code>except:</code> blocks so <code>/cancel</code> works reliably",
-        "🍪 Automatic Instagram cookie health checks + owner alerts when they expire",
-        "⚡ Repeat links are served from cache — instant, no re-download",
-        "👤 <code>/profile</code> — bulk-download a profile's latest posts",
-        "📲 <code>/story</code> — download someone's active stories",
-        "🌊 Global FloodWait protection on every send",
-        "🧩 <code>/version</code> now shows the changelog and live health",
-    ],
-    "v2.2.0": [
-        "🔗 Plain links work without <code>/insta</code> or <code>/ytdl</code>",
-        "🧵 Fixed handlers below <code>asyncio.run()</code> never registering (<code>/song</code> was dead)",
-        "🔍 Links pasted without <code>https://</code> are now detected",
-    ],
-    "v2.1.0": [
-        "📝 Reel descriptions in expandable quotes, with styled fonts",
-        "🖼 Fixed <code>PHOTO_EXT_INVALID</code> by converting WebP/HEIC to JPEG",
-        "🎠 Carousels always delivered as albums",
+        "Downloads retry and resume instead of failing on a dropped connection",
+        "Partial albums are delivered rather than discarded",
     ],
 }
 
@@ -418,7 +334,7 @@ AUDIO_EXT_SET = {".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".wav"}
 PDF_EXT_SET   = {".pdf"}
 ARCHIVE_EXTS  = (".zip",".rar",".7z",".tar",".gz",".tgz",".tar.gz",
                  ".tar.bz2",".tbz2",".bz2",".xz",".tar.xz")
-EMOJI_LIST    = ["🚀","📦","🎬","🧩","📄","🔗","🧪","⚡","💾","🧰"]
+EMOJI_LIST    = ["","","","","","","","","",""]
 
 # ── State dicts ─────────────────────────────────────────────────────────────
 # Custom filter — non-command text (avoids TypeError from ~filters.command)
@@ -513,12 +429,12 @@ async def check_rate_limit(uid, msg):
     user=await get_or_create_user(uid); stats=user.get("stats",{})
     if stats.get("daily_tasks",0)>=Config.FREE_DAILY_TASK_LIMIT:
         await msg.reply_text(
-            f"⚠️ <b>Daily limit reached!</b>\n📦 Tasks: <b>{stats['daily_tasks']}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
-            f"⏰ Resets in: <b>{_ht(_secs_to_midnight())}</b>\n\nGet ⭐ Premium for unlimited!",
-            reply_markup=InlineKeyboardMarkup([[_btn("⭐ Get Premium", "premium_info", "primary")]]))
+            f"<b>Daily limit reached!</b>\nTasks: <b>{stats['daily_tasks']}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
+            f"⏰ Resets in: <b>{_ht(_secs_to_midnight())}</b>\n\nGet Premium for unlimited!",
+            reply_markup=InlineKeyboardMarkup([[_btn("Get Premium", "premium_info", "primary")]]))
         return False
     if float(stats.get("daily_size_mb",0))>=Config.FREE_DAILY_SIZE_MB:
-        await msg.reply_text("⚠️ Daily data limit reached. Get ⭐ Premium for no limits!"); return False
+        await msg.reply_text("Daily data limit reached. Upgrade to Premium to remove limits."); return False
     last=stats.get("last_task_ts")
     if last:
         elapsed=(datetime.datetime.utcnow()-last).total_seconds() if isinstance(last,datetime.datetime) else time.time()-float(last)
@@ -568,7 +484,7 @@ async def _log_target(client, user):
         except Exception: pass
     if root:
         user_log_topics[user.id]=root
-        try: await client.send_message(cid,f"👤 {user.first_name} | {user.id}",reply_to_message_id=root)
+        try: await client.send_message(cid,f"{user.first_name} | {user.id}",reply_to_message_id=root)
         except Exception: pass
     return cid,root
 
@@ -576,7 +492,7 @@ async def log_input(client, message, ctx):
     if not Config.LOG_CHANNEL_ID or not message.from_user: return
     user=message.from_user; cid,root=await _log_target(client,user)
     if not cid: return
-    cap=f"🔹 INPUT\n• {user.first_name} (@{user.username or 'N/A'})\n• ID: {user.id}\n• {ctx}"
+    cap=f"INPUT\n• {user.first_name} (@{user.username or 'N/A'})\n• ID: {user.id}\n• {ctx}"
     kw={"reply_to_message_id":root} if root else {}
     try: await client.send_message(cid,cap,**kw)
     except Exception: pass
@@ -585,7 +501,7 @@ async def log_output(client, user, msg, ctx):
     if not Config.LOG_CHANNEL_ID or not user or not msg: return
     cid,root=await _log_target(client,user)
     if not cid: return
-    cap=f"✅ OUTPUT\n• {user.first_name} (@{user.username or 'N/A'})\n• ID: {user.id}\n• {ctx}"
+    cap=f"OUTPUT\n• {user.first_name} (@{user.username or 'N/A'})\n• ID: {user.id}\n• {ctx}"
     kw={"reply_to_message_id":root} if root else {}
     try: await client.send_message(cid,cap,**kw)
     except Exception: pass
@@ -593,63 +509,76 @@ async def log_output(client, user, msg, ctx):
 # ════════════════════════════════════════════════════════════════════════════
 # KEYBOARDS
 # ════════════════════════════════════════════════════════════════════════════
-def _ob(): return InlineKeyboardButton("👤 Owner",url=f"https://t.me/{Config.OWNER_USERNAME}")
-def _cb(): return InlineKeyboardButton("📢 Channel",url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")
+def _copy_btn(label: str, payload: str) -> InlineKeyboardButton:
+    """A tap-to-copy button (Bot API 7.11 `copy_text`).
+
+    Lets the help screens offer a command the user can copy in one tap
+    instead of selecting text by hand. Falls back to a plain callback
+    button if the installed library predates copy_text.
+    """
+    try:
+        return InlineKeyboardButton(label, copy_text=payload)
+    except TypeError:
+        return InlineKeyboardButton(label, callback_data="noop")
+
+
+def _ob(): return InlineKeyboardButton("Owner",url=f"https://t.me/{Config.OWNER_USERNAME}")
+def _cb(): return InlineKeyboardButton("Channel",url=f"https://t.me/{Config.FORCE_SUB_CHANNEL}")
 
 def main_keyboard():
     return InlineKeyboardMarkup([
         [_cb()],
-        [_btn("📦 Unzip File", "help:unzip", "success"),
-         _btn("⬇️ Download Link", "help:link", "success")],
-        [_btn("⚙️ Settings", "open_settings", "primary"),
-         _btn("📊 My Stats", "show_mystats", "primary")],
-        [_btn("💬 Help", "show_help", "primary"),
-         _btn("⭐ Premium", "premium_info", "primary")],
+        [_btn("Unzip File", "help:unzip", "success"),
+         _btn("Download Link", "help:link", "success")],
+        [_btn("Settings", "open_settings", "primary"),
+         _btn("My Stats", "show_mystats", "primary")],
+        [_btn("Help", "show_help", "primary"),
+         _btn("Premium", "premium_info", "primary")],
         [_ob()],
     ])
 
 def settings_keyboard():
     return InlineKeyboardMarkup([
-        [_btn("📝 Caption", "settings:caption", "primary"),
-         _btn("🔤 Replace Words", "settings:replace", "primary")],
-        [_btn("📸 Original Thumb", "settings:thumb:original", "primary"),
-         _btn("🎲 Random Thumb", "settings:thumb:random", "primary")],
-        [_btn("⚙️ Reset All", "settings:reset", "primary")],
+        [_btn("Caption", "settings:caption", "primary"),
+         _btn("Replace Words", "settings:replace", "primary")],
+        [_btn("Original Thumb", "settings:thumb:original", "primary"),
+         _btn("Random Thumb", "settings:thumb:random", "primary")],
+        [_btn("Reset All", "settings:reset", "primary")],
         [_ob()],
     ])
 
 def file_action_keyboard(msg, fname, fsize_mb=0):
     cid,mid=msg.chat.id,msg.id; rows=[]
     if is_archive_file(fname):
-        rows.append([_btn("📦 Unzip", f"unzip|{cid}|{mid}|nopass", "danger"),
-                     _btn("🔐 With Password", f"unzip|{cid}|{mid}|askpass", "success")])
+        rows.append([_btn("Unzip", f"unzip|{cid}|{mid}|nopass", "danger"),
+                     _btn("With Password", f"unzip|{cid}|{mid}|askpass", "success")])
         if Config.ENABLE_AUTO_PASSWORD:
-            rows.append([_btn("🔑 Auto-Try Passwords", f"unzip|{cid}|{mid}|autopass", "success")])
+            rows.append([_btn("Auto-Try Passwords", f"unzip|{cid}|{mid}|autopass", "success")])
     elif is_video_file(fname):
-        rows.append([_btn("🎵 Extract Audio", f"audio|{cid}|{mid}", "success"),
-                     _btn("📦 Compress", f"compress|{cid}|{mid}", "primary")])
-        rows.append([_btn("✂️ Split File", f"split|{cid}|{mid}", "primary"),
-                     _btn("ℹ️ File Info", f"finfo|{cid}|{mid}", "primary")])
+        rows.append([_btn("Extract Audio", f"audio|{cid}|{mid}", "success"),
+                     _btn("Compress", f"compress|{cid}|{mid}", "primary")])
+        rows.append([_btn("Split File", f"split|{cid}|{mid}", "primary"),
+                     _btn("File Info", f"finfo|{cid}|{mid}", "primary")])
         if _ext(fname) in {".mkv",".mp4",".mov",".avi"}:
-            rows.append([_btn("🔤 Extract Subs", f"subs|{cid}|{mid}", "success"),
-                         _btn("📸 Screenshot", f"screenshot|{cid}|{mid}", "primary")])
-        rows.append([_btn("💧 Watermark", f"watermark|{cid}|{mid}", "primary"),
-                     _btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
+            rows.append([_btn("Extract Subs", f"subs|{cid}|{mid}", "success"),
+                         _btn("Screenshot", f"screenshot|{cid}|{mid}", "primary")])
+        rows.append([_btn("Watermark", f"watermark|{cid}|{mid}", "primary"),
+                     _btn("Rename", f"rename|{cid}|{mid}", "primary")])
     elif is_audio_file(fname):
-        rows.append([_btn("ℹ️ File Info", f"finfo|{cid}|{mid}", "primary"),
-                     _btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
+        rows.append([_btn("File Info", f"finfo|{cid}|{mid}", "primary"),
+                     _btn("Rename", f"rename|{cid}|{mid}", "primary")])
     elif is_pdf_file(fname):
-        rows.append([_btn("📄 PDF Tools", f"pdf|{cid}|{mid}", "primary"),
-                     _btn("ℹ️ File Info", f"finfo|{cid}|{mid}", "primary")])
-        rows.append([_btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
+        rows.append([_btn("PDF Tools", f"pdf|{cid}|{mid}", "primary"),
+                     _btn("File Info", f"finfo|{cid}|{mid}", "primary")])
+        rows.append([_btn("Rename", f"rename|{cid}|{mid}", "primary")])
     else:
         # BUG FIX #1 — unsupported file
-        rows.append([_btn("📤 Send As-Is", f"sendas|{cid}|{mid}", "success"),
-                     _btn("✏️ Rename", f"rename|{cid}|{mid}", "primary")])
-        rows.append([_btn("🗜 Add to ZIP", f"addtozip|{cid}|{mid}", "primary")])
+        rows.append([_btn("Send As-Is", f"sendas|{cid}|{mid}", "success"),
+                     _btn("Rename", f"rename|{cid}|{mid}", "primary")])
+        rows.append([_btn("Add to ZIP", f"addtozip|{cid}|{mid}", "primary")])
     if fsize_mb>Config.AUTO_SPLIT_MB:
-        rows.append([_btn("✂️ Split Parts", f"split|{cid}|{mid}", "primary"),
-                     _btn("☁️ Cloud Upload", f"cloudopt|{cid}|{mid}", "success")])
+        rows.append([_btn("Split Parts", f"split|{cid}|{mid}", "primary"),
+                     _btn("Cloud Upload", f"cloudopt|{cid}|{mid}", "success")])
     rows.append([_ob()]); return InlineKeyboardMarkup(rows)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -672,10 +601,10 @@ async def check_force_sub(client, message):
     except Exception:
         try:
             await message.reply_text(
-                "⚠️ Pehle channel join karo!",
+                "Please join the channel first.",
                 reply_markup=InlineKeyboardMarkup([
                     [_cb()],
-                    [_btn("✅ Joined! Try Again", "retry_force_sub", "success")],
+                    [_btn("Joined! Try Again", "retry_force_sub", "success")],
                 ]),
             )
         except Exception:
@@ -701,54 +630,182 @@ async def start_cmd(client, message):
                 rc=await get_referral_count(rid)
                 if rc>=Config.REFERRAL_REQUIRED:
                     await set_premium(rid,time.time()+Config.REFERRAL_REWARD_DAYS*86400)
-                    try: await client.send_message(rid,f"🎉 {Config.REFERRAL_REQUIRED} referrals! <b>{Config.REFERRAL_REWARD_DAYS} days Premium</b> free mila!")
+                    try: await client.send_message(rid,f"{Config.REFERRAL_REQUIRED} referrals reached. <b>{Config.REFERRAL_REWARD_DAYS} days of Premium</b> awarded.")
                     except Exception: pass
         except Exception: pass
     name=message.from_user.first_name or "there"
-    prem="⭐ Premium" if await is_premium_user(uid) else "Free"
-    cap=(f"Hey <b>{name}</b>! 👋\n\nWelcome to <b>{Config.BOT_NAME}</b> [{prem}]\n\n"
-         f"{random_emoji()} Unzip 20+ formats (ZIP/RAR/7Z/TAR + passwords)\n"
-         f"{random_emoji()} Instagram (Photos/Reels/Stories), Twitter, Facebook, TikTok downloader\n"
-         f"{random_emoji()} Video Compress, Merge, Split, Watermark\n"
-         f"{random_emoji()} Extract Audio, Subtitles, Screenshots\n"
-         f"{random_emoji()} ZIP Creator, File Renamer, PDF Tools\n"
-         f"{random_emoji()} Auto-process TXT/M3U8/GDrive links\n\nUse /help for full guide.")
+    prem="Premium" if await is_premium_user(uid) else "Free"
+    cap=(f"Welcome, <b>{name}</b>.\n"
+         f"{'\u2500' * 28}\n\n"
+         f"<b>{Config.BOT_NAME}</b> handles the tedious part of moving files "
+         f"through Telegram \u2014 extracting, converting and fetching, so you "
+         f"never leave the chat.\n\n"
+         f"<b>Archives</b>\n"
+         f"Twenty formats, encrypted ones included.\n\n"
+         f"<b>Media</b>\n"
+         f"Compress, merge, split, watermark, extract audio and subtitles.\n\n"
+         f"<b>Downloads</b>\n"
+         f"Instagram, YouTube, TikTok, X, Google Drive, TeraBox and some "
+         f"1800 other sites \u2014 simply paste a link.\n\n"
+         f"Plan: <b>{prem}</b>\n"
+         f"Send a file or a link to begin, or browse <code>/help</code>.")
     if Config.START_PIC: await message.reply_photo(Config.START_PIC,caption=cap,reply_markup=main_keyboard())
     else: await message.reply_text(cap,reply_markup=main_keyboard())
 
 
-@app.on_message(filters.command("help"))
+# ── Help system ──────────────────────────────────────────────────────────────
+# Commands are grouped into pages so the text stays readable on a phone.
+# Every entry is <code>-wrapped, which Telegram renders as tap-to-copy.
+
+HELP_PAGES = {
+    "home": {
+        "title": "Command Reference",
+        "body": (
+            "A complete toolkit for archives, media and downloads.\n"
+            "Choose a section below, or send a file or link to begin.\n\n"
+            "<b>Quick start</b>\n"
+            "Forward any archive and the extraction menu appears.\n"
+            "Paste any link and it downloads automatically — no command needed."
+        ),
+    },
+    "archives": {
+        "title": "Archives",
+        "body": (
+            "<b>Supported</b>\n"
+            "ZIP, RAR, 7Z, TAR, GZ, TGZ, BZ2, XZ and password-protected variants.\n\n"
+            "<b>Extract</b>\n"
+            "Send the archive, then choose Unzip. Encrypted archives prompt for a\n"
+            "password, or attempt a wordlist automatically.\n"
+            "In groups, reply to the file with <code>/unzip</code>\n\n"
+            "<b>Create an archive</b>\n"
+            "<code>/zip</code> — send files, then confirm to receive a single archive\n\n"
+            "<b>Queue several archives</b>\n"
+            "<code>/zipqueue</code> — process many archives back to back\n"
+            "<code>/zqpass</code> — supply passwords for the queue\n"
+            "<code>/qcancel</code> — abandon the queue\n"
+            "<code>/resume</code> — continue a queue after a restart"
+        ),
+    },
+    "media": {
+        "title": "Media Tools",
+        "body": (
+            "Reply to any video or audio file with a command.\n\n"
+            "<code>/compress</code> — re-encode to 360p, 480p, 720p or 1080p\n"
+            "<code>/audio</code> — extract the audio track\n"
+            "<code>/split</code> — divide a large file into parts\n"
+            "<code>/merge</code> — join several videos into one\n"
+            "<code>/subs</code> — pull out embedded subtitles\n"
+            "<code>/screenshot</code> — capture frames from a video\n"
+            "<code>/watermark</code> — overlay text on a video\n"
+            "<code>/rename</code> — change the filename\n"
+            "<code>/info</code> — inspect codec, duration and resolution\n"
+            "<code>/pdf</code> — merge, split or convert PDF documents"
+        ),
+    },
+    "download": {
+        "title": "Downloaders",
+        "body": (
+            "<b>Paste a link — no command required.</b>\n\n"
+            "<b>Instagram</b>\n"
+            "<code>/insta &lt;link&gt;</code> — posts, carousels and reels\n"
+            "<code>/profile &lt;user&gt; [count]</code> — latest posts in bulk\n"
+            "<code>/story &lt;user&gt;</code> — currently active stories\n"
+            "Example: <code>/profile natgeo 12</code>\n\n"
+            "<b>Video platforms</b>\n"
+            "<code>/ytdl &lt;link&gt;</code> — YouTube, TikTok, X, Facebook,\n"
+            "Reddit, Vimeo and roughly 1800 further sites\n"
+            "<code>/song &lt;name&gt;</code> — search and fetch audio\n\n"
+            "<b>Cloud storage</b>\n"
+            "Google Drive files and entire folders resolve automatically.\n"
+            "<code>/terabox &lt;link&gt;</code> — TeraBox shares\n\n"
+            "<b>Also handled</b>\n"
+            "Direct file URLs, m3u8 and DASH streams, and .txt files\n"
+            "containing lists of links."
+        ),
+    },
+    "account": {
+        "title": "Account",
+        "body": (
+            "<code>/mystats</code> — usage, quota and remaining allowance\n"
+            "<code>/settings</code> — captions, thumbnails and filename rules\n"
+            "<code>/premium</code> — plan details and benefits\n"
+            "<code>/refer</code> — invite friends to earn free Premium\n"
+            "<code>/cancel</code> — stop everything currently running\n"
+            "<code>/version</code> — build, changelog and service health"
+        ),
+    },
+    "groups": {
+        "title": "Groups",
+        "body": (
+            "Add the bot to a group and reply to any file with a command.\n"
+            "Links posted in a group are picked up automatically; ordinary\n"
+            "conversation is ignored unless the bot is mentioned.\n\n"
+            "<b>Available on a reply</b>\n"
+            "<code>/unzip</code> <code>/audio</code> <code>/compress</code> "
+            "<code>/info</code> <code>/subs</code>\n"
+            "<code>/rename</code> <code>/split</code> <code>/screenshot</code> "
+            "<code>/pdf</code> <code>/watermark</code>\n\n"
+            "<b>Access control (group admins)</b>\n"
+            "<code>/authorize</code> — permit a member to use the bot\n"
+            "<code>/deauthorize</code> — revoke that permission\n"
+            "<code>/permissions</code> — review who currently has access"
+        ),
+    },
+    "admin": {
+        "title": "Administration",
+        "body": (
+            "Reserved for the operators listed in <code>OWNER_IDS</code>.\n\n"
+            "<code>/admin</code> — control panel\n"
+            "<code>/status</code> — uptime, memory and disk\n"
+            "<code>/users</code> — registered user count\n"
+            "<code>/broadcast</code> — message every user\n"
+            "<code>/premium &lt;id&gt; [days]</code> — grant Premium\n"
+            "<code>/ban &lt;id&gt;</code> · <code>/unban &lt;id&gt;</code>\n\n"
+            "<b>Diagnostics</b>\n"
+            "<code>/igtest</code> — probe Instagram endpoints\n"
+            "<code>/tbtest &lt;link&gt;</code> — probe TeraBox mirrors\n"
+            "<code>/resetlimit</code> — clear a rate-limit cooldown\n"
+            "<code>/clearcache</code> — empty the media cache"
+        ),
+    },
+}
+
+_HELP_NAV = [
+    [("Archives", "archives"), ("Media Tools", "media")],
+    [("Downloaders", "download"), ("Account", "account")],
+    [("Groups", "groups"), ("Administration", "admin")],
+]
+
+
+def help_keyboard(page: str = "home") -> InlineKeyboardMarkup:
+    rows = []
+    if page == "home":
+        for row in _HELP_NAV:
+            rows.append([_btn(label, f"help:{key}", "primary")
+                         for label, key in row])
+    else:
+        # Offer the page's headline command as a one-tap copy
+        sample = {"archives": "/zip", "media": "/compress",
+                  "download": "/profile natgeo 12", "account": "/mystats",
+                  "groups": "/authorize", "admin": "/status"}.get(page)
+        if sample:
+            rows.append([_copy_btn(f"Copy  {sample}", sample)])
+        rows.append([_btn("Back", "help:home", "primary")])
+    rows.append([_cb(), _ob()])
+    return InlineKeyboardMarkup(rows)
+
+
+def build_help(page: str = "home") -> str:
+    data = HELP_PAGES.get(page) or HELP_PAGES["home"]
+    return (f"<b>{Config.BOT_NAME}</b>  ·  {data['title']}\n"
+            f"{'─' * 28}\n\n{data['body']}")
+
+
+@app.on_message(filters.command(["help", "cmds", "commands", "bothelp"]))
 async def help_cmd(client, message):
-    text=(
-        "✨ <b>Serena Unzip v2 — Help</b>\n\n"
-        "📦 <b>Archives</b>\n"
-        "• Send archive → Unzip / Password / Auto-Try\n"
-        "• ZIP, RAR, 7Z, TAR, GZ, BZ2, XZ supported\n\n"
-        "🎬 <b>Video Tools</b>\n"
-        "• Extract Audio  • Compress (360p–1080p)\n"
-        "• Split File  • Extract Subtitles\n"
-        "• Screenshot  • Watermark  • Rename\n\n"
-        "⬇️ <b>Downloaders</b>\n"
-        "• <code>/insta &lt;link&gt;</code> — Instagram photos, carousels, reels, stories\n"
-        "• <code>/ytdl &lt;link&gt;</code> — Twitter, TikTok, Facebook, Vimeo…\n"
-        "• TXT / links → auto-download (direct, m3u8, GDrive)\n\n"
-        "🗜 <b>ZIP Creator</b>: <code>/zip</code> → files bhejo → ✅ Done\n"
-        "📦 <b>ZIP Queue</b>: <code>/zipqueue</code> → multiple ZIPs → process all in order\n"
-        "🔗 <b>Merge Videos</b>: <code>/merge</code> → videos bhejo → ✅ Merge\n"
-        "✏️ <b>Rename</b>: Reply to file → <code>/rename</code>\n"
-        "ℹ️ <b>Info</b>: Reply to file → <code>/info</code>\n"
-        "📄 <b>PDF</b>: Tap PDF Tools button\n"
-        "📊 <b>Stats</b>: <code>/mystats</code>\n"
-        "🎁 <b>Referral</b>: <code>/refer</code> — 5 friends = 7 days Premium FREE!\n\n"
-        "👥 <b>Groups — Reply to file + command:</b>\n"
-        "<code>/unzip</code>  <code>/audio</code>  <code>/compress</code>  <code>/info</code>\n"
-        "<code>/subs</code>  <code>/rename</code>  <code>/split</code>  <code>/screenshot</code>\n"
-        "<code>/pdf</code>  <code>/watermark</code>  <code>/ytdl</code>  <code>/insta</code>\n"
-        "<code>/profile</code>  <code>/story</code>  <code>/version</code>\n\n"
-        "🛠 <b>Admin</b>: <code>/admin</code>  <code>/status</code>  <code>/broadcast</code>\n"
-        "<code>/premium &lt;id&gt; [days]</code>  <code>/ban</code>  <code>/unban</code>"
-    )
-    await message.reply_text(text)
+    await message.reply_text(build_help("home"),
+                             reply_markup=help_keyboard("home"),
+                             disable_web_page_preview=True)
 
 
 @app.on_message(filters.command("settings"))
@@ -756,9 +813,9 @@ async def settings_cmd(client, message):
     if not message.from_user: return
     uid=message.from_user.id; cfg=await get_user_settings(uid) or {}
     text=(f"{random_emoji()} <b>Your Settings</b>\n\n"
-          f"📝 Caption base: <code>{cfg.get('caption_base') or 'None'}</code>\n"
-          f"🔤 Replace: <code>{cfg.get('replace_from') or 'None'}</code> → <code>{cfg.get('replace_to') or 'None'}</code>\n"
-          f"🖼 Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
+          f"Caption base: <code>{cfg.get('caption_base') or 'None'}</code>\n"
+          f"Replace: <code>{cfg.get('replace_from') or 'None'}</code> → <code>{cfg.get('replace_to') or 'None'}</code>\n"
+          f"Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
           "Use buttons below:")
     await message.reply_text(text, reply_markup=settings_keyboard())
 
@@ -778,8 +835,8 @@ async def cancel_cmd(client, message):
     q=ZIP_QUEUE_SESSIONS.get(uid)
     if q: q["cancelled"]=True; ZIP_QUEUE_SESSIONS.pop(uid,None)
     await message.reply_text(
-        "🛑 <b>Cancel ho gaya.</b>\n\n"
-        "<i>Sab kuch ruk gaya — naya link bhej sakte ho.</i>")
+        "<b>Cancelled.</b>\n\n"
+        "<i>Everything has stopped. You may send a new link.</i>")
 
 
 @app.on_message(filters.command("mystats"))
@@ -788,16 +845,16 @@ async def mystats_cmd(client, message):
     uid=message.from_user.id; user=await get_or_create_user(uid)
     stats=user.get("stats",{}); cfg=await get_user_settings(uid) or {}
     ip=await is_premium_user(uid); pu=await get_premium_until(uid); rc=await get_referral_count(uid)
-    ps="✅ Active"
+    ps="Active"
     if ip and pu: ps+=f" (expires {datetime.datetime.utcfromtimestamp(pu).strftime('%d %b %Y')})"
-    elif not ip: ps="❌ Free"
+    elif not ip: ps="Free"
     await message.reply_text(
-        f"📊 <b>Your Stats</b>\n\n👤 {message.from_user.first_name}\n🆔 <code>{uid}</code>\n"
-        f"⭐ Premium: {ps}\n\n📦 Tasks today: <b>{stats.get('daily_tasks',0)}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
-        f"💾 Data today: <b>{stats.get('daily_size_mb',0):.1f}/{Config.FREE_DAILY_SIZE_MB} MB</b>\n"
-        f"🏆 Total tasks: <b>{stats.get('total_tasks',0)}</b>\n🎁 Referrals: <b>{rc}</b>\n\n"
-        f"📝 Caption: <code>{cfg.get('caption_base') or 'None'}</code>\n"
-        f"🖼 Thumb: <code>{cfg.get('thumb_mode','random')}</code>")
+        f"<b>Your Stats</b>\n\n{message.from_user.first_name}\n<code>{uid}</code>\n"
+        f"Premium: {ps}\n\nTasks today: <b>{stats.get('daily_tasks',0)}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
+        f"Data today: <b>{stats.get('daily_size_mb',0):.1f}/{Config.FREE_DAILY_SIZE_MB} MB</b>\n"
+        f"Total tasks: <b>{stats.get('total_tasks',0)}</b>\nReferrals: <b>{rc}</b>\n\n"
+        f"Caption: <code>{cfg.get('caption_base') or 'None'}</code>\n"
+        f"Thumb: <code>{cfg.get('thumb_mode','random')}</code>")
 
 
 @app.on_message(filters.command("refer"))
@@ -807,11 +864,11 @@ async def refer_cmd(client, message):
     link=f"https://t.me/{me.username}?start=ref_{uid}"
     rc=await get_referral_count(uid); need=max(0,Config.REFERRAL_REQUIRED-rc)
     await message.reply_text(
-        f"🎁 <b>Referral Program</b>\n\nYour link:\n<code>{link}</code>\n\n"
-        f"✅ Referred: <b>{rc}/{Config.REFERRAL_REQUIRED}</b>  |  Aur {need} chahiye\n"
-        f"🏆 Reward: <b>{Config.REFERRAL_REWARD_DAYS} days Premium FREE!</b>",
+        f"<b>Referral Program</b>\n\nYour link:\n<code>{link}</code>\n\n"
+        f"Referred: <b>{rc}/{Config.REFERRAL_REQUIRED}</b> | Aur {need} required\n"
+        f"Reward: <b>{Config.REFERRAL_REWARD_DAYS} days Premium FREE!</b>",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📤 Share",url=f"https://t.me/share/url?url={link}&text=Join+Serena+Bot!")
+            InlineKeyboardButton("Share",url=f"https://t.me/share/url?url={link}&text=Join+Serena+Bot!")
         ]]))
 
 
@@ -825,20 +882,20 @@ async def ytdl_cmd(client, message):
     args=message.command[1:]
     if not args:
         await message.reply_text(
-            "📥 Usage: <code>/ytdl &lt;URL&gt;</code>\n\n"
+            "Usage: <code>/ytdl &lt;URL&gt;</code>\n\n"
             "Supported: Instagram, Twitter/X, Facebook, TikTok,\nVimeo, Dailymotion, Reddit + 1000 more\n\n"
-            "<i>Note: YouTube & paid education platforms supported nahi hain.</i>"); return
+            "<i>Note: YouTube and paid education platforms are not supported.</i>"); return
     url=args[0].strip()
     if not is_supported_url(url):
-        await message.reply_text("❌ Ye URL supported nahi hai."); return
+        await message.reply_text("That URL is not supported."); return
     # Instagram needs no quality menu — download straight away
     if _is_instagram_url(url):
         await get_or_create_user(uid)
         await _start_instagram_flow(client, message, url); return
-    status=await message.reply_text("🔍 Fetching info…")
+    status=await message.reply_text("Fetching info…")
     try: formats=await get_formats(url)
     except Exception as e:
-        await status.edit_text(f"❌ Info fetch failed:\n<code>{e}</code>"); return
+        await status.edit_text(f"Info fetch failed:\n<code>{e}</code>"); return
     task_id=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/task_id
     temp_root.mkdir(parents=True,exist_ok=True)
@@ -848,8 +905,8 @@ async def ytdl_cmd(client, message):
     for i,f in enumerate(formats):
         sz=f" (~{human_bytes(f['size_approx'])})" if f.get("size_approx") else ""
         buttons.append([_btn(f"{f['label']}{sz}", f"ytdlq|{task_id}|{i}", "primary")])
-    buttons.append([_btn("❌ Cancel", f"ytdlcancel|{task_id}", "danger")])
-    try: await status.edit_text(f"🎬 Quality choose karo:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
+    buttons.append([_btn("Cancel", f"ytdlcancel|{task_id}", "danger")])
+    try: await status.edit_text(f"Choose a quality:\n<code>{url}</code>",reply_markup=InlineKeyboardMarkup(buttons))
     except Exception: pass
 
 
@@ -869,29 +926,29 @@ async def version_cmd(client, message):
         except Exception:
             pass
     cookie_state = cookie_status_line()
-    cookie_icon = {"valid": "✅", "EXPIRED": "❌",
-                   "not set": "⚠️"}.get(cookie_state, "❓")
+    cookie_icon = {"valid": "", "EXPIRED": "",
+                   "not set": ""}.get(cookie_state, "")
     try:
         cache_n = (await ig_cache_stats()).get("entries", 0)
     except Exception:
         cache_n = 0
 
     lines = [
-        f"🧩 <b>{Config.BOT_NAME}</b>  <code>{BOT_VERSION}</code>",
+        f"<b>{Config.BOT_NAME}</b> <code>{BOT_VERSION}</code>",
         f"<i>{BOT_CODENAME}</i>",
         "",
-        f"📦 Build: <code>{BUILD_VERSION}</code>",
-        f"📅 Released: <b>{BOT_RELEASED}</b>",
-        f"🔌 Handlers: <b>{handlers}</b>",
-        f"🍪 Instagram cookies: {cookie_icon} <b>{cookie_state}</b>",
-        f"⚡ Cached posts: <b>{cache_n}</b>",
-        f"📦 TeraBox cookie: <b>{_tb_cookie_line()}</b>",
+        f"Build: <code>{BUILD_VERSION}</code>",
+        f"Released: <b>{BOT_RELEASED}</b>",
+        f"Handlers: <b>{handlers}</b>",
+        f"Instagram cookies: {cookie_icon} <b>{cookie_state}</b>",
+        f"Cached posts: <b>{cache_n}</b>",
+        f"TeraBox cookie: <b>{_tb_cookie_line()}</b>",
     ]
     _rl = rate_limit_remaining()
     if _rl > 0:
         lines.append(f"⏳ Rate-limited: <b>{_fmt_duration(_rl)}</b> left (<code>{_rl}s</code>)")
     else:
-        lines.append("🟢 Rate-limit: <b>clear</b>")
+        lines.append("Rate-limit: <b>clear</b>")
     lines += [
         "",
         f"<b>What's new in {BOT_VERSION}</b>",
@@ -920,21 +977,21 @@ async def insta_cmd(client, message):
     args = message.command[1:]
     if not args:
         await message.reply_text(
-            "📸 <b>Instagram Downloader</b>\n\n"
+            "<b>Instagram Downloader</b>\n\n"
             "Usage: <code>/insta &lt;URL&gt;</code>\n"
-            "Ya seedha link paste kar do — bot khud detect kar lega.\n\n"
-            "✅ Supported:\n"
-            "• 📷 Photo posts (full resolution)\n"
-            "• 🎠 Carousels — <b>saari images ek album mein</b>\n"
-            "• 🎬 Reels & videos (audio ke saath)\n"
-            "• 📲 Stories & ⭐ Highlights <i>(cookies chahiye)</i>\n\n"
-            "📝 Caption, title aur description automatically add hote hain.\n"
-            "⚡ Koi confirmation button nahi — link do, download shuru.\n\n"
-            "<i>Private content ke liye owner ko INSTAGRAM_COOKIES set karna hoga.</i>")
+            "Or simply paste the link and it will be detected.\n\n"
+            "Supported:\n"
+            "• Photo posts (full resolution)\n"
+            "• Carousels — <b>saari images ek album mein</b>\n"
+            "• Reels & videos (audio ke saath)\n"
+            "• Stories and Highlights <i>(cookies required)</i>\n\n"
+            "Caption, title aur description automatically add hote hain.\n"
+            "No confirmation needed. Send a link and the download begins.\n\n"
+            "<i>Private content requires the owner to set INSTAGRAM_COOKIES.</i>")
         return
     url = args[0].strip()
     if not _is_instagram_url(url):
-        await message.reply_text("❌ Ye Instagram link nahi hai. <code>/ytdl</code> try karo.")
+        await message.reply_text("That is not an Instagram link. Try <code>/ytdl</code> instead.")
         return
     await get_or_create_user(uid)
     await _start_instagram_flow(client, message, url)
@@ -952,16 +1009,16 @@ async def terabox_cmd(client, message):
     args = message.command[1:]
     if not args:
         await message.reply_text(
-            "📦 <b>TeraBox Downloader</b>\n\n"
+            "<b>TeraBox Downloader</b>\n\n"
             "Usage: <code>/terabox &lt;link&gt;</code>\n"
-            "Ya seedha link paste kar do — bot khud pehchan lega.\n\n"
-            f"🍪 Cookie: {_tb_cookie_line()}\n"
-            "<i>Cookie ke bina TeraBox server IPs ko block karta hai.</i>")
+            "Or simply paste the link and it will be detected.\n\n"
+            f"Cookie: {_tb_cookie_line()}\n"
+            "<i>Without a cookie, TeraBox blocks server IP addresses.</i>")
         return
 
     url = args[0].strip()
     if not is_terabox_url(url):
-        await message.reply_text("❌ Ye TeraBox ka link nahi lag raha."); return
+        await message.reply_text("That does not look like a TeraBox link."); return
     if not await check_rate_limit(uid, message): return
     await get_or_create_user(uid)
 
@@ -969,7 +1026,7 @@ async def terabox_cmd(client, message):
     temp_root.mkdir(parents=True, exist_ok=True)
     await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
 
-    status = await message.reply_text("📦 TeraBox link process ho raha hai…")
+    status = await message.reply_text("Processing the TeraBox link…")
     try:
         ok, failed = await _handle_terabox_link(
             client, uid, message.from_user, url, temp_root,
@@ -979,15 +1036,15 @@ async def terabox_cmd(client, message):
             except Exception: pass
             if failed:
                 await message.reply_text(
-                    f"✅ {ok} file bheji, ⚠️ {failed} fail hui.")
+                    f"{ok} file bheji, {failed} fail hui.")
         elif not failed:
-            await _safe_edit(status, "📭 Koi file nahi mili.")
+            await _safe_edit(status, "No files were found.")
         else:
-            await _safe_edit(status, f"❌ {failed} file download nahi ho payi.")
+            await _safe_edit(status, f"{failed} file(s) could not be downloaded.")
     except TeraboxError as e:
         await _safe_edit(status, str(e))
     except Exception as e:
-        await _safe_edit(status, f"❌ TeraBox failed:\n<code>{str(e)[:250]}</code>")
+        await _safe_edit(status, f"TeraBox failed:\n<code>{str(e)[:250]}</code>")
 
 
 @app.on_message(filters.command(["tbtest", "tbdiag"]))
@@ -996,11 +1053,11 @@ async def tbtest_cmd(client, message):
     if not message.from_user or not is_owner(message.from_user.id): return
     from utils.terabox import diagnose
     args = message.command[1:]
-    st = await message.reply_text("🔬 TeraBox mirrors test kar raha hoon…")
+    st = await message.reply_text("TeraBox testing mirrors…")
     try:
         await _safe_edit(st, await diagnose(args[0] if args else ""))
     except Exception as e:
-        await _safe_edit(st, f"❌ <code>{str(e)[:250]}</code>")
+        await _safe_edit(st, f"<code>{str(e)[:250]}</code>")
 
 
 @app.on_message(filters.command(["igtest", "igdiag", "diagnose"]))
@@ -1008,11 +1065,11 @@ async def igtest_cmd(client, message):
     """Owner: probe Instagram endpoints and show what they actually return."""
     if not message.from_user or not is_owner(message.from_user.id): return
     from utils.instagram import diagnose
-    status = await message.reply_text("🔬 Testing Instagram endpoints…")
+    status = await message.reply_text("Testing Instagram endpoints…")
     try:
         await _safe_edit(status, await diagnose())
     except Exception as e:
-        await _safe_edit(status, f"❌ Diagnostics failed:\n<code>{str(e)[:300]}</code>")
+        await _safe_edit(status, f"Diagnostics failed:\n<code>{str(e)[:300]}</code>")
 
 
 @app.on_message(filters.command(["resetlimit", "clearlimit"]))
@@ -1023,9 +1080,9 @@ async def resetlimit_cmd(client, message):
     was = rate_limit_remaining()
     clear_rate_limit()
     await message.reply_text(
-        f"🟢 Cooldown cleared (tha: <b>{was}s</b>).\n\n"
-        "<i>Dhyan rahe: agar Instagram abhi bhi block kar raha hai to "
-        "agli request par cooldown wapas lag jayega.</i>")
+        f"Cooldown cleared (tha: <b>{was}s</b>).\n\n"
+        "<i>Note: if Instagram is still blocking requests, "
+        "the cooldown will return on the next request.</i>")
 
 
 @app.on_message(filters.command(["clearcache", "cacheclear"]))
@@ -1033,7 +1090,7 @@ async def clearcache_cmd(client, message):
     """Owner: drop the Instagram file_id cache."""
     if not message.from_user or not is_owner(message.from_user.id): return
     n = await ig_cache_clear()
-    await message.reply_text(f"🧹 Cache cleared — <b>{n}</b> entries removed.")
+    await message.reply_text(f"Cache cleared — <b>{n}</b> entries removed.")
 
 
 @app.on_message(filters.command(["profile", "igprofile", "bulk"]))
@@ -1049,7 +1106,7 @@ async def profile_cmd(client, message):
     args = message.command[1:]
     if not args:
         await message.reply_text(
-            "👤 <b>Profile Bulk Downloader</b>\n\n"
+            "<b>Profile Bulk Downloader</b>\n\n"
             "Usage: <code>/profile &lt;username&gt; [count]</code>\n\n"
             "Examples:\n"
             "• <code>/profile natgeo</code> — latest 6 posts\n"
@@ -1059,7 +1116,7 @@ async def profile_cmd(client, message):
 
     username = extract_username(args[0])
     if not username:
-        await message.reply_text("❌ Valid username do, e.g. <code>/profile natgeo</code>"); return
+        await message.reply_text("Provide a valid username, for example <code>/profile natgeo</code>"); return
 
     limit = 6
     if len(args) > 1:
@@ -1068,7 +1125,7 @@ async def profile_cmd(client, message):
 
     if not await check_rate_limit(uid, message): return
     await get_or_create_user(uid)
-    status = await message.reply_text(f"🔍 <b>@{username}</b> ke posts fetch kar raha hoon…")
+    status = await message.reply_text(f"<b>@{username}</b> ke posts fetch in progress…")
 
     try:
         posts, info = await fetch_profile_posts(username, limit)
@@ -1077,25 +1134,25 @@ async def profile_cmd(client, message):
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
-        await _safe_edit(status, f"❌ Profile fetch failed:\n<code>{str(e)[:300]}</code>"); return
+        await _safe_edit(status, f"Profile fetch failed:\n<code>{str(e)[:300]}</code>"); return
 
     if not posts:
-        await _safe_edit(status, f"📭 <b>@{username}</b> ka koi public post nahi mila."); return
+        await _safe_edit(status, f"<b>@{username}</b> has no public posts."); return
 
     await _safe_edit(
         status,
-        f"👤 <b>{info['full_name'] or info['username']}</b> (@{info['username']})\n"
-        f"👥 {info['followers']:,} followers  •  📸 {info['posts_total']:,} posts\n\n"
-        f"⬇️ <b>{len(posts)}</b> posts download ho rahe hain…")
+        f"<b>{info['full_name'] or info['username']}</b> (@{info['username']})\n"
+        f"{info['followers']:,} followers • {info['posts_total']:,} posts\n\n"
+        f"<b>{len(posts)}</b> posts download ho rahe hain…")
 
     done = failed = 0
     for i, post in enumerate(posts, 1):
         if user_cancelled.get(uid):
-            await client.send_message(message.chat.id, "🛑 Cancelled.",
+            await client.send_message(message.chat.id, "Cancelled.",
                                       reply_to_message_id=message.id)
             break
         try:
-            await _safe_edit(status, f"⬇️ Post <b>{i}/{len(posts)}</b> — @{info['username']}")
+            await _safe_edit(status, f"Post <b>{i}/{len(posts)}</b> — @{info['username']}")
             task_id = uuid.uuid4().hex
             temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
             temp_root.mkdir(parents=True, exist_ok=True)
@@ -1115,8 +1172,8 @@ async def profile_cmd(client, message):
             from utils.instagram import _fmt_duration
             await client.send_message(
                 message.chat.id,
-                f"⏳ <b>Rate-limit ho gaya</b> — {done}/{len(posts)} posts ke baad ruka.\n\n"
-                f"⏱ <b>{_fmt_duration(rl)}</b> baad dobara try karo "
+                f"⏳ <b>Rate limit reached</b> — {done}/{len(posts)} posts, the run stopped.\n\n"
+                f"⏱ <b>{_fmt_duration(rl)}</b> until the next attempt "
                 f"(<code>{rl}s</code>).",
                 reply_to_message_id=message.id)
             break
@@ -1125,8 +1182,8 @@ async def profile_cmd(client, message):
     user_cancelled.pop(uid, None)
     await _safe_edit(
         status,
-        f"✅ <b>@{info['username']}</b> done!\n\n"
-        f"📥 Downloaded: <b>{done}</b>" + (f"\n⚠️ Failed: <b>{failed}</b>" if failed else ""))
+        f"<b>@{info['username']}</b> done!\n\n"
+        f"Downloaded: <b>{done}</b>" + (f"\nFailed: <b>{failed}</b>" if failed else ""))
 
 
 @app.on_message(filters.command(["story", "stories", "igstory"]))
@@ -1143,20 +1200,20 @@ async def story_cmd(client, message):
     args = message.command[1:]
     if not args:
         await message.reply_text(
-            "📲 <b>Story Downloader</b>\n\n"
+            "<b>Story Downloader</b>\n\n"
             "Usage: <code>/story &lt;username&gt;</code>\n"
             "Example: <code>/story natgeo</code>\n\n"
-            "<i>Cookies zaroori hain. Sirf wahi stories milengi jo aapka "
-            "account dekh sakta hai.</i>")
+            "<i>Cookies are required. Only stories visible to your "
+            "account can be retrieved.</i>")
         return
 
     username = extract_username(args[0])
     if not username:
-        await message.reply_text("❌ Valid username do, e.g. <code>/story natgeo</code>"); return
+        await message.reply_text("Provide a valid username, for example <code>/story natgeo</code>"); return
 
     if not await check_rate_limit(uid, message): return
     await get_or_create_user(uid)
-    status = await message.reply_text(f"📲 <b>@{username}</b> ki stories check kar raha hoon…")
+    status = await message.reply_text(f"<b>@{username}</b> ki stories check in progress…")
 
     try:
         items, info = await fetch_stories(username)
@@ -1165,21 +1222,21 @@ async def story_cmd(client, message):
     except InstagramError as e:
         await _safe_edit(status, str(e)); return
     except Exception as e:
-        await _safe_edit(status, f"❌ Stories fetch failed:\n<code>{str(e)[:300]}</code>"); return
+        await _safe_edit(status, f"Stories fetch failed:\n<code>{str(e)[:300]}</code>"); return
 
     task_id = uuid.uuid4().hex
     temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
     temp_root.mkdir(parents=True, exist_ok=True)
     await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
 
-    await _safe_edit(status, f"⬇️ <b>{len(items)}</b> stories download ho rahi hain…")
+    await _safe_edit(status, f"<b>{len(items)}</b> stories are downloading…")
     try:
         files = await download_media_items(items, str(temp_root), prefix=username)
     except Exception as e:
-        await _safe_edit(status, f"❌ Download failed:\n<code>{str(e)[:300]}</code>"); return
+        await _safe_edit(status, f"Download failed:\n<code>{str(e)[:300]}</code>"); return
 
     if not files:
-        await _safe_edit(status, "❌ Stories download nahi ho payin."); return
+        await _safe_edit(status, "Stories download failedn."); return
 
     # Some story renditions come through without an audio track. Say so
     # instead of letting the user wonder why it plays silent.
@@ -1193,10 +1250,10 @@ async def story_cmd(client, message):
     except Exception:
         pass
 
-    caption = (f"📲 <b>@{info['username']}</b> stories\n"
-               f"🕐 {len(files)} item{'s' if len(files) != 1 else ''}")
+    caption = (f"<b>@{info['username']}</b> stories\n"
+               f"{len(files)} item{'s' if len(files) != 1 else ''}")
     if silent:
-        caption += f"\n🔇 <i>{len(silent)} video bina audio ke (Instagram ne silent rendition diya)</i>"
+        caption += f"\n<i>{len(silent)} video(s) without audio (Instagram served a silent rendition)</i>"
     total = await _send_instagram_media(client, uid, message.chat.id, message.id,
                                         files, caption=caption)
     try: await status.delete()
@@ -1210,17 +1267,17 @@ async def zip_cmd(client, message):
     uid=message.from_user.id
     if await is_banned(uid): return
     if uid in zip_sessions:
-        await message.reply_text("Ek ZIP session already chal raha hai. /cancel karo pehle."); return
+        await message.reply_text("A ZIP session is already running. Use /cancel first."); return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     zip_sessions[uid]={"files":[],"temp_root":str(temp_root),"chat_id":message.chat.id,"reply_to":message.id,"password":None}
     await message.reply_text(
-        "📦 <b>ZIP Creator Mode ON!</b>\n\nAb files bhejo ek ek karke.\nDone hone pe ✅ dabao.",
+        "<b>ZIP Creator Mode ON!</b>\n\nAb files send ek ek karke.\nDone hone pe tap.",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("✅ Done — Create ZIP", f"zipfile|done|{uid}", "success"),
-             _btn("🔐 Add Password", f"zipfile|askpass|{uid}", "primary")],
-            [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
+            [_btn("Done — Create ZIP", f"zipfile|done|{uid}", "success"),
+             _btn("Add Password", f"zipfile|askpass|{uid}", "primary")],
+            [_btn("Cancel", f"zipfile|cancel|{uid}", "danger")]]))
 
 
 @app.on_message(filters.command("merge"))
@@ -1229,16 +1286,16 @@ async def merge_cmd(client, message):
     uid=message.from_user.id
     if await is_banned(uid): return
     if uid in merge_sessions:
-        await message.reply_text("Ek merge session chal raha hai. /cancel karo."); return
+        await message.reply_text("A merge session is already running. Use /cancel first."); return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     merge_sessions[uid]={"files":[],"temp_root":str(temp_root),"chat_id":message.chat.id,"reply_to":message.id}
     await message.reply_text(
-        "🔗 <b>Merge Mode ON!</b>\n\nVideos bhejo (same format). Order same rahega.",
+        "<b>Merge Mode ON!</b>\n\nVideos send (same format). Order same rahega.",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("✅ Merge Now", f"mergefile|done|{uid}", "success"),
-             _btn("❌ Cancel", f"mergefile|cancel|{uid}", "danger")]]))
+            [_btn("Merge Now", f"mergefile|done|{uid}", "success"),
+             _btn("Cancel", f"mergefile|cancel|{uid}", "danger")]]))
 
 
 @app.on_message(filters.command(["rename","info","subs","screenshot","pdf","compress","split","audio","unzip","watermark"]))
@@ -1255,22 +1312,22 @@ async def file_command_handler(client, message):
     media=None
     if r: media=r.document or r.video or r.audio
     if not r or not media:
-        hints={"rename":"Kisi file pe reply karke /rename use karo.",
-               "info":"Kisi file pe reply karke /info use karo.",
-               "subs":"Kisi MKV/MP4 pe reply karke /subs use karo.",
-               "screenshot":"Kisi video pe reply karke /screenshot HH:MM:SS use karo.",
-               "pdf":"Kisi PDF pe reply karke /pdf use karo.",
-               "compress":"Kisi video pe reply karke /compress use karo.",
-               "split":"Kisi file pe reply karke /split use karo.",
-               "audio":"Kisi video pe reply karke /audio use karo.",
-               "unzip":"Kisi archive pe reply karke /unzip use karo.",
-               "watermark":"Kisi video pe reply karke /watermark [text] use karo."}
-        await message.reply_text(hints.get(cmd,"Kisi file pe reply karke command use karo.")); return
+        hints={"rename":"Kisi file pe reply karke /rename use please.",
+               "info":"Kisi file pe reply karke /info use please.",
+               "subs":"Kisi MKV/MP4 pe reply karke /subs use please.",
+               "screenshot":"Kisi video pe reply karke /screenshot HH:MM:SS use please.",
+               "pdf":"Kisi PDF pe reply karke /pdf use please.",
+               "compress":"Kisi video pe reply karke /compress use please.",
+               "split":"Kisi file pe reply karke /split use please.",
+               "audio":"Kisi video pe reply karke /audio use please.",
+               "unzip":"Kisi archive pe reply karke /unzip use please.",
+               "watermark":"Kisi video pe reply karke /watermark [text] use please."}
+        await message.reply_text(hints.get(cmd,"Kisi file pe reply karke command use please.")); return
     cid,mid=r.chat.id,r.id
     fname=media.file_name or "file"
     if cmd=="rename":
         pending_state[uid]={"action":"rename","chat_id":cid,"msg_id":mid,"fname":fname}
-        await message.reply_text(f"✏️ <code>{fname}</code> ka naya naam bhejo:")
+        await message.reply_text(f"<code>{fname}</code> - send the new name:")
     elif cmd=="info": await _handle_file_info(client,message,r)
     elif cmd=="subs": await _trigger_subs(client,message,r)
     elif cmd=="screenshot":
@@ -1278,7 +1335,7 @@ async def file_command_handler(client, message):
         if args: await _handle_screenshot_with_time(client,message,r,args[0])
         else:
             pending_state[uid]={"action":"screenshot","chat_id":cid,"msg_id":mid}
-            await message.reply_text("📸 Time bhejo: <code>MM:SS</code> ya <code>HH:MM:SS</code>")
+            await message.reply_text("Time send: <code>MM:SS</code> ya <code>HH:MM:SS</code>")
     elif cmd=="pdf": await _trigger_pdf_tools(client,message,r,fname)
     elif cmd=="compress":
         if not await check_rate_limit(uid,message): return
@@ -1286,7 +1343,7 @@ async def file_command_handler(client, message):
     elif cmd=="split": await _trigger_split(client,message,r,cid,mid,fname)
     elif cmd=="audio": await handle_extract_audio(client,None,r,reply_to_msg=message)
     elif cmd=="unzip":
-        if not is_archive_file(fname): await message.reply_text("Ye archive nahi hai."); return
+        if not is_archive_file(fname): await message.reply_text("Ye archive is not available."); return
         if not await check_rate_limit(uid,message): return
         await run_unzip_task(client,r,password=None,reply_msg=message)
     elif cmd=="watermark":
@@ -1294,7 +1351,7 @@ async def file_command_handler(client, message):
         if args_list: await _handle_watermark(client,message,r," ".join(args_list))
         else:
             pending_state[uid]={"action":"watermark","chat_id":cid,"msg_id":mid}
-            await message.reply_text("💧 Watermark text bhejo:")
+            await message.reply_text("Watermark text send:")
 
 
 @app.on_message(filters.command(["status","users"]) & filters.private)
@@ -1302,9 +1359,9 @@ async def status_cmd(client, message):
     if not message.from_user or not is_owner(message.from_user.id): return
     total,premium,banned=await count_users(); disk=shutil.disk_usage("/")
     await message.reply_text(
-        f"📊 <b>Bot Status</b>\n\n👥 Users: <b>{total}</b>\n⭐ Premium: <b>{premium}</b>\n"
-        f"🚫 Banned: <b>{banned}</b>\n\n💾 Total: <code>{human_bytes(disk.total)}</code>\n"
-        f"💾 Used: <code>{human_bytes(disk.used)}</code>\n💾 Free: <code>{human_bytes(disk.free)}</code>")
+        f"<b>Bot Status</b>\n\nUsers: <b>{total}</b>\nPremium: <b>{premium}</b>\n"
+        f"Banned: <b>{banned}</b>\n\nTotal: <code>{human_bytes(disk.total)}</code>\n"
+        f"Used: <code>{human_bytes(disk.used)}</code>\nFree: <code>{human_bytes(disk.free)}</code>")
 
 
 @app.on_message(filters.command("admin") & filters.private)
@@ -1312,12 +1369,12 @@ async def admin_cmd(client, message):
     if not message.from_user or not is_owner(message.from_user.id): return
     total,premium,banned=await count_users(); disk=shutil.disk_usage("/")
     await message.reply_text(
-        f"🛡 <b>Admin Panel</b>\n\n👥 {total}  ⭐ {premium}  🚫 {banned}\n"
-        f"💾 Free: {human_bytes(disk.free)}",
+        f"<b>Admin Panel</b>\n\n{total} {premium} {banned}\n"
+        f"Free: {human_bytes(disk.free)}",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("📊 Full Stats", "admin:status", "primary"),
-             _btn("📢 Broadcast hint", "admin:broadcast", "primary")],
-            [_btn("🧹 Clean Storage", "admin:clean", "primary")]]))
+            [_btn("Full Stats", "admin:status", "primary"),
+             _btn("Broadcast hint", "admin:broadcast", "primary")],
+            [_btn("Clean Storage", "admin:clean", "primary")]]))
 
 
 @app.on_message(filters.command("broadcast") & filters.private)
@@ -1328,7 +1385,7 @@ async def broadcast_cmd(client, message):
     for u in users:
         try: await message.reply_to_message.copy(chat_id=u); sent+=1; await asyncio.sleep(0.05)
         except Exception: failed+=1
-    await message.reply_text(f"📢 Done. Sent: {sent}  Failed: {failed}")
+    await message.reply_text(f"Done. Sent: {sent} Failed: {failed}")
 
 
 @app.on_message(filters.command("premium"))
@@ -1340,7 +1397,7 @@ async def premium_cmd(client, message):
     except Exception: await message.reply_text("ID must be integer."); return
     days=int(parts[2]) if len(parts)>=3 else 30
     await set_premium(target,time.time()+days*86400)
-    await message.reply_text(f"⭐ User {target} = Premium for {days} days.")
+    await message.reply_text(f"User {target} = Premium for {days} days.")
 
 
 @app.on_message(filters.command(["ban","unban"]) & filters.private)
@@ -1351,7 +1408,7 @@ async def ban_cmd(client, message):
     elif len(message.command)>1:
         try: target=int(message.command[1])
         except Exception: pass
-    if not target: await message.reply_text("User id ya reply use karo."); return
+    if not target: await message.reply_text("User id ya reply use please."); return
     await set_ban(target,cmd=="ban")
     await message.reply_text(f"User {target} {'banned' if cmd=='ban' else 'unbanned'}.")
 
@@ -1379,14 +1436,14 @@ async def zipqueue_cmd(client, message):
         n = len(sess["files"])
         total_mb = sum(f["size"] for f in sess["files"]) / 1048576
         await message.reply_text(
-            f"📦 <b>Queue Already Active!</b>\n\n"
-            f"📋 ZIPs queued : <b>{n}</b>\n"
-            f"💾 Total size  : <b>{total_mb:.1f} MB</b>\n\n"
-            "Aur ZIPs bhejo ya neeche process karo ⬇️",
+            f"<b>Queue Already Active!</b>\n\n"
+            f"ZIPs queued : <b>{n}</b>\n"
+            f"Total size : <b>{total_mb:.1f} MB</b>\n\n"
+            "Aur ZIPs send ya neeche process please",
             reply_markup=InlineKeyboardMarkup([
-                [_btn(f"➜ Process All ({n} ZIPs)", f"zq_start|{uid}", "success")],
+                [_btn(f"Process All ({n} ZIPs)", f"zq_start|{uid}", "success")],
                 [_btn("◉ List Queue", f"zq_list|{uid}", "primary"),
-                 _btn("🗑 Clear", f"zq_cancel|{uid}", "danger")],
+                 _btn("Clear", f"zq_cancel|{uid}", "danger")],
             ])
         ); return
 
@@ -1401,24 +1458,24 @@ async def zipqueue_cmd(client, message):
         "created_at":      time.time(),
     }
     group_note = (
-        "\n\n📌 <b>Group Note:</b> Bot ko group mein files milti hain tabhi jab "
-        "Bot ka Privacy Mode OFF ho (BotFather mein set karo)."
+        "\n\n<b>Group note:</b> the bot only receives files when"
+        "The bot's Privacy Mode must be OFF (set it in BotFather)."
         if in_group else ""
     )
     await message.reply_text(
-        "📦 <b>ZIP Queue Mode ON!</b>\n\n"
-        "📌 <b>How to use:</b>\n"
-        "  1️⃣  ZIP files bhejo (ek ek ya jaldi jaldi)\n"
-        "  2️⃣  <b>▶️ Process</b> dabao — sab extract honge\n"
-        "  3️⃣  Har ZIP ke baad cache turant delete hoga ✅\n\n"
-        "🔐 <b>Password:</b> /zqpass [password] se saari ZIPs ka common password set karo\n"
-        "📋 <b>List:</b> Queue mein kaun kaun si ZIPs hain dekhne ke liye button dabao\n"
-        "🛑 <b>Cancel:</b> /cancelqueue ya button se cancel karo"
+        "<b>Queue mode enabled.</b>\n\n"
+        "<b>How to use:</b>\n"
+        "1 ZIP files send (ek ek ya jaldi jaldi)\n"
+        "2 <b>▶ Process</b> tap — sab extract honge\n"
+        "3 The cache is cleared after each archive \n\n"
+        "<b>Password:</b> /zqpass [password] se saari ZIPs ka common password set please\n"
+        "<b>List:</b> tap the button to view the archives in the queue\n"
+        "<b>Cancel:</b> /cancelqueue ya button se cancel please"
         + group_note,
         reply_markup=InlineKeyboardMarkup([
-            [_btn("▶️ Process Queue (0 ZIPs)", f"zq_start|{uid}", "success")],
+            [_btn("▶ Process Queue (0 ZIPs)", f"zq_start|{uid}", "success")],
             [_btn("◉ List Queue", f"zq_list|{uid}", "primary"),
-             _btn("✦ Cancel Queue", f"zq_cancel|{uid}", "danger")],
+             _btn("Cancel Queue", f"zq_cancel|{uid}", "danger")],
         ])
     )
 
@@ -1430,13 +1487,13 @@ async def zqpass_cmd(client, message):
     uid = message.from_user.id
     sess = ZIP_QUEUE_SESSIONS.get(uid)
     if not sess:
-        await message.reply_text("❌ Koi active queue nahi. Pehle /zipqueue chalao."); return
+        await message.reply_text("No active queue. Start one with /zipqueue."); return
     args = message.command[1:]
     if not args:
-        await message.reply_text("❌ Password bhejo: <code>/zqpass yourpassword</code>"); return
+        await message.reply_text("Password send: <code>/zqpass yourpassword</code>"); return
     password = " ".join(args)
     sess["default_password"] = password
-    await message.reply_text(f"🔐 Queue password set: <tg-spoiler>{password}</tg-spoiler>\nSaari ZIPs is password se extract hongi.")
+    await message.reply_text(f"Queue password set: <tg-spoiler>{password}</tg-spoiler>\nSaari ZIPs is password se extract hongi.")
 
 
 @app.on_message(filters.command(["cancelqueue","qcancel"]))
@@ -1450,10 +1507,10 @@ async def cancelqueue_cmd(client, message):
     ZIP_QUEUE_SESSIONS.pop(uid, None)
     user_cancelled[uid] = True
     await message.reply_text(
-        "🛑 <b>ZIP Queue cancel ho gaya!</b>\n"
-        "Saari pending ZIPs hata di gayi hain.",
+        "<b>ZIP Queue cancel complete!</b>\n"
+        "All pending archives have been removed.",
         reply_markup=InlineKeyboardMarkup([[
-            _btn("📦 Naya Queue Start", "cmd_zipqueue", "success")
+            _btn("Naya Queue Start", "cmd_zipqueue", "success")
         ]])
     )
 
@@ -1492,16 +1549,16 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     })
     if is_resume:
         resume_msg = (
-            f"▶️ <b>Queue Resumed!</b>\n\n"
-            f"📦 Total: <b>{total}</b> ZIPs\n"
-            f"✅ Already done: <b>{ok}</b> | ❌ Failed: <b>{fail}</b>\n"
+            f"▶ <b>Queue Resumed!</b>\n\n"
+            f"Total: <b>{total}</b> ZIPs\n"
+            f"Already done: <b>{ok}</b> | Failed: <b>{fail}</b>\n"
             f"⏳ Remaining: <b>{total - ok - fail}</b> ZIPs\n\n"
             f"<i>Skipping already-extracted files…</i>"
         )
     else:
         resume_msg = (
             f"◈ <b>Queue Processing</b>\n"
-            f"📦 Total: <b>{total}</b> ZIPs | Sequence preserved ✅"
+            f"Total: <b>{total}</b> ZIPs | Sequence preserved"
         )
     header = await client.send_message(
         chat_id, resume_msg,
@@ -1522,7 +1579,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
         fname = finfo["file_name"]
         st = await client.send_message(
             chat_id,
-            f"➜ <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
+            f"<b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
             reply_to_message_id=header.id
         )
         item_root = Path(Config.TEMP_DIR) / str(uid) / uuid.uuid4().hex
@@ -1534,7 +1591,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             try:
                 st2 = await make_progress_message(
                     client, chat_id, header.id,
-                    f"➜ <b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
+                    f"<b>[{i}/{total}]</b> Downloading: <code>{fname}</code>…",
                     thread_id=thread_id,
                 )
                 if st2:
@@ -1560,12 +1617,12 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                 src_msg  = finfo.get("msg_id")
                 if not src_msg:
                     raise RuntimeError(
-                        "❌ File reference expired and original message ID not stored.\n"
+                        "File reference expired and original message ID not stored.\n"
                         "Please re-send the ZIP file."
                     )
                 try:
                     await _safe_edit(st,
-                        f"🔄 <b>[{i}/{total}]</b> Refreshing file reference…\n"
+                        f"<b>[{i}/{total}]</b> Refreshing file reference…\n"
                         f"<code>{fname}</code>"
                     )
                     orig_msg = await client.get_messages(src_chat, src_msg)
@@ -1579,8 +1636,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     )
                 except FileReferenceExpired:
                     raise RuntimeError(
-                        "❌ File reference expired permanently.\n"
-                        "Re-send the ZIP file aur dobara /zq karo."
+                        "File reference expired permanently.\n"
+                        "Re-send the archive and run /zq again."
                     )
             if not dl: raise RuntimeError("Download failed")
             if sess.get("cancelled"): break
@@ -1594,8 +1651,8 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             rel_files = sorted(result["files"], key=str.lower)
             if sess.get("cancelled"): break
             await st.edit_text(
-                f"📤 <b>[{i}/{total}]</b> Sending <b>{len(rel_files)}</b> files…\n"
-                f"📄 from: <code>{fname}</code>"
+                f"<b>[{i}/{total}]</b> Sending <b>{len(rel_files)}</b> files…\n"
+                f"from: <code>{fname}</code>"
             )
             sent_n = 0
             for rel in rel_files:
@@ -1612,7 +1669,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                         up_sz = full.stat().st_size
                         up_st = await make_progress_message(
                             client, chat_id, reply_to,
-                            f"➤ <b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…",
+                            f"<b>[{i}/{total}]</b> Uploading: <code>{Path(rel).name}</code>…",
                             thread_id=thread_id,
                         )
                         async def _up_v_prog(cur, tot,
@@ -1640,12 +1697,12 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                         # ALL files including nested folder files → send as document
                         start_up = time.time()
                         up_st_d = await make_progress_message(client, chat_id, reply_to,
-                            f"➤ <b>[{i}/{total}]</b> Uploading: <code>{_fname}</code>…",
+                            f"<b>[{i}/{total}]</b> Uploading: <code>{_fname}</code>…",
                             thread_id=thread_id)
                         async def _upd2(c,t,_m=up_st_d,_s=start_up,_n=_fname,_sz=full.stat().st_size):
                             await progress_for_pyrogram(c,t,_m,_s,_n,"Uploading",known_total=_sz)
                         await client.send_document(chat_id, str(full),
-                            caption=f"📁 {rel}",   # shows full path including subfolder
+                            caption=f"{rel}",   # shows full path including subfolder
                             progress=_upd2,
                             reply_to_message_id=reply_to,
                             message_thread_id=thread_id)
@@ -1655,14 +1712,14 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     sent_n += 1
                 except Exception as e:
                     await client.send_message(chat_id,
-                        f"⚠️ <code>{Path(rel).name}</code>: {str(e)[:150]}",
+                        f"<code>{Path(rel).name}</code>: {str(e)[:150]}",
                         reply_to_message_id=reply_to,
                         message_thread_id=thread_id)
                 await asyncio.sleep(0.8)  # 0.8s gap prevents FloodWait
             try:
                 await st.edit_text(
-                    f"✔ <b>[{i}/{total}]</b> Done <code>{fname}</code>\n"
-                    f"📁 {sent_n}/{len(rel_files)} files sent.")
+                    f"<b>[{i}/{total}]</b> Done <code>{fname}</code>\n"
+                    f"{sent_n}/{len(rel_files)} files sent.")
                 await asyncio.sleep(1.5)
                 try: await st.delete()   # ← delete status message after done
                 except Exception: pass
@@ -1702,7 +1759,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
             try:
                 await asyncio.sleep(3)   # brief wait before retry
                 await _safe_edit(st,
-                    f"✧ <b>[{i}/{total}]</b> Retrying: <code>{fname}</code>…\n"
+                    f"<b>[{i}/{total}]</b> Retrying: <code>{fname}</code>…\n"
                     f"<i>Error: {str(e)[:100]}</i>"
                 )
                 # Retry: re-download and extract
@@ -1745,7 +1802,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
                     _sh2.rmtree(str(item_root2), ignore_errors=True)
                     _retry_success = True
                     await _safe_edit(st,
-                        f"✅ <b>[{i}/{total}]</b> Retry successful: <code>{fname}</code>")
+                        f"<b>[{i}/{total}]</b> Retry successful: <code>{fname}</code>")
                     await mark_queue_file_done(uid, i-1, "done")
                     ok += 1
                     failed_files.pop(fname, None)   # remove from failed list
@@ -1774,7 +1831,7 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     # Build failed files summary
     fail_summary = ""
     if failed_files:
-        fail_lines = ["\n\n❌ <b>Failed ZIPs:</b>"]
+        fail_lines = ["\n\n<b>Failed ZIPs:</b>"]
         for fname_f, err_f in list(failed_files.items())[:10]:
             fail_lines.append(f"  • <code>{fname_f}</code>\n    <i>{err_f[:80]}</i>")
         if len(failed_files) > 10:
@@ -1784,14 +1841,14 @@ async def _process_zip_queue(client, uid: int, chat_id: int, reply_to: int, thre
     try:
         if cancelled:
             await header.edit_text(
-                f"✦ <b>Queue Cancelled</b>\n"
-                f"✅ Done: {ok} | ❌ Failed: {fail} | ⏭ Skipped: {total-ok-fail}"
+                f"<b>Queue Cancelled</b>\n"
+                f"Done: {ok} | Failed: {fail} | ⏭ Skipped: {total-ok-fail}"
                 + fail_summary)
         else:
             await header.edit_text(
-                f"✔ <b>Queue Complete</b>\n\n"
-                f"📦 Total: <b>{total}</b>  ✅ OK: <b>{ok}</b>  ❌ Failed: <b>{fail}</b>\n"
-                f"🗑 Cache cleared after each ZIP!"
+                f"<b>Queue Complete</b>\n\n"
+                f"Total: <b>{total}</b> OK: <b>{ok}</b> Failed: <b>{fail}</b>\n"
+                f"Cache cleared after each ZIP!"
                 + fail_summary)
             # ── End animation (QUEUE_END_GIF from Render env) ──
             if Config.QUEUE_END_GIF:
@@ -1825,7 +1882,7 @@ async def continue_cmd(client, message):
     if not message.from_user: return
     uid = message.from_user.id
     if uid not in Config.OWNER_IDS:
-        await _safe_reply(message, "❌ Sirf owner use kar sakta hai."); return
+        await _safe_reply(message, "This command is restricted to the owner."); return
 
     # Show ALL saved sessions — user picks which to continue/delete
     all_sessions = await get_all_paused_queues()
@@ -1837,9 +1894,9 @@ async def continue_cmd(client, message):
 
     if not all_sessions:
         await _safe_reply(message,
-            "✅ <b>Koi saved queue nahi hai!</b>\n\n"
-            "Bot theek chal raha hai — koi task interrupt nahi hua.\n"
-            "Naya queue start karne ke liye /zq use karo."
+            "<b>Koi saved queue is not available!</b>\n\n"
+            "The bot is running normally; no task was interrupted.\n"
+            "Naya queue start karne ke liye /zq use please."
         ); return
 
     # Build session list with Continue + Delete buttons
@@ -1857,18 +1914,18 @@ async def continue_cmd(client, message):
 
         lines.append(
             f"{'─'*24}\n"
-            f"📦 <b>Session {idx+1}</b>"
+            f"<b>Session {idx+1}</b>"
             + (f" (User <code>{s_uid}</code>)" if is_owner and s_uid != uid else "") + "\n"
-            f"  Files : {total} ZIPs | 💾 {size_mb:.1f} MB\n"
-            f"  ✅ Done: {ok} | ❌ Failed: {fail} | ⏳ Left: {pending}\n"
-            f"  📅 Saved: {paused_at}"
+            f"Files : {total} ZIPs | {size_mb:.1f} MB\n"
+            f"Done: {ok} | Failed: {fail} | ⏳ Left: {pending}\n"
+            f"Saved: {paused_at}"
         )
         buttons.append([
-            _btn(f"➜ Continue {idx+1}", f"sess_cont|{s_uid}", "success"),
-            _btn(f"✦ Delete {idx+1}",   f"sess_del|{s_uid}",  "danger"),
+            _btn(f"Continue {idx+1}", f"sess_cont|{s_uid}", "success"),
+            _btn(f"Delete {idx+1}",   f"sess_del|{s_uid}",  "danger"),
         ])
 
-    buttons.append([_btn("✦ Delete All", "sess_del_all", "danger")])
+    buttons.append([_btn("Delete All", "sess_del_all", "danger")])
 
     await _safe_reply(
         message,
@@ -1890,14 +1947,14 @@ async def continue_cmd(client, message):
 
     if not pending:
         await delete_queue_state(uid)
-        await _safe_reply(message, "✅ Queue already complete thi — state clean kar di."); return
+        await _safe_reply(message, "Queue already complete thi — state clean kar di."); return
 
     await _safe_reply(message,
-        f"➜ <b>Resuming Queue</b>\n\n"
-        f"📦 Total files: {len(files)}\n"
-        f"✅ Already done: {ok}\n"
+        f"<b>Resuming Queue</b>\n\n"
+        f"Total files: {len(files)}\n"
+        f"Already done: {ok}\n"
         f"⏳ Remaining: {len(pending)}\n\n"
-        f"Processing shuru ho raha hai…"
+        f"Processing starting in progress…"
     )
 
     # Rebuild session and resume
@@ -1921,7 +1978,7 @@ async def authorize_cmd(client, message):
     args = message.command[1:]
     if not args:
         await message.reply_text(
-            "❌ Usage: <code>/authorize @username</code> or reply to user's message"
+            "Usage: <code>/authorize @username</code> or reply to user's message"
         ); return
     # Get target user
     target = None
@@ -1931,13 +1988,13 @@ async def authorize_cmd(client, message):
         try:
             target = await client.get_users(args[0].lstrip("@"))
         except Exception:
-            await message.reply_text("❌ User nahi mila."); return
+            await message.reply_text("User not found."); return
     if not target: return
     await authorize_group_user(message.chat.id, target.id)
     await message.reply_text(
-        f"✅ <b>{target.first_name}</b> (<code>{target.id}</code>) ko "
-        f"is group mein authorize kar diya!\n"
-        f"Ab ye bot commands use kar sakta hai."
+        f"<b>{target.first_name}</b> (<code>{target.id}</code>) ko"
+        f"has been authorised in this group.\n"
+        f"They can now use the bot's commands."
     )
 
 
@@ -1955,11 +2012,11 @@ async def deauth_cmd(client, message):
         try:
             target = await client.get_users(args[0].lstrip("@"))
         except Exception:
-            await message.reply_text("❌ User nahi mila."); return
+            await message.reply_text("User not found."); return
     if not target: return
     await deauth_group_user(message.chat.id, target.id)
     await message.reply_text(
-        f"🚫 <b>{target.first_name}</b> ki authorization hata di."
+        f"<b>{target.first_name}</b> ki authorization hata di."
     )
 
 
@@ -1970,13 +2027,13 @@ async def groupaccess_cmd(client, message):
     global GROUP_ACCESS_ENABLED
     if not message.from_user or message.from_user.id not in Config.OWNER_IDS: return
     GROUP_ACCESS_ENABLED = not GROUP_ACCESS_ENABLED
-    status = "✅ ON" if GROUP_ACCESS_ENABLED else "❌ OFF"
+    status = "ON" if GROUP_ACCESS_ENABLED else "OFF"
     await message.reply_text(
-        f"🔐 <b>Group Access: {status}</b>\n\n"
+        f"<b>Group Access: {status}</b>\n\n"
         + (
-            "Sabhi users ab groups mein bot commands use kar sakte hain."
+            "All users can now use the bot's commands in groups."
             if GROUP_ACCESS_ENABLED else
-            "Regular users groups mein bot use nahi kar sakte.\n"
+            "Regular users cannot use the bot in groups.\n"
             "Sirf admins + /authorize wale users kaam kar sakte hain."
         )
     )
@@ -1987,47 +2044,47 @@ async def authhelp_cmd(client, message):
     """Show authorization system help."""
     if not message.from_user: return
     await message.reply_text(
-        "🔐 <b>Bot Permission System</b>\n\n"
+        "<b>Bot Permission System</b>\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📋 <b>Default Behavior</b>\n"
+        "<b>Default Behavior</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "• DM: <b>Sabhi users</b> bot use kar sakte hain\n"
         "• Groups: <b>Sabhi users</b> bot use kar sakte hain\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "👑 <b>Owner Commands</b>\n"
+        "<b>Owner Commands</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<b>/groupaccess</b> — Group access toggle ON/OFF\n"
         "<code>/groupaccess</code>\n"
-        "→ OFF hone par sirf admins + authorized users groups mein kaam karenge\n\n"
+        "→ When OFF, only admins and authorised users may use it in groups\n\n"
 
-        "<b>/authorize</b> — User ko group mein bot use ki permission do\n"
+        "<b>/authorize</b> — Grant a member permission to use the bot in the group\n"
         "<code>/authorize @username</code>\n"
         "<code>/authorize 123456789</code> (user ID)\n"
-        "→ Reply karke bhi: kisi ke message pe reply karo + <code>/authorize</code>\n\n"
+        "→ Reply karke bhi: kisi ke message pe reply please + <code>/authorize</code>\n\n"
 
         "<b>/deauth</b> — Permission wapas lo\n"
         "<code>/deauth @username</code>\n"
         "<code>/deauth 123456789</code>\n"
         "→ Reply karke bhi kaam karta hai\n\n"
 
-        "<b>/continue</b> — Bot restart ke baad queue resume karo\n"
+        "<b>/continue</b> — Resume the queue after a restart\n"
         "<code>/continue</code>\n"
         "→ MongoDB se last paused queue load hogi\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "👤 <b>Who Can Use Bot in Groups?</b>\n"
+        "<b>Who Can Use Bot in Groups?</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ Bot Owner (hamesha)\n"
-        "✅ Group Admins/Owner\n"
-        "✅ /authorize se authorized users\n"
-        "❌ Regular users (agar groupaccess OFF hai)\n\n"
+        "Bot Owner (hamesha)\n"
+        "Group Admins/Owner\n"
+        "/authorize se authorized users\n"
+        "Regular users (agar groupaccess OFF hai)\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📝 <b>Examples</b>\n"
+        "<b>Examples</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Group mein @Ali ko allow karna:\n"
+        "Allowing @Ali in a group:\n"
         "<code>/authorize @Ali</code>\n\n"
         "Reply karke (Ali ke msg pe reply):\n"
         "<code>/authorize</code>\n\n"
@@ -2049,66 +2106,66 @@ async def cmds_cmd(client, message):
     is_owner = uid in Config.OWNER_IDS
 
     msg = (
-        "📖 <b>SERENA BOT — Full Command Guide</b>\n\n"
+        "<b>SERENA BOT — Full Command Guide</b>\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📦 <b>ARCHIVE COMMANDS</b>\n"
+        "<b>ARCHIVE COMMANDS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔓 <b>/unzip</b> — Extract ZIP/RAR/7z\n"
+        "<b>/unzip</b> — Extract ZIP/RAR/7z\n"
         "   <i>Reply to any archive file</i>\n"
         "   → <code>/unzip</code> (shows files list)\n\n"
 
-        "📦 <b>/zq</b> or <b>/zipqueue</b> — Batch extract up to 100 ZIPs\n"
+        "<b>/zq</b> or <b>/zipqueue</b> — Batch extract up to 100 ZIPs\n"
         "   → <code>/zq</code> (start queue mode)\n"
         "   → Send ZIP files one by one or all at once\n"
-        "   → Press ▶️ Process button\n\n"
+        "→ Press ▶ Process button\n\n"
 
-        "🔑 <b>/zqpass</b> — Set password for queued ZIPs\n"
+        "<b>/zqpass</b> — Set password for queued ZIPs\n"
         "   → <code>/zqpass mypassword123</code>\n\n"
 
-        "🛑 <b>/cancelqueue</b> — Cancel active ZIP queue\n"
+        "<b>/cancelqueue</b> — Cancel active ZIP queue\n"
         "   → <code>/cancelqueue</code>\n\n"
 
-        "📋 <b>/zip</b> — Create a new ZIP file\n"
+        "<b>/zip</b> — Create a new ZIP file\n"
         "   → <code>/zip</code> then send files\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🎬 <b>VIDEO COMMANDS</b>\n"
+        "<b>VIDEO COMMANDS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🗜 <b>/compress</b> — Compress video (reduce size)\n"
+        "<b>/compress</b> — Compress video (reduce size)\n"
         "   <i>Reply to any video</i>\n"
         "   → <code>/compress</code>\n\n"
 
-        "📐 <b>/resize</b> — Change video resolution\n"
+        "<b>/resize</b> — Change video resolution\n"
         "   → <code>/resize</code> (reply to video)\n\n"
 
-        "💧 <b>/watermark</b> — Add text watermark\n"
+        "<b>/watermark</b> — Add text watermark\n"
         "   → <code>/watermark My Channel</code> (reply to video)\n\n"
 
-        "✂️ <b>/split</b> — Split video into parts\n"
+        "<b>/split</b> — Split video into parts\n"
         "   → <code>/split 00:01:30</code> (reply to video, split at 1m30s)\n\n"
 
-        "🎵 <b>/audio</b> — Extract audio from video\n"
+        "<b>/audio</b> — Extract audio from video\n"
         "   → <code>/audio</code> (reply to video)\n\n"
 
-        "🖼 <b>/screenshot</b> — Take screenshot at timestamp\n"
+        "<b>/screenshot</b> — Take screenshot at timestamp\n"
         "   → <code>/screenshot 00:02:15</code> (reply to video)\n\n"
 
-        "🔀 <b>/merge</b> — Merge multiple videos\n"
+        "<b>/merge</b> — Merge multiple videos\n"
         "   → <code>/merge</code> then send videos one by one\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📥 <b>DOWNLOAD COMMANDS</b>\n"
+        "<b>DOWNLOAD COMMANDS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "📸 <b>/insta</b> — Instagram downloader (photos + carousels + reels)\n"
+        "<b>/insta</b> — Instagram downloader (photos + carousels + reels)\n"
         "   → <code>/insta https://instagram.com/p/...</code>\n"
-        "   → Ya seedha link paste karo, bot auto-detect karega\n"
-        "👤 <b>/profile</b> — profile ke latest posts bulk download\n"
+        "   → Ya seedha link paste please, bot auto-detect karega\n"
+        "<b>/profile</b> — profile ke latest posts bulk download\n"
         "   → <code>/profile natgeo 12</code>\n"
-        "📲 <b>/story</b> — kisi ki active stories\n"
+        "<b>/story</b> — kisi ki active stories\n"
         "   → <code>/story natgeo</code>\n"
-        "🧩 <b>/version</b> — build, changelog aur health\n\n"
-        "🌐 <b>/ytdl</b> — Download from any URL\n"
+        "<b>/version</b> — build, changelog aur health\n\n"
+        "<b>/ytdl</b> — Download from any URL\n"
         "   → <code>/ytdl https://youtube.com/watch?v=...</code>\n"
         "   → <code>/ytdl https://twitter.com/...</code>\n"
         "   → <code>/ytdl https://tiktok.com/...</code>\n\n"
@@ -2116,68 +2173,68 @@ async def cmds_cmd(client, message):
         "   TikTok, Facebook, Pinterest aur 1000+ sites\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🛠 <b>FILE UTILITIES</b>\n"
+        "<b>FILE UTILITIES</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "✏️ <b>/rename</b> — Rename any file\n"
+        "<b>/rename</b> — Rename any file\n"
         "   → <code>/rename NewFileName.mp4</code> (reply to file)\n\n"
 
-        "ℹ️ <b>/info</b> — File details (size, codec, duration)\n"
+        "<b>/info</b> — File details (size, codec, duration)\n"
         "   → <code>/info</code> (reply to any file)\n\n"
 
-        "📄 <b>/subs</b> — Extract subtitles from video\n"
+        "<b>/subs</b> — Extract subtitles from video\n"
         "   → <code>/subs</code> (reply to video with subs)\n\n"
 
-        "📑 <b>/pdf</b> — PDF tools\n"
+        "<b>/pdf</b> — PDF tools\n"
         "   → <code>/pdf</code> (reply to PDF)\n\n"
 
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👤 <b>USER COMMANDS</b>\n"
+        "<b>USER COMMANDS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🚀 <b>/start</b> — Welcome message\n"
-        "❓ <b>/help</b> — Quick help\n"
-        "📊 <b>/mystats</b> — Your usage stats\n"
-        "⭐ <b>/premium</b> — Premium info\n"
-        "👥 <b>/refer</b> — Referral link\n"
-        "⚙️ <b>/settings</b> — Personal settings (DM only)\n"
-        "❌ <b>/cancel</b> — Cancel current task\n"
+        "<b>/start</b> — Welcome message\n"
+        "<b>/help</b> — Quick help\n"
+        "<b>/mystats</b> — Your usage stats\n"
+        "<b>/premium</b> — Premium info\n"
+        "<b>/refer</b> — Referral link\n"
+        "<b>/settings</b> — Personal settings (DM only)\n"
+        "<b>/cancel</b> — Cancel current task\n"
     )
 
     if is_owner:
         msg += (
             "\n━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "👑 <b>OWNER COMMANDS</b>\n"
+            "<b>OWNER COMMANDS</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "🔐 <b>/groupaccess</b> — Toggle group access ON/OFF\n"
+            "<b>/groupaccess</b> — Toggle group access ON/OFF\n"
             "   → <code>/groupaccess</code> (toggle in group)\n\n"
 
-            "✅ <b>/authorize</b> — Allow user to use bot in group\n"
+            "<b>/authorize</b> — Allow user to use bot in group\n"
             "   → <code>/authorize @username</code>\n"
             "   → <code>/authorize 123456789</code>\n"
             "   → Reply to user\'s message + <code>/authorize</code>\n\n"
 
-            "🚫 <b>/deauth</b> — Remove user authorization\n"
+            "<b>/deauth</b> — Remove user authorization\n"
             "   → <code>/deauth @username</code>\n"
             "   → <code>/deauth 123456789</code>\n\n"
 
-            "▶️ <b>/continue</b> — Resume queue after bot restart\n"
+            "▶ <b>/continue</b> — Resume queue after bot restart\n"
             "   → <code>/continue</code>\n\n"
 
-            "🔨 <b>/ban</b> — Ban user from bot\n"
+            "<b>/ban</b> — Ban user from bot\n"
             "   → <code>/ban 123456789 reason</code>\n\n"
 
-            "✅ <b>/unban</b> — Unban user\n"
+            "<b>/unban</b> — Unban user\n"
             "   → <code>/unban 123456789</code>\n\n"
 
-            "📢 <b>/broadcast</b> — Message all users\n"
+            "<b>/broadcast</b> — Message all users\n"
             "   → <code>/broadcast Hello everyone!</code>\n\n"
 
-            "💎 <b>/premium</b> — Give premium to user\n"
+            "<b>/premium</b> — Give premium to user\n"
             "   → <code>/premium 123456789 30</code> (30 days)\n\n"
 
-            "📊 <b>/status</b> — Bot statistics\n"
+            "<b>/status</b> — Bot statistics\n"
             "   → <code>/status</code>\n\n"
 
-            "🔐 <b>/authhelp</b> — Permission system guide\n"
+            "<b>/authhelp</b> — Permission system guide\n"
             "   → <code>/authhelp</code>"
         )
 
@@ -2218,21 +2275,21 @@ async def on_file(client, message):
         sess=zip_sessions[uid]
         sess["files"].append({"file_id":media.file_id,"file_name":fname,"size":getattr(media,"file_size",0) or 0})
         cnt=len(sess["files"])
-        await message.reply_text(f"📎 File {cnt}: <code>{fname}</code>\nAur bhejo ya ✅ Done.",
+        await message.reply_text(f"File {cnt}: <code>{fname}</code>\nSend more, or Done.",
             reply_markup=InlineKeyboardMarkup([
-                [_btn("✅ Done", f"zipfile|done|{uid}", "success"),
-                 _btn("🔐 Password", f"zipfile|askpass|{uid}", "primary")],
-                [_btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
+                [_btn("Done", f"zipfile|done|{uid}", "success"),
+                 _btn("Password", f"zipfile|askpass|{uid}", "primary")],
+                [_btn("Cancel", f"zipfile|cancel|{uid}", "danger")]]))
         return
     # Merge session collect
     if uid in merge_sessions and message.video:
         sess=merge_sessions[uid]
         sess["files"].append({"file_id":message.video.file_id,"file_name":message.video.file_name or "video.mp4"})
         cnt=len(sess["files"])
-        await message.reply_text(f"🎬 Video {cnt}: <code>{message.video.file_name or 'video'}</code>",
+        await message.reply_text(f"Video {cnt}: <code>{message.video.file_name or 'video'}</code>",
             reply_markup=InlineKeyboardMarkup([
-                [_btn("✅ Merge Now", f"mergefile|done|{uid}", "success"),
-                 _btn("❌ Cancel", f"mergefile|cancel|{uid}", "danger")]]))
+                [_btn("Merge Now", f"mergefile|done|{uid}", "success"),
+                 _btn("Cancel", f"mergefile|cancel|{uid}", "danger")]]))
         return
     # ── AUTO ZIP QUEUE: ZIPs add hoti rehti hai, ek saath process hoti hain ──
     if uid in ZIP_QUEUE_SESSIONS and media and is_archive_file(fname):
@@ -2242,8 +2299,8 @@ async def on_file(client, message):
             n_now = len(sess["files"])
             if n_now >= MAX_QUEUE:
                 await message.reply_text(
-                    f"⚠️ Queue full hai! Maximum <b>{MAX_QUEUE} ZIPs</b> allowed.\n"
-                    f"Pehle process karo ya /cancelqueue se clear karo."
+                    f"Queue full hai! Maximum <b>{MAX_QUEUE} ZIPs</b> allowed.\n"
+                    f"Pehle process please ya /cancelqueue se clear please."
                 )
                 return
             # ── Store message.id for correct sequence sorting ──
@@ -2263,13 +2320,13 @@ async def on_file(client, message):
             await _safe_reply(
                 message,
                 f"◆ <b>ZIP #{n} added</b>  (Slot {n}/{MAX_QUEUE})\n"
-                f"📄 <code>{fname}</code>\n"
-                f"💾 Total: {total_mb:.1f} MB  |  🆓 Remaining slots: {remaining}\n\n"
-                f"Aur ZIPs bhejo ya process dabao ⬇️",
+                f"<code>{fname}</code>\n"
+                f"Total: {total_mb:.1f} MB | Remaining slots: {remaining}\n\n"
+                f"Send more archives, or tap Process",
                 reply_markup=InlineKeyboardMarkup([
-                    [_btn(f"➜ Process All {n} ZIPs", f"zq_start|{uid}", "success")],
+                    [_btn(f"Process All {n} ZIPs", f"zq_start|{uid}", "success")],
                     [InlineKeyboardButton("◉ List", callback_data=f"zq_list|{uid}"),
-                     _btn("✦ Cancel", f"zq_cancel|{uid}", "danger")],
+                     _btn("Cancel", f"zq_cancel|{uid}", "danger")],
                 ])
             )
             return
@@ -2278,11 +2335,11 @@ async def on_file(client, message):
         temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
         temp_root.mkdir(parents=True,exist_ok=True)
         await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-        st=await message.reply_text("📥 TXT downloading…")
+        st=await message.reply_text("TXT downloading…")
         try:
             p=await client.download_media(message.document,file_name=str(temp_root))
             content=Path(p).read_text(encoding="utf-8",errors="ignore")
-        except Exception as e: await st.edit_text(f"❌ TXT download failed:\n<code>{e}</code>"); return
+        except Exception as e: await st.edit_text(f"TXT download failed:\n<code>{e}</code>"); return
         try: await st.delete()
         except Exception: pass
         await process_links_message(client,message,content); return
@@ -2291,7 +2348,7 @@ async def on_file(client, message):
     try: await log_input(client,message,f"file: {fname}")
     except Exception: pass
     await message.reply_text(
-        f"📂 <code>{fname}</code>  (<b>{human_bytes(int(fsize_mb*1024*1024))}</b>)\nChoose action 👇",
+        f"<code>{fname}</code> (<b>{human_bytes(int(fsize_mb*1024*1024))}</b>)\nChoose action",
         reply_markup=file_action_keyboard(message,fname,fsize_mb))
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -2301,7 +2358,7 @@ async def _start_instagram_flow(client, message, url):
     """Instagram link → download immediately. No confirmation buttons."""
     uid = message.from_user.id
     if not await check_rate_limit(uid, message): return
-    status = await message.reply_text("📸 Instagram post download ho raha hai…")
+    status = await message.reply_text("Instagram post download in progress…")
     task_id = uuid.uuid4().hex
     temp_root = Path(Config.TEMP_DIR)/str(uid)/task_id
     temp_root.mkdir(parents=True, exist_ok=True)
@@ -2345,21 +2402,21 @@ async def process_links_message(client, message, content):
     for u in links:
         k=classify_link(u); cats[k]=cats.get(k,0)+1
     # Friendly names — "telegram: 1" meant nothing to anyone but the code
-    LABEL = {"gdrive":("🗂","Google Drive"), "m3u8":("📺","Live stream"),
-             "direct":("💾","Direct file"), "telegram":("✈️","Telegram"),
-             "ytdl":("🎬","Video site"),   "filehost":("📦","File host"),
-             "instagram":("📸","Instagram"),"unknown":("🔗","Other link")}
+    LABEL = {"gdrive":("","Google Drive"), "m3u8":("","Live stream"),
+             "direct":("","Direct file"), "telegram":("","Telegram"),
+             "ytdl":("","Video site"),   "filehost":("","File host"),
+             "instagram":("","Instagram"),"unknown":("","Other link")}
     lines=[]
     for k,v in cats.items():
-        icon,name = LABEL.get(k,("🔗","Other link"))
+        icon,name = LABEL.get(k,("","Other link"))
         lines.append(f"{icon} {name}" + (f" × <b>{v}</b>" if v>1 else ""))
     n=len(links)
-    head=f"🔗 <b>{n} link{'s' if n!=1 else ''} mila</b>" if n!=1 else "🔗 <b>Link mila</b>"
+    head=f"<b>{n} link{'s' if n!=1 else ''} found</b>" if n!=1 else "<b>Link found</b>"
     await message.reply_text(
-        head+"\n\n"+"\n".join(lines)+"\n\n<i>Kya karna hai?</i>",
+        head+"\n\n"+"\n".join(lines)+"\n\n<i>What would you like to do?</i>",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("⬇️ Download All", f"links|download_all|{message.chat.id}|{message.id}", "success")],
-            [_btn("🧹 Cleaned TXT", f"links|clean_txt|{message.chat.id}|{message.id}", "primary"),
+            [_btn("Download All", f"links|download_all|{message.chat.id}|{message.id}", "success")],
+            [_btn("Cleaned TXT", f"links|clean_txt|{message.chat.id}|{message.id}", "primary"),
              _btn("⏭ Skip", f"links|skip|{message.chat.id}|{message.id}", "primary")]]))
 
 
@@ -2376,18 +2433,18 @@ async def on_text(client, message):
     if uid in pending_state:
         state=pending_state.pop(uid); action=state.get("action")
         if action=="settings_caption":
-            if not txt: await message.reply_text("Caption empty nahi ho sakta."); return
+            if not txt: await message.reply_text("The caption cannot be empty."); return
             cfg=await get_user_settings(uid) or {}
             cfg["caption_base"]=txt; cfg["caption_counter"]=0
             await save_user_settings(uid,cfg)
-            await message.reply_text(f"✅ Caption set! e.g. <code>001 {txt}</code>")
+            await message.reply_text(f"Caption set! e.g. <code>001 {txt}</code>")
         elif action=="settings_replace":
             parts=[p.strip() for p in re.split(r"->|=>",txt,maxsplit=1)]
             if len(parts)!=2 or not parts[0]: await message.reply_text("Format: <code>old -> new</code>"); return
             cfg=await get_user_settings(uid) or {}
             cfg["replace_from"]=parts[0]; cfg["replace_to"]=parts[1]
             await save_user_settings(uid,cfg)
-            await message.reply_text(f"✅ Replace: <code>{parts[0]}</code> → <code>{parts[1]}</code>")
+            await message.reply_text(f"Replace: <code>{parts[0]}</code> → <code>{parts[1]}</code>")
         elif action=="rename":
             orig=await client.get_messages(state["chat_id"],state["msg_id"])
             await _do_rename(client,message,orig,txt)
@@ -2401,25 +2458,25 @@ async def on_text(client, message):
             sess=zip_sessions.get(uid)
             if sess:
                 sess["password"]=txt
-                await message.reply_text(f"🔐 Password set: <code>{txt}</code>. ✅ Done dabao.",
+                await message.reply_text(f"Password set: <code>{txt}</code>. Done dabao.",
                     reply_markup=InlineKeyboardMarkup([[
-                        _btn("✅ Done", f"zipfile|done|{uid}", "success"),
-                        _btn("❌ Cancel", f"zipfile|cancel|{uid}", "danger")]]))
+                        _btn("Done", f"zipfile|done|{uid}", "success"),
+                        _btn("Cancel", f"zipfile|cancel|{uid}", "danger")]]))
         elif action=="pdf_split_range":
             tid=state.get("task_id"); pi=PDF_TASKS.get(tid)
             if pi:
                 ranges=parse_page_ranges(txt,pi.get("total_pages",999))
-                if not ranges: await message.reply_text("❌ Invalid range. Format: <code>1-5,7,10-15</code>")
+                if not ranges: await message.reply_text("Invalid range. Format: <code>1-5,7,10-15</code>")
                 else: await _do_pdf_split_range(client,message,tid,ranges)
         elif action=="zq_await_password":
             # User replied with password(s) for the ZIP queue
             sess = ZIP_QUEUE_SESSIONS.get(uid)
             if not sess:
-                await message.reply_text("❌ Queue session expired. Start again with /zq."); return
+                await message.reply_text("Queue session expired. Restart with /zq."); return
             # Support multiple passwords (one per line)
             raw_lines = [line.strip() for line in txt.splitlines() if line.strip()]
             if not raw_lines:
-                await message.reply_text("❌ Empty password. Try again or use /cancelqueue."); return
+                await message.reply_text("Empty password. Try again, or use /cancelqueue."); return
             primary_pw = raw_lines[0]
             extra_pws  = raw_lines[1:] if len(raw_lines) > 1 else []
             sess["default_password"]  = primary_pw
@@ -2431,8 +2488,8 @@ async def on_text(client, message):
             pw_display = f"<tg-spoiler>{primary_pw}</tg-spoiler>"
             extra_note = f" (+{len(extra_pws)} more)" if extra_pws else ""
             st = await message.reply_text(
-                f"🔐 Password set{extra_note}: {pw_display}\n"
-                f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…"
+                f"Password set{extra_note}: {pw_display}\n"
+                f"▶ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…"
             )
             task = asyncio.create_task(
                 _process_zip_queue(client, uid, chat_id, st.id, thread_id=thread_id)
@@ -2469,23 +2526,23 @@ async def _send_mystats(client, user, dest):
     is_prem   = await is_premium_user(uid)
     prem_ts   = await get_premium_until(uid)
     ref_count = await get_referral_count(uid)
-    prem_str  = "⭐ Active"
+    prem_str  = "Active"
     if is_prem and prem_ts:
         exp = datetime.datetime.utcfromtimestamp(prem_ts).strftime("%d %b %Y")
         prem_str += f" (expires {exp})"
     elif not is_prem:
-        prem_str = "❌ Free"
+        prem_str = "Free"
     text = (
-        f"📊 <b>Your Stats</b>\n\n"
-        f"👤 Name: <b>{user.first_name}</b>\n"
-        f"🆔 ID: <code>{uid}</code>\n"
-        f"⭐ Premium: {prem_str}\n\n"
-        f"📦 Tasks today: <b>{stats.get('daily_tasks',0)}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
-        f"💾 Data today: <b>{stats.get('daily_size_mb',0):.1f} MB/{Config.FREE_DAILY_SIZE_MB} MB</b>\n"
-        f"🏆 Total tasks: <b>{stats.get('total_tasks',0)}</b>\n"
-        f"🎁 Referrals: <b>{ref_count}</b>\n\n"
-        f"📝 Caption: <code>{cfg.get('caption_base') or 'None'}</code>\n"
-        f"🖼 Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>"
+        f"<b>Your Stats</b>\n\n"
+        f"Name: <b>{user.first_name}</b>\n"
+        f"ID: <code>{uid}</code>\n"
+        f"Premium: {prem_str}\n\n"
+        f"Tasks today: <b>{stats.get('daily_tasks',0)}/{Config.FREE_DAILY_TASK_LIMIT}</b>\n"
+        f"Data today: <b>{stats.get('daily_size_mb',0):.1f} MB/{Config.FREE_DAILY_SIZE_MB} MB</b>\n"
+        f"Total tasks: <b>{stats.get('total_tasks',0)}</b>\n"
+        f"Referrals: <b>{ref_count}</b>\n\n"
+        f"Caption: <code>{cfg.get('caption_base') or 'None'}</code>\n"
+        f"Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>"
     )
     await dest.reply_text(text)
 
@@ -2495,10 +2552,10 @@ async def _send_settings(client, user, dest):
     cfg = await get_user_settings(uid) or {}
     text = (
         f"{random_emoji()} <b>Your Settings</b>\n\n"
-        f"📝 Caption base: <code>{cfg.get('caption_base') or 'None'}</code>\n"
-        f"🔤 Replace: <code>{cfg.get('replace_from') or 'None'}</code> → "
+        f"Caption base: <code>{cfg.get('caption_base') or 'None'}</code>\n"
+        f"Replace: <code>{cfg.get('replace_from') or 'None'}</code> →"
         f"<code>{cfg.get('replace_to') or 'None'}</code>\n"
-        f"🖼 Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
+        f"Thumbnail: <code>{cfg.get('thumb_mode','random')}</code>\n\n"
         "Use buttons below:"
     )
     await dest.reply_text(text, reply_markup=settings_keyboard())
@@ -2511,9 +2568,21 @@ async def _send_settings(client, user, dest):
 async def callbacks(client, cq: CallbackQuery):
     data=cq.data or ""
     if data=="retry_force_sub": await cq.message.delete(); return
-    if data in ("show_help","help:unzip","help:link"):
+    if data == "show_help" or data.startswith("help:"):
         await cq.answer()
-        await help_cmd(client, cq.message); return
+        page = data.split(":", 1)[1] if ":" in data else "home"
+        if page not in HELP_PAGES:
+            page = "home"
+        # Edit in place so the help browses like a single screen
+        try:
+            await cq.message.edit_text(build_help(page),
+                                       reply_markup=help_keyboard(page),
+                                       disable_web_page_preview=True)
+        except Exception:
+            await cq.message.reply_text(build_help(page),
+                                        reply_markup=help_keyboard(page),
+                                        disable_web_page_preview=True)
+        return
     if data=="show_mystats":
         await cq.answer()
         await _send_mystats(client, cq.from_user, cq.message); return
@@ -2523,40 +2592,40 @@ async def callbacks(client, cq: CallbackQuery):
     if data=="premium_info":
         await cq.answer()
         await cq.message.reply_text(
-            "⭐ <b>Premium</b>\n\n<b>Free:</b> 30 tasks/day, 4GB/day, 5min cooldown\n"
+            "<b>Premium</b>\n\n<b>Free:</b> 30 tasks/day, 4GB/day, 5min cooldown\n"
             f"<b>Premium:</b> Unlimited, no limits, 10s cooldown\n\n"
             f"Buy: @{Config.OWNER_USERNAME}\nEarn free: /refer"); return
     if data.startswith("settings:"):
         uid=cq.from_user.id; action=data.split(":",1)[1]
         if action=="reset":
             await save_user_settings(uid,{})
-            try: await cq.message.edit_text("✅ Settings reset.",reply_markup=settings_keyboard())
+            try: await cq.message.edit_text("Settings reset.",reply_markup=settings_keyboard())
             except Exception: pass
             await cq.answer("Reset!"); return
         if action=="caption":
             pending_state[uid]={"action":"settings_caption"}
-            await cq.message.reply_text("📝 Base caption bhejo:\nExample: <code>My Pack</code>")
+            await cq.message.reply_text("Base caption send:\nExample: <code>My Pack</code>")
             await cq.answer(); return
         if action=="replace":
             pending_state[uid]={"action":"settings_replace"}
-            await cq.message.reply_text("🔤 Replace rule:\n<code>old -> new</code>")
+            await cq.message.reply_text("Replace rule:\n<code>old -> new</code>")
             await cq.answer(); return
         if action.startswith("thumb:"):
             mode=action.split(":",1)[1]; cfg=await get_user_settings(uid) or {}
             cfg["thumb_mode"]=mode; await save_user_settings(uid,cfg)
-            await cq.message.reply_text(f"✅ Thumb mode: <b>{mode}</b>"); await cq.answer(); return
+            await cq.message.reply_text(f"Thumb mode: <b>{mode}</b>"); await cq.answer(); return
     if data.startswith("unzip|"):
         try: _,cid,mid,mode=data.split("|",3); orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await handle_unzip_button(client,cq,orig,mode); return
     if data.startswith("ucancel|"):
         _,tid=data.split("|",1); tasks.pop(tid,None)
-        try: await cq.message.edit_text("❌ Unzip cancelled.")
+        try: await cq.message.edit_text("Unzip cancelled.")
         except Exception: pass
         await cq.answer(); return
     if data.startswith("audio|"):
         try: _,cid,mid=data.split("|",2); orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("Video nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("Video not found.",show_alert=True); return
         await handle_extract_audio(client,cq,orig); return
     if data.startswith("sendall|"):
         _,tid=data.split("|",1); await handle_send_all(client,cq,tid); return
@@ -2565,38 +2634,38 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("sendas|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         try:
             if orig.document: await client.send_document(cq.message.chat.id,orig.document.file_id,reply_to_message_id=cq.message.id)
             elif orig.video: await client.send_video(cq.message.chat.id,orig.video.file_id,reply_to_message_id=cq.message.id)
-        except Exception as e: await cq.message.reply_text(f"❌ <code>{e}</code>")
+        except Exception as e: await cq.message.reply_text(f"<code>{e}</code>")
         return
     if data.startswith("rename|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         media=orig.document or orig.video or orig.audio
         fname=(media.file_name if media else None) or "file"
         pending_state[cq.from_user.id]={"action":"rename","chat_id":int(cid),"msg_id":int(mid),"fname":fname}
-        await cq.message.reply_text(f"✏️ Naya naam bhejo (current: <code>{fname}</code>):")
+        await cq.message.reply_text(f"Send the new name (current: <code>{fname}</code>):")
         await cq.answer(); return
     if data.startswith("finfo|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _handle_file_info(client,cq.message,orig); return
     if data.startswith("compress|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid)); return
     if data.startswith("comprq|"):
         _,tid,res=data.split("|",2); await cq.answer(); await _do_compress(client,cq,tid,res); return
     if data.startswith("split|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         media=orig.document or orig.video; fname=(media.file_name if media else None) or "file"
         await _trigger_split(client,cq.message,orig,int(cid),int(mid),fname); return
@@ -2605,7 +2674,7 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("subs|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _trigger_subs(client,cq.message,orig); return
     if data.startswith("subsq|"):
         _,tid,sidx=data.split("|",2); await cq.answer()
@@ -2614,16 +2683,16 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("screenshot|"):
         _,cid,mid=data.split("|",2)
         pending_state[cq.from_user.id]={"action":"screenshot","chat_id":int(cid),"msg_id":int(mid)}
-        await cq.message.reply_text("📸 Time bhejo: <code>MM:SS</code> ya <code>HH:MM:SS</code>")
+        await cq.message.reply_text("Time send: <code>MM:SS</code> ya <code>HH:MM:SS</code>")
         await cq.answer(); return
     if data.startswith("watermark|"):
         _,cid,mid=data.split("|",2)
         pending_state[cq.from_user.id]={"action":"watermark","chat_id":int(cid),"msg_id":int(mid)}
-        await cq.message.reply_text("💧 Watermark text bhejo:"); await cq.answer(); return
+        await cq.message.reply_text("Watermark text send:"); await cq.answer(); return
     if data.startswith("pdf|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         media=orig.document; fname=(media.file_name if media else None) or "file.pdf"
         await _trigger_pdf_tools(client,cq.message,orig,fname); return
@@ -2631,24 +2700,24 @@ async def callbacks(client, cq: CallbackQuery):
         _,tid,action=data.split("|",2); await cq.answer(); await _do_pdf_action(client,cq,tid,action); return
     if data.startswith("zipfile|"):
         _,action,uid_str=data.split("|",2); uid=int(uid_str)
-        if cq.from_user.id!=uid: await cq.answer("Ye tumhara session nahi.",show_alert=True); return
+        if cq.from_user.id!=uid: await cq.answer("This is not your session.",show_alert=True); return
         await cq.answer()
         if action=="cancel":
             zip_sessions.pop(uid,None)
-            try: await cq.message.edit_text("❌ ZIP session cancelled.")
+            try: await cq.message.edit_text("ZIP session cancelled.")
             except Exception: pass
         elif action=="askpass":
             pending_state[uid]={"action":"zip_password"}
-            await cq.message.reply_text("🔐 Password bhejo (ya /cancel):")
+            await cq.message.reply_text("Password send (ya /cancel):")
         elif action=="done": await _do_create_zip(client,cq,uid)
         return
     if data.startswith("mergefile|"):
         _,action,uid_str=data.split("|",2); uid=int(uid_str)
-        if cq.from_user.id!=uid: await cq.answer("Ye tumhara session nahi.",show_alert=True); return
+        if cq.from_user.id!=uid: await cq.answer("This is not your session.",show_alert=True); return
         await cq.answer()
         if action=="cancel":
             merge_sessions.pop(uid,None)
-            try: await cq.message.edit_text("❌ Merge cancelled.")
+            try: await cq.message.edit_text("Merge cancelled.")
             except Exception: pass
         elif action=="done": await _do_merge_videos(client,cq,uid)
         return
@@ -2656,7 +2725,7 @@ async def callbacks(client, cq: CallbackQuery):
         _,tid,idx=data.split("|",2); await cq.answer(); await _do_ytdl_download(client,cq,tid,int(idx)); return
     if data.startswith("ytdlcancel|"):
         _,tid=data.split("|",1); YTDL_TASKS.pop(tid,None)
-        try: await cq.message.edit_text("❌ Download cancelled.")
+        try: await cq.message.edit_text("Download cancelled.")
         except Exception: pass
         await cq.answer(); return
     if data.startswith("m3q|"):
@@ -2668,13 +2737,13 @@ async def callbacks(client, cq: CallbackQuery):
         if len(parts)<4: await cq.answer(); return
         _,action,cid,mid=parts
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("Message nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("Message not found.",show_alert=True); return
         key=(orig.chat.id,orig.id); sess=LINK_SESSIONS.get(key)
         content=sess["content"] if sess else (orig.text or orig.caption or "")
         links=sess["links"] if sess else find_links_in_text(content)
         if action=="clean_txt":
             await cq.answer(); txt="\n".join(sorted(set(links))) or "No URLs."
-            await cq.message.edit_text("🧹 <b>Cleaned URLs:</b>\n\n"+txt[:4000])
+            await cq.message.edit_text("<b>Cleaned URLs:</b>\n\n"+txt[:4000])
         elif action=="download_all": await cq.answer(); await handle_links_download_all(client,cq,orig)
         else:
             await cq.answer()
@@ -2683,16 +2752,16 @@ async def callbacks(client, cq: CallbackQuery):
         return
     if data.startswith("cloudopt|"):
         _,cid,mid=data.split("|",2); await cq.answer()
-        await cq.message.reply_text("☁️ Cloud platform choose karo:",
+        await cq.message.reply_text("Cloud platform choose please:",
             reply_markup=InlineKeyboardMarkup([
-                [_btn("🌐 GoFile (No limit)", f"cloudgo|{cid}|{mid}", "primary"),
-                 _btn("📦 Catbox (≤200MB)", f"cloudcat|{cid}|{mid}", "primary")],
-                [_btn("❌ Cancel", "noop", "danger")]])); return
+                [_btn("GoFile (No limit)", f"cloudgo|{cid}|{mid}", "primary"),
+                 _btn("Catbox (≤200MB)", f"cloudcat|{cid}|{mid}", "primary")],
+                [_btn("Cancel", "noop", "danger")]])); return
     if data.startswith("cloudgo|") or data.startswith("cloudcat|"):
         platform="gofile" if data.startswith("cloudgo|") else "catbox"
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
-        except Exception: await cq.answer("File nahi mila.",show_alert=True); return
+        except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer(); await _do_cloud_upload(client,cq,orig,platform); return
     if data.startswith("admin:"):
         if not is_owner(cq.from_user.id): await cq.answer("Owner only.",show_alert=True); return
@@ -2700,18 +2769,18 @@ async def callbacks(client, cq: CallbackQuery):
         if action=="status":
             total,premium,banned=await count_users(); disk=shutil.disk_usage("/")
             await cq.message.reply_text(
-                f"📊 Users: {total}  Premium: {premium}  Banned: {banned}\n"
-                f"💾 Free: {human_bytes(disk.free)}")
+                f"Users: {total} Premium: {premium} Banned: {banned}\n"
+                f"Free: {human_bytes(disk.free)}")
         elif action=="broadcast":
-            await cq.message.reply_text("📢 Kisi message ko reply karke /broadcast bhejo.")
+            await cq.message.reply_text("Kisi message ko reply karke /broadcast send.")
         elif action=="clean":
-            await cq.message.reply_text("🧹 Cleanup triggered (background worker chal raha hai).")
+            await cq.message.reply_text("Cleanup triggered; the background worker is running.")
         await cq.answer(); return
     if data.startswith("zq_list|"):
         uid = int(data.split("|",1)[1])
-        if cq.from_user.id != uid: await cq.answer("Ye tumhara queue nahi!", show_alert=True); return
+        if cq.from_user.id != uid: await cq.answer("This is not your queue.", show_alert=True); return
         sess = ZIP_QUEUE_SESSIONS.get(uid)
-        if not sess: await cq.answer("Queue nahi mili.", show_alert=True); return
+        if not sess: await cq.answer("Queue not found.", show_alert=True); return
         files = sess["files"]
         if not files: await cq.answer("Queue empty hai!", show_alert=True); return
         # Show in correct send-order (same order as processing)
@@ -2719,14 +2788,14 @@ async def callbacks(client, cq: CallbackQuery):
             files,
             key=lambda f: (f.get("msg_id") or 0, f.get("queue_position", 0))
         )
-        lines = [f"📦 <b>Queue ({len(files)} ZIPs) — Send Order:</b>"]
+        lines = [f"<b>Queue ({len(files)} ZIPs) — Send Order:</b>"]
         for i, f in enumerate(sorted_list, 1):
             mb = f["size"]/1048576
-            pw = "🔐" if f.get("password") or sess.get("default_password") else ""
-            status = {"done":"✅","failed":"❌","pending":"⏳"}.get(f.get("status","pending"),"⏳")
+            pw = "" if f.get("password") or sess.get("default_password") else ""
+            status = {"done":"","failed":"","pending":"⏳"}.get(f.get("status","pending"),"⏳")
             lines.append(f"  {status} {i}. <code>{f['file_name']}</code> ({mb:.1f} MB) {pw}")
         total_mb = sum(f["size"] for f in files)/1048576
-        lines.append(f"\n💾 <b>Total: {total_mb:.1f} MB</b>")
+        lines.append(f"\n<b>Total: {total_mb:.1f} MB</b>")
         try: await cq.message.reply_text("\n".join(lines))
         except Exception: pass
         await cq.answer()
@@ -2738,25 +2807,25 @@ async def callbacks(client, cq: CallbackQuery):
             "reply_to": cq.message.id, "cancelled": False, "processing": False,
         }
         try: await cq.message.edit_text(
-            "📦 <b>ZIP Queue Mode ON!</b>\n\nZIP files bhejo — sab queue mein add ho jaayenge!\n"
-            "Phir ▶️ Process dabao.",
+            "<b>Queue mode enabled.</b>\n\nSend archives and they will be added to the queue.\n"
+            "Phir ▶ Process tap.",
             reply_markup=InlineKeyboardMarkup([
-                [_btn("▶️ Process Queue", f"zq_start|{cq.from_user.id}", "success")],
-                [_btn("✦ Cancel Queue", f"zq_cancel|{cq.from_user.id}", "danger")],
+                [_btn("▶ Process Queue", f"zq_start|{cq.from_user.id}", "success")],
+                [_btn("Cancel Queue", f"zq_cancel|{cq.from_user.id}", "danger")],
             ]))
         except Exception: pass
         return
     if data.startswith("zq_start|"):
         uid = int(data.split("|",1)[1])
         if cq.from_user.id != uid:
-            await cq.answer("Ye tumhara queue nahi hai!", show_alert=True); return
+            await cq.answer("This is not your queue.", show_alert=True); return
         sess = ZIP_QUEUE_SESSIONS.get(uid)
         if not sess:
-            await cq.answer("Queue expire ho gayi! /zipqueue se dobara shuru karo.", show_alert=True); return
+            await cq.answer("The queue has expired. Start again with /zipqueue.", show_alert=True); return
         if not sess["files"]:
-            await cq.answer("Queue empty hai! Pehle ZIPs bhejo.", show_alert=True); return
+            await cq.answer("Queue empty hai! Pehle ZIPs send.", show_alert=True); return
         if sess.get("processing"):
-            await cq.answer("Queue already chal rahi hai!", show_alert=True); return
+            await cq.answer("The queue is already running.", show_alert=True); return
         await cq.answer()
 
         # ── Ask for password BEFORE starting queue ───────────────────────────
@@ -2766,8 +2835,8 @@ async def callbacks(client, cq: CallbackQuery):
             sess["processing"] = True
             try:
                 await cq.message.edit_text(
-                    f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
-                    f"🔐 Password: <tg-spoiler>{sess['default_password']}</tg-spoiler>"
+                    f"▶ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
+                    f"Password: <tg-spoiler>{sess['default_password']}</tg-spoiler>"
                 )
             except Exception: pass
             sess_thread = sess.get("thread_id")
@@ -2786,14 +2855,14 @@ async def callbacks(client, cq: CallbackQuery):
             }
             try:
                 await cq.message.edit_text(
-                    f"🔐 <b>Password Check</b>\n\n"
-                    f"📦 {n} archive(s) queued.\n\n"
+                    f"<b>Password Check</b>\n\n"
+                    f"{n} archive(s) queued.\n\n"
                     f"Are these archives <b>password-protected</b>?\n"
                     f"• Send the password now (supports multiple, one per line)\n"
                     f"• Or tap <b>No Password</b> to start without one",
                     reply_markup=InlineKeyboardMarkup([[
-                        _btn("▶️ No Password", f"zq_nopass|{uid}", "success"),
-                        _btn("❌ Cancel", f"zq_cancel|{uid}", "danger"),
+                        _btn("▶ No Password", f"zq_nopass|{uid}", "success"),
+                        _btn("Cancel", f"zq_cancel|{uid}", "danger"),
                     ]])
                 )
             except Exception: pass
@@ -2811,8 +2880,8 @@ async def callbacks(client, cq: CallbackQuery):
         await cq.answer("Starting without password…")
         try:
             await cq.message.edit_text(
-                f"▶️ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
-                f"🔓 No password set"
+                f"▶ <b>Queue Starting!</b> {len(sess['files'])} archive(s)…\n"
+                f"No password set"
             )
         except Exception: pass
         task = asyncio.create_task(
@@ -2823,13 +2892,13 @@ async def callbacks(client, cq: CallbackQuery):
     if data.startswith("zq_cancel|"):
         uid = int(data.split("|",1)[1])
         if cq.from_user.id != uid:
-            await cq.answer("Ye tumhara queue nahi!", show_alert=True); return
+            await cq.answer("This is not your queue.", show_alert=True); return
         sess = ZIP_QUEUE_SESSIONS.get(uid)
         if sess: sess["cancelled"] = True
         task = USER_TASKS.pop(uid, None)
         if task and not task.done(): task.cancel()
         ZIP_QUEUE_SESSIONS.pop(uid, None)
-        try: await cq.message.edit_text("🗑 <b>Queue Cancel ho gayi!</b>")
+        try: await cq.message.edit_text("<b>Queue cancelled.</b>")
         except Exception: pass
         await cq.answer("Queue cancel!")
         return
@@ -2837,11 +2906,11 @@ async def callbacks(client, cq: CallbackQuery):
         target_uid = int(data.split("|",1)[1])
         # Only owner can continue other users' sessions
         if cq.from_user.id != target_uid and cq.from_user.id not in Config.OWNER_IDS:
-            await cq.answer("Permission nahi hai!", show_alert=True); return
+            await cq.answer("Permission is not available!", show_alert=True); return
         state = await get_queue_state(target_uid)
         if not state:
-            await cq.answer("Session nahi mila — shayad already delete ho gayi.", show_alert=True)
-            try: await cq.message.edit_text("❌ Session not found.")
+            await cq.answer("Session not found; it may already have been removed.", show_alert=True)
+            try: await cq.message.edit_text("Session not found.")
             except Exception: pass
             return
         files   = state.get("files", [])
@@ -2850,7 +2919,7 @@ async def callbacks(client, cq: CallbackQuery):
         pending = [f for f in files if f.get("status") not in ("done","failed")]
         if not pending:
             await delete_queue_state(target_uid)
-            await cq.answer("Saari files already process ho chuki hain!", show_alert=True)
+            await cq.answer("All files have already been processed.", show_alert=True)
             return
         ZIP_QUEUE_SESSIONS[target_uid] = {
             "files": files, "chat_id": state.get("chat_id", cq.message.chat.id),
@@ -2861,11 +2930,11 @@ async def callbacks(client, cq: CallbackQuery):
             "created_at": time.time(),
         }
         try: await cq.message.edit_text(
-            f"▶️ <b>Resuming Session!</b>\n"
-            f"📦 Total: {len(files)} | ✅ Done: {ok} | ⏳ Left: {len(pending)}"
+            f"▶ <b>Resuming Session!</b>\n"
+            f"Total: {len(files)} | Done: {ok} | ⏳ Left: {len(pending)}"
         )
         except Exception: pass
-        await cq.answer("Queue resume ho rahi hai!")
+        await cq.answer("Queue resume in progress!")
         task = asyncio.create_task(_process_zip_queue(
             client, target_uid,
             state.get("chat_id", cq.message.chat.id),
@@ -2877,25 +2946,25 @@ async def callbacks(client, cq: CallbackQuery):
 
     if data.startswith("sess_del|"):
         if cq.from_user.id not in Config.OWNER_IDS:
-            await cq.answer("Sirf owner delete kar sakta hai!", show_alert=True); return
+            await cq.answer("Only the owner can delete this.", show_alert=True); return
         target_uid = int(data.split("|",1)[1])
         await delete_queue_state(target_uid)
         ZIP_QUEUE_SESSIONS.pop(target_uid, None)
         try: await cq.message.edit_text(
-            f"🗑 Session <code>{target_uid}</code> deleted!"
+            f"Session <code>{target_uid}</code> deleted!"
         )
         except Exception: pass
         await cq.answer("Session deleted!"); return
 
     if data == "sess_del_all":
         if cq.from_user.id not in Config.OWNER_IDS:
-            await cq.answer("Sirf owner delete kar sakta hai!", show_alert=True); return
+            await cq.answer("Only the owner can delete this.", show_alert=True); return
         all_sess = await get_all_paused_queues()
         for s in all_sess:
             await delete_queue_state(s.get("uid"))
             ZIP_QUEUE_SESSIONS.pop(s.get("uid"), None)
         try: await cq.message.edit_text(
-            f"🗑 <b>All {len(all_sess)} sessions deleted!</b>"
+            f"<b>All {len(all_sess)} sessions deleted!</b>"
         )
         except Exception: pass
         await cq.answer(f"{len(all_sess)} sessions deleted!"); return
@@ -2906,7 +2975,7 @@ async def callbacks(client, cq: CallbackQuery):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-    await message.reply_text("🛑 <b>Queue cancelled!</b> All pending ZIPs removed.")
+    await message.reply_text("<b>Queue cancelled!</b> All pending ZIPs removed.")
 
 
 
@@ -2921,11 +2990,11 @@ async def handle_unzip_button(client, cq, orig, mode):
     doc=orig.document
     if not doc: await cq.answer("No document.",show_alert=True); return
     fname=doc.file_name or "archive"
-    if not is_archive_file(fname): await cq.answer("Archive nahi hai.",show_alert=True); return
+    if not is_archive_file(fname): await cq.answer("Archive is not available.",show_alert=True); return
     if not await check_rate_limit(uid,cq.message): await cq.answer(); return
     if mode=="askpass":
         pending_password[uid]={"chat_id":orig.chat.id,"msg_id":orig.id,"file_name":fname}
-        await cq.message.reply_text(f"🔐 Password bhejo for <code>{fname}</code>:")
+        await cq.message.reply_text(f"Send the password for <code>{fname}</code>:")
         await cq.answer(); return
     if mode=="autopass":
         await cq.answer(); await _auto_try_passwords(client,cq.message,orig); return
@@ -2934,14 +3003,14 @@ async def handle_unzip_button(client, cq, orig, mode):
 async def _auto_try_passwords(client, reply_msg, orig):
     if not orig.from_user: return
     uid=orig.from_user.id
-    status=await reply_msg.reply_text("🔑 Auto-trying common passwords…")
+    status=await reply_msg.reply_text("Auto-trying common passwords…")
     doc=orig.document
     if not doc: await status.edit_text("No document."); return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     try: dl=await client.download_media(doc,file_name=str(temp_root))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     found=None
     for pw in COMMON_PASSWORDS:
         try:
@@ -2950,14 +3019,14 @@ async def _auto_try_passwords(client, reply_msg, orig):
             found=pw; shutil.rmtree(td,ignore_errors=True); break
         except Exception: shutil.rmtree(str(temp_root/"test_pw"),ignore_errors=True)
     if found:
-        await status.edit_text(f"✅ Password found: <code>{found}</code>\nExtracting…")
+        await status.edit_text(f"Password found: <code>{found}</code>\nExtracting…")
         await run_unzip_task(client,orig,password=found,reply_msg=reply_msg)
     else:
-        await status.edit_text("❌ Common passwords mein se koi kaam nahi aaya.\n🔐 Manually enter karo.")
+        await status.edit_text("None of the common passwords worked.\nPlease enter it manually.")
 
 async def handle_unzip_from_password(client, msg, info, password):
     orig=await client.get_messages(info["chat_id"],info["msg_id"])
-    await msg.reply_text("✅ Password mila, extracting…")
+    await msg.reply_text("Password found, extracting…")
     await run_unzip_task(client,orig,password=password,reply_msg=msg)
 
 async def run_unzip_task(client, msg, password, reply_msg=None):
@@ -2975,23 +3044,23 @@ async def run_unzip_task(client, msg, password, reply_msg=None):
             temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
             temp_root.mkdir(parents=True,exist_ok=True)
             await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-            status=await dest.reply_text("📥 Downloading archive…"); start=time.time()
+            status=await dest.reply_text("Downloading archive…"); start=time.time()
             try:
                 dl=await client.download_media(doc,file_name=str(temp_root),progress=progress_for_pyrogram,
                     progress_args=(status,start,fname,"to server"))
-            except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-            if not dl: await status.edit_text("❌ Download failed."); return
-            if user_cancelled.get(uid): await status.edit_text("❌ Cancelled."); return
+            except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
+            if not dl: await status.edit_text("Download failed."); return
+            if user_cancelled.get(uid): await status.edit_text("Cancelled."); return
             if not password and detect_encrypted(dl):
-                await status.edit_text("🔐 Archive is encrypted!\nUse <b>With Password</b> or <b>Auto-Try</b>."); return
-            await status.edit_text("📦 Extracting…")
+                await status.edit_text("Archive is encrypted!\nUse <b>With Password</b> or <b>Auto-Try</b>."); return
+            await status.edit_text("Extracting…")
             extract_dir=temp_root/"extracted"
             try: result=extract_archive(dl,str(extract_dir),password=password)
-            except Exception as e: await status.edit_text(f"❌ Extract error:\n<code>{e}</code>"); return
+            except Exception as e: await status.edit_text(f"Extract error:\n<code>{e}</code>"); return
             # Free archive file from disk immediately after extraction
             try: os.remove(dl)
             except Exception: pass
-            if user_cancelled.get(uid): await status.edit_text("❌ Cancelled mid-way."); return
+            if user_cancelled.get(uid): await status.edit_text("Cancelled mid-way."); return
             stats=result["stats"]; files=sorted(result["files"],key=lambda p:p.lower())
             links_map=extract_links_from_folder(str(extract_dir))
             tid=uuid.uuid4().hex
@@ -3005,22 +3074,22 @@ async def run_unzip_task(client, msg, password, reply_msg=None):
             # ── Persist to MongoDB so task survives bot restart ──
             try: await save_unzip_task(tid, task_data)
             except Exception: pass
-            summary=(f"✅ <b>Extraction Complete!</b>\n\n📁 <code>{fname}</code>\n"
-                     f"📊 Files: <b>{stats['total_files']}</b>  Folders: <b>{stats['folders']}</b>\n"
-                     f"🎬 Videos: <b>{stats['videos']}</b>  📄 PDFs: <b>{stats['pdf']}</b>  "
-                     f"📱 APKs: <b>{stats['apk']}</b>\n"
-                     f"📝 TXT: <b>{stats['txt']}</b>  📺 M3U8: <b>{stats['m3u']}</b>  "
+            summary=(f"<b>Extraction Complete!</b>\n\n<code>{fname}</code>\n"
+                     f"Files: <b>{stats['total_files']}</b> Folders: <b>{stats['folders']}</b>\n"
+                     f"Videos: <b>{stats['videos']}</b> PDFs: <b>{stats['pdf']}</b>"
+                     f"APKs: <b>{stats['apk']}</b>\n"
+                     f"TXT: <b>{stats['txt']}</b> M3U8: <b>{stats['m3u']}</b>"
                      f"Others: <b>{stats['others']}</b>\n")
             tl=sum(len(v) for v in links_map.values())
-            if tl: summary+=f"\n🔗 Links found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
-            rows=[[_btn("❌ Cancel", f"ucancel|{tid}", "danger")],
-                  [_btn("🚀 Send ALL", f"sendall|{tid}", "success")]]
+            if tl: summary+=f"\nLinks found: <b>{tl}</b> (Direct:{len(links_map.get('direct',[]))} M3U8:{len(links_map.get('m3u8',[]))} GDrive:{len(links_map.get('gdrive',[]))})\n"
+            rows=[[_btn("Cancel", f"ucancel|{tid}", "danger")],
+                  [_btn("Send ALL", f"sendall|{tid}", "success")]]
             # ── Web App "Select Files" button ────────────────────────────────
             webapp_url = Config.RENDER_EXTERNAL_URL
             if webapp_url:
                 select_url = f"{webapp_url.rstrip('/')}/select?tid={tid}"
                 rows.insert(1, [InlineKeyboardButton(
-                    f"🗂 Select Files ({stats['total_files']})",
+                    f"Select Files ({stats['total_files']})",
                     web_app=WebAppInfo(url=select_url)
                 )])
             # ── Per-file buttons (first 20 files) ────────────────────────────
@@ -3028,11 +3097,11 @@ async def run_unzip_task(client, msg, password, reply_msg=None):
                 short=rel if len(rel)<=42 else "…"+rel[-39:]
                 rows.append([_btn(short, f"sendone|{tid}|{idx}", "success")])
             if len(files)>20:
-                rows.append([_btn(f"… and {len(files)-20} more — use Select Files ☝️", "noop", "secondary")])
+                rows.append([_btn(f"… and {len(files)-20} more — use Select Files", "noop", "secondary")])
             if tl:
                 all_links=[l for v in links_map.values() for l in v]
                 LINK_SESSIONS[(status.chat.id,status.id)]={"links":all_links,"content":"\n".join(all_links)}
-                rows.append([_btn(f"⬇️ Download {tl} links", f"links|download_all|{status.chat.id}|{status.id}", "success")])
+                rows.append([_btn(f"Download {tl} links", f"links|download_all|{status.chat.id}|{status.id}", "success")])
             await status.edit_text(summary,reply_markup=InlineKeyboardMarkup(rows))
             await update_user_stats(uid,size_mb)
 
@@ -3047,7 +3116,7 @@ async def handle_send_all(client, cq, tid):
     tasks[tid]=info  # restore to memory
     user=cq.from_user
     if user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
-    await cq.answer(); await cq.message.edit_text("📤 Sending all files…")
+    await cq.answer(); await cq.message.edit_text("Sending all files…")
     base=Path(info["base_dir"]); files=info["files"]
     chat_id=cq.message.chat.id; reply_to=cq.message.id
     thread_id=info.get("thread_id")  # ← Fixed: get from stored task dict
@@ -3064,7 +3133,7 @@ async def handle_send_all(client, cq, tid):
                 if is_video_path(rel):
                     name=Path(rel).name; cap=await build_caption(user.id,name)
                     thumb=await choose_thumbnail(user.id,str(full))
-                    st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to,
+                    st=await client.send_message(chat_id,f"{name}",reply_to_message_id=reply_to,
                         message_thread_id=thread_id)
                     start_u=time.time()
                     dur=await _get_video_duration(str(full))
@@ -3074,7 +3143,7 @@ async def handle_send_all(client, cq, tid):
                     try: await st.delete()
                     except Exception: pass
                 else:
-                    st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,
+                    st=await client.send_message(chat_id,f"{rel}",reply_to_message_id=reply_to,
                         message_thread_id=thread_id)
                     start_u=time.time()
                     sent=await client.send_document(chat_id,str(full),caption=rel,
@@ -3089,7 +3158,7 @@ async def handle_send_all(client, cq, tid):
     if is_priv and pinned:
         try: await client.unpin_chat_message(chat_id,reply_to)
         except Exception: pass
-    await client.send_message(chat_id,"✅ All files sent!",reply_to_message_id=reply_to,
+    await client.send_message(chat_id,"All files sent!",reply_to_message_id=reply_to,
         message_thread_id=thread_id)
     # Clean up task from DB after full send
     try: await delete_unzip_task(tid)
@@ -3118,7 +3187,7 @@ async def handle_send_one(client, cq, tid, index):
             if is_video_path(rel):
                 name=Path(rel).name; cap=await build_caption(user.id,name)
                 thumb=await choose_thumbnail(user.id,str(full))
-                st=await client.send_message(chat_id,f"📤 {name}",reply_to_message_id=reply_to,
+                st=await client.send_message(chat_id,f"{name}",reply_to_message_id=reply_to,
                     message_thread_id=thread_id)
                 start_u=time.time()
                 dur=await _get_video_duration(str(full))
@@ -3128,7 +3197,7 @@ async def handle_send_one(client, cq, tid, index):
                 try: await st.delete()
                 except Exception: pass
             else:
-                st=await client.send_message(chat_id,f"📤 {rel}",reply_to_message_id=reply_to,
+                st=await client.send_message(chat_id,f"{rel}",reply_to_message_id=reply_to,
                     message_thread_id=thread_id)
                 start_u=time.time()
                 sent=await client.send_document(chat_id,str(full),caption=rel,
@@ -3151,10 +3220,10 @@ async def handle_extract_audio(client, cq, msg, reply_to_msg=None):
         if cq: await cq.answer("Banned.",show_alert=True); return
     video=msg.video
     if not video:
-        if cq: await cq.answer("Video nahi hai.",show_alert=True); return
+        if cq: await cq.answer("Video is not available.",show_alert=True); return
     lock=get_lock(uid)
     if lock.locked():
-        if cq: await cq.answer("Ek task chal raha hai.",show_alert=True); return
+        if cq: await cq.answer("A task is already running.",show_alert=True); return
     if cq: await cq.answer()
     dest_msg=(cq.message if cq else None) or reply_to_msg or msg
     if not await check_rate_limit(uid,dest_msg): return
@@ -3163,26 +3232,26 @@ async def handle_extract_audio(client, cq, msg, reply_to_msg=None):
         temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
         temp_root.mkdir(parents=True,exist_ok=True)
         await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-        status=await dest_msg.reply_text("📥 Downloading video for audio extract…"); start=time.time()
+        status=await dest_msg.reply_text("Downloading video for audio extract…"); start=time.time()
         try:
             dl=await client.download_media(video,file_name=str(temp_root),
                 progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+        except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
         audio_path=str(temp_root/f"{base}.m4a")
         try: await extract_audio(dl,audio_path)
-        except Exception as e: await status.edit_text(f"❌ ffmpeg error:\n<code>{e}</code>"); return
-        await status.edit_text("📤 Uploading audio…"); start_u=time.time()
+        except Exception as e: await status.edit_text(f"ffmpeg error:\n<code>{e}</code>"); return
+        await status.edit_text("Uploading audio…"); start_u=time.time()
         try:
             # BUG FIX #4 — send_audio not send_document
             sent=await client.send_audio(dest_msg.chat.id,audio_path,
-                caption=f"🎵 Extracted from: <b>{fname}</b>",title=base,performer="Serena Bot",
+                caption=f"Extracted from: <b>{fname}</b>",title=base,performer="Serena Bot",
                 progress=progress_for_pyrogram,progress_args=(status,start_u,f"{base}.m4a","to Telegram"),
                 reply_to_message_id=dest_msg.id)
             try: await status.delete()
             except Exception: pass
             try: await log_output(client,user,sent,"audio extracted")
             except Exception: pass
-        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+        except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
 
 # ════════════════════════════════════════════════════════════════════════════
 # NEW FEATURES
@@ -3191,43 +3260,43 @@ async def handle_extract_audio(client, cq, msg, reply_to_msg=None):
 # ── File Info ────────────────────────────────────────────────────────────────
 async def _handle_file_info(client, dest, orig):
     media=orig.document or orig.video or orig.audio
-    if not media: await dest.reply_text("Koi media nahi mili."); return
+    if not media: await dest.reply_text("No media found."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "file"; size=getattr(media,"file_size",0) or 0
-    status=await dest.reply_text("ℹ️ Fetching info…")
+    status=await dest.reply_text("Fetching info…")
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     try: dl=await client.download_media(media,file_name=str(temp_root))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     info=await get_media_info(dl)
     if not info:
-        await status.edit_text(f"ℹ️ <b>File Info</b>\n\n📄 <code>{fname}</code>\n💾 {human_bytes(size)}"); return
-    txt=f"ℹ️ <b>File Info</b>\n\n📄 <code>{fname}</code>\n💾 {human_bytes(info.get('size_bytes',size))}\n"
+        await status.edit_text(f"<b>File Info</b>\n\n<code>{fname}</code>\n{human_bytes(size)}"); return
+    txt=f"<b>File Info</b>\n\n<code>{fname}</code>\n{human_bytes(info.get('size_bytes',size))}\n"
     if info.get("duration"): txt+=f"⏱ {_fmt_dur(info['duration'])}\n"
-    if info.get("resolution"): txt+=f"🖥 {info['resolution']}\n"
+    if info.get("resolution"): txt+=f"{info['resolution']}\n"
     if info.get("video_codec"):
-        txt+=f"🎬 {info['video_codec']}"
+        txt+=f"{info['video_codec']}"
         if info.get("fps"): txt+=f" @ {info['fps']:.1f}fps"
         txt+="\n"
-    if info.get("audio_codec"): txt+=f"🔊 {info['audio_codec']} {info.get('audio_channels','')}ch {info.get('audio_lang','')}\n"
-    if info.get("subtitle_count"): txt+=f"🔤 {info['subtitle_count']} subtitle tracks\n"
+    if info.get("audio_codec"): txt+=f"{info['audio_codec']} {info.get('audio_channels','')}ch {info.get('audio_lang','')}\n"
+    if info.get("subtitle_count"): txt+=f"{info['subtitle_count']} subtitle tracks\n"
     await status.edit_text(txt)
 
 # ── Compress ─────────────────────────────────────────────────────────────────
 async def _trigger_compress(client, dest, orig, cid, mid):
     media=orig.video or orig.document
-    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video nahi hai."); return
+    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video is not available."); return
     uid=dest.from_user.id if dest.from_user else 0
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":media.file_name or "video.mp4"}
-    await dest.reply_text(f"📦 Compress: <code>{media.file_name or 'video'}</code>\nResolution:",
+    await dest.reply_text(f"Compress: <code>{media.file_name or 'video'}</code>\nResolution:",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("📱 360p", f"comprq|{tid}|360", "primary"),_btn("📺 480p", f"comprq|{tid}|480", "primary")],
-            [_btn("💻 720p", f"comprq|{tid}|720", "primary"),_btn("🖥 1080p", f"comprq|{tid}|1080", "primary")],
-            [_btn("❌ Cancel", "noop", "danger")]]))
+            [_btn("360p", f"comprq|{tid}|360", "primary"),_btn("480p", f"comprq|{tid}|480", "primary")],
+            [_btn("720p", f"comprq|{tid}|720", "primary"),_btn("1080p", f"comprq|{tid}|1080", "primary")],
+            [_btn("Cancel", "noop", "danger")]]))
 
 async def _do_compress(client, cq, tid, res):
     info=COMPRESS_TASKS.get(tid)
@@ -3239,21 +3308,21 @@ async def _do_compress(client, cq, tid, res):
     media=orig.video or orig.document
     if not media: return
     lock=get_lock(uid)
-    if lock.locked(): await cq.message.reply_text("Ek task chal raha hai."); return
+    if lock.locked(): await cq.message.reply_text("A task is already running."); return
     async with lock:
         temp_root=Path(info["temp_root"])
-        status=await cq.message.reply_text(f"📥 Downloading for {res}p compression…"); start=time.time()
+        status=await cq.message.reply_text(f"Downloading for {res}p compression…"); start=time.time()
         try:
             dl=await client.download_media(media,file_name=str(temp_root),
                 progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+        except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
         out=str(temp_root/f"compressed_{res}p.mp4")
-        await status.edit_text(f"⚙️ Compressing to {res}p…")
+        await status.edit_text(f"Compressing to {res}p…")
         try: await compress_video(dl,out,resolution=res)
-        except Exception as e: await status.edit_text(f"❌ Compression failed:\n<code>{e}</code>"); return
+        except Exception as e: await status.edit_text(f"Compression failed:\n<code>{e}</code>"); return
         thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{Path(info['fname']).stem}_{res}p.mp4")
         dur=await _get_video_duration(out)
-        await status.edit_text("📤 Uploading…"); start_u=time.time()
+        await status.edit_text("Uploading…"); start_u=time.time()
         try:
             sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,duration=dur,
                 progress=progress_for_pyrogram,progress_args=(status,start_u,f"compressed_{res}p.mp4","to Telegram"),
@@ -3261,7 +3330,7 @@ async def _do_compress(client, cq, tid, res):
             try: await status.delete()
             except Exception: pass
             await log_output(client,cq.from_user,sent,f"compressed {res}p")
-        except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+        except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
         await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
     COMPRESS_TASKS.pop(tid,None)
 
@@ -3272,11 +3341,11 @@ async def _trigger_split(client, dest, orig, cid, mid, fname):
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     SPLIT_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":fname}
-    await dest.reply_text(f"✂️ Split: <code>{fname}</code>\nPart size:",
+    await dest.reply_text(f"Split: <code>{fname}</code>\nPart size:",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("📦 500 MB", f"splitq|{tid}|500", "primary"),_btn("📦 1 GB", f"splitq|{tid}|1024", "primary")],
-            [_btn("📦 1.5 GB", f"splitq|{tid}|1536", "primary"),_btn("📦 1.9 GB", f"splitq|{tid}|1900", "primary")],
-            [_btn("❌ Cancel", "noop", "danger")]]))
+            [_btn("500 MB", f"splitq|{tid}|500", "primary"),_btn("1 GB", f"splitq|{tid}|1024", "primary")],
+            [_btn("1.5 GB", f"splitq|{tid}|1536", "primary"),_btn("1.9 GB", f"splitq|{tid}|1900", "primary")],
+            [_btn("Cancel", "noop", "danger")]]))
 
 async def _do_split(client, cq, tid, size_mb):
     info=SPLIT_TASKS.get(tid)
@@ -3288,54 +3357,54 @@ async def _do_split(client, cq, tid, size_mb):
     media=orig.document or orig.video
     if not media: return
     lock=get_lock(uid)
-    if lock.locked(): await cq.message.reply_text("Ek task chal raha hai."); return
+    if lock.locked(): await cq.message.reply_text("A task is already running."); return
     async with lock:
         temp_root=Path(info["temp_root"])
-        status=await cq.message.reply_text("📥 Downloading to split…"); start=time.time()
+        status=await cq.message.reply_text("Downloading to split…"); start=time.time()
         try:
             dl=await client.download_media(media,file_name=str(temp_root),
                 progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
-        except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-        await status.edit_text(f"✂️ Splitting into {size_mb}MB parts…")
+        except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
+        await status.edit_text(f"Splitting into {size_mb}MB parts…")
         try: parts=await split_file(dl,part_size_mb=size_mb)
-        except Exception as e: await status.edit_text(f"❌ Split failed:\n<code>{e}</code>"); return
-        await status.edit_text(f"📤 Sending {len(parts)} parts…")
+        except Exception as e: await status.edit_text(f"Split failed:\n<code>{e}</code>"); return
+        await status.edit_text(f"Sending {len(parts)} parts…")
         for i,pp in enumerate(parts,1):
             pname=os.path.basename(pp)
-            st=await client.send_message(cq.message.chat.id,f"📤 Part {i}/{len(parts)}",reply_to_message_id=cq.message.id)
+            st=await client.send_message(cq.message.chat.id,f"Part {i}/{len(parts)}",reply_to_message_id=cq.message.id)
             start_u=time.time()
             try:
                 await client.send_document(cq.message.chat.id,pp,caption=pname,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,pname,"to Telegram"),reply_to_message_id=cq.message.id)
                 try: await st.delete()
                 except Exception: pass
-            except Exception as e: await st.edit_text(f"❌ Part {i} failed: <code>{e}</code>")
+            except Exception as e: await st.edit_text(f"Part {i} failed: <code>{e}</code>")
         try: await status.delete()
         except Exception: pass
-        await cq.message.reply_text(f"✅ Split done! {len(parts)} parts sent.")
+        await cq.message.reply_text(f"Split done! {len(parts)} parts sent.")
         await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
     SPLIT_TASKS.pop(tid,None)
 
 # ── Subtitles ─────────────────────────────────────────────────────────────────
 async def _trigger_subs(client, dest, orig):
     media=orig.video or orig.document
-    if not media: await dest.reply_text("Koi media nahi mili."); return
+    if not media: await dest.reply_text("No media found."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "video"; tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text("📥 Downloading for subs…"); start=time.time()
+    status=await dest.reply_text("Downloading for subs…"); start=time.time()
     try:
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    await status.edit_text("🔍 Finding subtitle tracks…")
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
+    await status.edit_text("Finding subtitle tracks…")
     subs=await extract_subtitles(dl,str(temp_root/"subs"))
-    if not subs: await status.edit_text("❌ Koi subtitle track nahi mila."); return
+    if not subs: await status.edit_text("Koi subtitle track not found."); return
     SUB_TASKS[tid]={"user_id":uid,"subs":subs,"chat_id":dest.chat.id,"reply_to":status.id}
     buttons=[[_btn(s["label"], f"subsq|{tid}|{s['stream_index']}", "primary")] for s in subs]
-    buttons.append([_btn("📥 Download ALL", f"subsq|{tid}|all", "success")])
-    await status.edit_text(f"🔤 <b>{len(subs)} subtitle tracks found!</b>",reply_markup=InlineKeyboardMarkup(buttons))
+    buttons.append([_btn("Download ALL", f"subsq|{tid}|all", "success")])
+    await status.edit_text(f"<b>{len(subs)} subtitle tracks found!</b>",reply_markup=InlineKeyboardMarkup(buttons))
 
 async def _do_extract_sub(client, cq, tid, sidx):
     info=SUB_TASKS.get(tid)
@@ -3343,9 +3412,9 @@ async def _do_extract_sub(client, cq, tid, sidx):
     subs=info["subs"]; chat_id=cq.message.chat.id; reply_to=cq.message.id
     targets=subs if sidx=="all" else [s for s in subs if s["stream_index"]==sidx]
     for sub in targets:
-        try: await client.send_document(chat_id,sub["output_path"],caption=f"🔤 {sub['label']}",reply_to_message_id=reply_to)
-        except Exception as e: await cq.message.reply_text(f"❌ {sub['label']}: <code>{e}</code>")
-    txt=f"✅ All {len(subs)} subs sent!" if sidx=="all" else f"✅ {targets[0]['label'] if targets else 'N/A'} sent!"
+        try: await client.send_document(chat_id,sub["output_path"],caption=f"{sub['label']}",reply_to_message_id=reply_to)
+        except Exception as e: await cq.message.reply_text(f"{sub['label']}: <code>{e}</code>")
+    txt=f"All {len(subs)} subs sent!" if sidx=="all" else f"{targets[0]['label'] if targets else 'N/A'} sent!"
     try: await cq.message.edit_text(txt)
     except Exception: pass
     SUB_TASKS.pop(tid,None)
@@ -3353,73 +3422,73 @@ async def _do_extract_sub(client, cq, tid, sidx):
 # ── Screenshot ───────────────────────────────────────────────────────────────
 async def _handle_screenshot_with_time(client, dest, orig, time_str):
     media=orig.video or orig.document
-    if not media: await dest.reply_text("Koi video nahi mili."); return
+    if not media: await dest.reply_text("No video found."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "video.mp4"
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text(f"📥 Downloading for screenshot at {time_str}…"); start=time.time()
+    status=await dest.reply_text(f"Downloading for screenshot at {time_str}…"); start=time.time()
     try:
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     ss=str(temp_root/"screenshot.jpg")
     try: await take_screenshot(dl,ss,time_str)
-    except Exception as e: await status.edit_text(f"❌ Screenshot failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Screenshot failed:\n<code>{e}</code>"); return
     try:
-        await client.send_photo(dest.chat.id,ss,caption=f"📸 at <code>{time_str}</code> from <b>{fname}</b>",reply_to_message_id=dest.id)
+        await client.send_photo(dest.chat.id,ss,caption=f"at <code>{time_str}</code> from <b>{fname}</b>",reply_to_message_id=dest.id)
         try: await status.delete()
         except Exception: pass
-    except Exception as e: await status.edit_text(f"❌ Send failed:\n<code>{e}</code>")
+    except Exception as e: await status.edit_text(f"Send failed:\n<code>{e}</code>")
 
 # ── Watermark ─────────────────────────────────────────────────────────────────
 async def _handle_watermark(client, dest, orig, wtext):
     media=orig.video or orig.document
-    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video nahi hai."); return
+    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video is not available."); return
     uid=dest.from_user.id if dest.from_user else 0
     fname=media.file_name or "video.mp4"
     if not await check_rate_limit(uid,dest): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text("📥 Downloading for watermark…"); start=time.time()
+    status=await dest.reply_text("Downloading for watermark…"); start=time.time()
     try:
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     out=str(temp_root/f"wm_{Path(fname).stem}.mp4")
-    await status.edit_text("💧 Adding watermark…")
+    await status.edit_text("Adding watermark…")
     try: await add_watermark(dl,out,wtext)
-    except Exception as e: await status.edit_text(f"❌ Watermark failed:\n<code>{e}</code>"); return
-    thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"💧 {fname}")
+    except Exception as e: await status.edit_text(f"Watermark failed:\n<code>{e}</code>"); return
+    thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{fname}")
     dur=await _get_video_duration(out)
-    await status.edit_text("📤 Uploading…"); start_u=time.time()
+    await status.edit_text("Uploading…"); start_u=time.time()
     try:
         sent=await client.send_video(dest.chat.id,out,caption=cap,thumb=thumb,duration=dur,
             progress=progress_for_pyrogram,progress_args=(status,start_u,fname,"to Telegram"),reply_to_message_id=dest.id)
         try: await status.delete()
         except Exception: pass
         await log_output(client,dest.from_user,sent,"watermark added")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+    except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
 
 # ── Rename ────────────────────────────────────────────────────────────────────
 async def _do_rename(client, dest, orig, new_name):
-    if not new_name: await dest.reply_text("Name empty nahi ho sakta."); return
+    if not new_name: await dest.reply_text("The name cannot be empty."); return
     uid=dest.from_user.id if dest.from_user else 0
     media=orig.document or orig.video or orig.audio
-    if not media: await dest.reply_text("Koi file nahi mili."); return
+    if not media: await dest.reply_text("No files were found."); return
     fname=media.file_name or "file"
     if not Path(new_name).suffix: new_name+=Path(fname).suffix
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text("📥 Downloading to rename…"); start=time.time()
+    status=await dest.reply_text("Downloading to rename…"); start=time.time()
     try:
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     new_path=str(temp_root/new_name)
     try: os.rename(dl,new_path)
-    except Exception as e: await status.edit_text(f"❌ Rename failed:\n<code>{e}</code>"); return
-    await status.edit_text(f"📤 Uploading as <code>{new_name}</code>…"); start_u=time.time()
+    except Exception as e: await status.edit_text(f"Rename failed:\n<code>{e}</code>"); return
+    await status.edit_text(f"Uploading as <code>{new_name}</code>…"); start_u=time.time()
     try:
         if is_video_path(new_name):
             thumb=await choose_thumbnail(uid,new_path); cap=await build_caption(uid,new_name)
@@ -3432,31 +3501,31 @@ async def _do_rename(client, dest, orig, new_name):
         try: await status.delete()
         except Exception: pass
         await log_output(client,dest.from_user,sent,f"renamed {fname}→{new_name}")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+    except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
 
 # ── PDF Tools ────────────────────────────────────────────────────────────────
 async def _trigger_pdf_tools(client, dest, orig, fname):
-    if not is_pdf_file(fname): await dest.reply_text("Ye PDF nahi hai."); return
+    if not is_pdf_file(fname): await dest.reply_text("Ye PDF is not available."); return
     uid=dest.from_user.id if dest.from_user else 0
     media=orig.document
-    if not media: await dest.reply_text("Document nahi mila."); return
+    if not media: await dest.reply_text("Document not found."); return
     tid=uuid.uuid4().hex; temp_root=Path(Config.TEMP_DIR)/str(uid)/tid
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    status=await dest.reply_text("📥 Downloading PDF…"); start=time.time()
+    status=await dest.reply_text("Downloading PDF…"); start=time.time()
     try:
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     try: pi=get_pdf_info(dl)
     except Exception: pi={"pages":"?","size_mb":0}
     PDF_TASKS[tid]={"user_id":uid,"pdf_path":dl,"temp_root":str(temp_root),"fname":fname,"total_pages":pi.get("pages",0),"chat_id":dest.chat.id,"reply_to":status.id}
     await status.edit_text(
-        f"📄 <b>{fname}</b>\nPages: <b>{pi['pages']}</b>  Size: <b>{pi['size_mb']} MB</b>\n\nWhat to do?",
+        f"<b>{fname}</b>\nPages: <b>{pi['pages']}</b> Size: <b>{pi['size_mb']} MB</b>\n\nWhat to do?",
         reply_markup=InlineKeyboardMarkup([
-            [_btn("✂️ Split by Pages", f"pdfq|{tid}|split", "primary"),
-             _btn("📝 Extract Text", f"pdfq|{tid}|text", "success")],
-            [_btn("❌ Cancel", "noop", "danger")]]))
+            [_btn("Split by Pages", f"pdfq|{tid}|split", "primary"),
+             _btn("Extract Text", f"pdfq|{tid}|text", "success")],
+            [_btn("Cancel", "noop", "danger")]]))
 
 async def _do_pdf_action(client, cq, tid, action):
     info=PDF_TASKS.get(tid)
@@ -3468,15 +3537,15 @@ async def _do_pdf_action(client, cq, tid, action):
         out=str(temp_root/f"{base}_text.txt")
         try:
             extract_text_from_pdf(dl,out)
-            await client.send_document(cq.message.chat.id,out,caption=f"📝 Text from: <b>{fname}</b>",reply_to_message_id=cq.message.id)
-            try: await cq.message.edit_text("✅ Text extracted!")
+            await client.send_document(cq.message.chat.id,out,caption=f"Text from: <b>{fname}</b>",reply_to_message_id=cq.message.id)
+            try: await cq.message.edit_text("Text extracted!")
             except Exception: pass
-        except Exception as e: await cq.message.reply_text(f"❌ <code>{e}</code>")
+        except Exception as e: await cq.message.reply_text(f"<code>{e}</code>")
     elif action=="split":
         total=info.get("total_pages",0)
         pending_state[uid]={"action":"pdf_split_range","task_id":tid}
         await cq.message.reply_text(
-            f"✂️ Page range bhejo (total: <b>{total}</b> pages)\n\n"
+            f"Send a page range (total: <b>{total}</b> pages)\n\n"
             "Format: <code>1-5</code> ya <code>1-5,7,10-15</code>")
     PDF_TASKS.pop(tid,None)
 
@@ -3484,26 +3553,26 @@ async def _do_pdf_split_range(client, dest, tid, ranges):
     info=PDF_TASKS.get(tid)
     if not info: return
     dl=info["pdf_path"]; temp_root=Path(info["temp_root"]); fname=info["fname"]
-    status=await dest.reply_text("✂️ Splitting PDF…")
+    status=await dest.reply_text("Splitting PDF…")
     try:
         parts=split_pdf_by_range(dl,str(temp_root/"split"),ranges)
         for p in parts:
             await client.send_document(dest.chat.id,p,caption=os.path.basename(p),reply_to_message_id=dest.id)
-        try: await status.edit_text(f"✅ {len(parts)} PDF parts sent!")
+        try: await status.edit_text(f"{len(parts)} PDF parts sent!")
         except Exception: pass
-    except Exception as e: await status.edit_text(f"❌ PDF split failed:\n<code>{e}</code>")
+    except Exception as e: await status.edit_text(f"PDF split failed:\n<code>{e}</code>")
     PDF_TASKS.pop(tid,None)
 
 # ── ZIP Creator ───────────────────────────────────────────────────────────────
 async def _do_create_zip(client, cq, uid):
     sess=zip_sessions.get(uid)
-    if not sess: await cq.message.reply_text("Session expired. /zip se dobara shuru karo."); return
-    if not sess["files"]: await cq.message.reply_text("Koi file nahi hai! Pehle files bhejo."); return
-    status=await cq.message.reply_text(f"📥 Downloading {len(sess['files'])} files…")
+    if not sess: await cq.message.reply_text("Session expired. Start again with /zip."); return
+    if not sess["files"]: await cq.message.reply_text("Koi file is not available! Pehle files send."); return
+    status=await cq.message.reply_text(f"Downloading {len(sess['files'])} files…")
     temp_root=Path(sess["temp_root"]); dl_paths=[]
     for i,f in enumerate(sess["files"],1):
         try:
-            await status.edit_text(f"📥 Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
+            await status.edit_text(f"Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
             p=await client.download_file(f["file_id"],file_name=str(temp_root/f["file_name"]))
             if p: dl_paths.append(str(temp_root/f["file_name"]))
         except Exception:
@@ -3514,53 +3583,53 @@ async def _do_create_zip(client, cq, uid):
                 await client.download_media(f["file_id"],file_name=str(temp_root))
                 dl_paths.append(tmp)
             except Exception: pass
-    if not dl_paths: await status.edit_text("❌ Files download nahi ho payi."); zip_sessions.pop(uid,None); return
-    await status.edit_text("🗜 Creating archive…")
+    if not dl_paths: await status.edit_text("Files download failed."); zip_sessions.pop(uid,None); return
+    await status.edit_text("Creating archive…")
     try:
         arc=create_archive(dl_paths,str(temp_root),"serena_archive",password=sess.get("password"))
-    except Exception as e: await status.edit_text(f"❌ Archive creation failed:\n<code>{e}</code>"); zip_sessions.pop(uid,None); return
+    except Exception as e: await status.edit_text(f"Archive creation failed:\n<code>{e}</code>"); zip_sessions.pop(uid,None); return
     arc_name=os.path.basename(arc)
-    await status.edit_text("📤 Uploading archive…"); start_u=time.time()
+    await status.edit_text("Uploading archive…"); start_u=time.time()
     try:
-        sent=await client.send_document(cq.message.chat.id,arc,caption=f"🗜 <code>{arc_name}</code>",
+        sent=await client.send_document(cq.message.chat.id,arc,caption=f"<code>{arc_name}</code>",
             progress=progress_for_pyrogram,progress_args=(status,start_u,arc_name,"to Telegram"),reply_to_message_id=cq.message.id)
         try: await status.delete()
         except Exception: pass
-        if sess.get("password"): await cq.message.reply_text(f"🔐 Archive password: <code>{sess['password']}</code>")
+        if sess.get("password"): await cq.message.reply_text(f"Archive password: <code>{sess['password']}</code>")
         await log_output(client,cq.from_user,sent,"zip created")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+    except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
     zip_sessions.pop(uid,None)
 
 # ── Merge Videos ──────────────────────────────────────────────────────────────
 async def _do_merge_videos(client, cq, uid):
     sess=merge_sessions.get(uid)
     if not sess: await cq.message.reply_text("Session expired."); return
-    if len(sess["files"])<2: await cq.message.reply_text("Kam se kam 2 videos chahiye."); return
+    if len(sess["files"])<2: await cq.message.reply_text("Kam se kam 2 videos required."); return
     if not await check_rate_limit(uid,cq.message): return
-    status=await cq.message.reply_text(f"📥 Downloading {len(sess['files'])} videos…")
+    status=await cq.message.reply_text(f"Downloading {len(sess['files'])} videos…")
     temp_root=Path(sess["temp_root"]); paths=[]
     for i,f in enumerate(sess["files"],1):
         try:
-            await status.edit_text(f"📥 Video {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
+            await status.edit_text(f"Video {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
             dest_path=str(temp_root/f["file_name"])
             await client.download_media(f["file_id"],file_name=str(temp_root))
             paths.append(dest_path)
         except Exception: pass
-    if len(paths)<2: await status.edit_text("❌ Videos download nahi ho payi."); merge_sessions.pop(uid,None); return
+    if len(paths)<2: await status.edit_text("Videos download failed."); merge_sessions.pop(uid,None); return
     out=str(temp_root/"merged_output.mp4")
-    await status.edit_text("🔗 Merging videos…")
+    await status.edit_text("Merging videos…")
     try: await merge_videos(paths,out)
-    except Exception as e: await status.edit_text(f"❌ Merge failed:\n<code>{e}</code>"); merge_sessions.pop(uid,None); return
+    except Exception as e: await status.edit_text(f"Merge failed:\n<code>{e}</code>"); merge_sessions.pop(uid,None); return
     thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,"merged_output.mp4")
     dur=await _get_video_duration(out)
-    await status.edit_text("📤 Uploading merged video…"); start_u=time.time()
+    await status.edit_text("Uploading merged video…"); start_u=time.time()
     try:
         sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,duration=dur,
             progress=progress_for_pyrogram,progress_args=(status,start_u,"merged_output.mp4","to Telegram"),reply_to_message_id=cq.message.id)
         try: await status.delete()
         except Exception: pass
         await log_output(client,cq.from_user,sent,"videos merged")
-    except Exception as e: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+    except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
     merge_sessions.pop(uid,None)
     await update_user_stats(uid,os.path.getsize(out)/(1024*1024))
 
@@ -3682,7 +3751,7 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
                     err = str(e2)
             try:
                 await client.send_message(
-                    chat_id, f"⚠️ {index_label or Path(fpath).name} bhej nahi paya: "
+                    chat_id, f"{index_label or Path(fpath).name} could not be sent:"
                              f"<code>{err[:150]}</code>",
                     reply_to_message_id=reply_to)
             except Exception:
@@ -3761,19 +3830,19 @@ def _api_wall_message(kind: str, remaining: int = 0) -> str:
     """
     from utils.instagram import _fmt_duration, has_cookies
     what = "Profile bulk download" if kind == "profile" else "Stories"
-    wait = (f"\n⏱ Abhi cooldown: <b>{_fmt_duration(remaining)}</b>\n"
+    wait = (f"\n⏱ Current cooldown: <b>{_fmt_duration(remaining)}</b>\n"
             if remaining > 0 else "\n")
     return (
-        f"🚫 <b>{what} abhi nahi ho sakta.</b>\n"
+        f"<b>{what} is unavailable.</b>\n"
         f"{wait}"
-        "\nInstagram is server ke IP ko apni private API se block kar raha "
-        "hai, aur profile/story sirf usi se milte hain.\n\n"
-        "✅ <b>Reels aur posts chalte hain</b> — unka link seedha bhej do.\n\n"
-        + ("<i>Cookies set hain, par IP block cookies se theek nahi hota.</i>"
+        "\nInstagram is blocking this server's IP from its private API, "
+        "which is the only source for profiles and stories.\n\n"
+        "<b>Reels and posts still work</b> — send their links directly.\n\n"
+        + ("<i>Cookies are configured, but an IP block cannot be fixed with cookies.</i>"
            if has_cookies() else
-           "<i>Owner: <code>INSTAGRAM_COOKIES</code> set karo — usse "
+           "<i>Owner: <code>INSTAGRAM_COOKIES</code> set please — usse "
            "kabhi-kabhi chal jata hai.</i>")
-        + "\n<i>Owner: <code>/igtest</code> se confirm karo.</i>")
+        + "\n<i>Owner: <code>/igtest</code> se confirm please.</i>")
 
 
 async def _show_rate_limit_countdown(status, remaining: int,
@@ -3795,11 +3864,11 @@ async def _show_rate_limit_countdown(status, remaining: int,
         try:
             await _safe_edit(
                 status,
-                "⏳ <b>Instagram rate-limit</b>\n\n"
+                "⏳ <b>Instagram rate limit</b>\n\n"
                 f"⏱ Auto-retry in <b>{_fmt_duration(remaining)}</b>  "
                 f"(<code>{remaining}s</code>)\n\n"
-                "<i>Kuch karne ki zarurat nahi — time poora hote hi "
-                "download apne aap shuru ho jayega.</i>")
+                "<i>No action is needed; once the timer ends the "
+                "download begins automatically.</i>")
         except Exception:
             return
         await asyncio.sleep(min(step, remaining))
@@ -3810,8 +3879,8 @@ async def _show_rate_limit_countdown(status, remaining: int,
     if not (client and info and uid):
         await _safe_edit(
             status,
-            "✅ <b>Rate-limit khatam!</b>\n\n"
-            "Ab link dobara bhejo — download chalu ho jayega.")
+            "<b>Rate limit cleared.</b>\n\n"
+            "Send the link again to begin the download.")
         return
 
     # Bounded retries: without this a permanently blocked IP would spawn
@@ -3820,14 +3889,14 @@ async def _show_rate_limit_countdown(status, remaining: int,
     if attempt > MAX_AUTO_RETRIES:
         await _safe_edit(
             status,
-            "❌ <b>Instagram abhi bhi block kar raha hai.</b>\n\n"
-            f"{MAX_AUTO_RETRIES} auto-retry ke baad bhi rate-limit hai — "
-            "matlab server ka IP block hai, cookies ka issue nahi.\n\n"
-            "<i>Owner: <code>/igtest</code> chala kar confirm karo.</i>")
+            "<b>Instagram is still blocking requests.</b>\n\n"
+            f"{MAX_AUTO_RETRIES} automatic retries still hit the rate limit, "
+            "which means the server IP is blocked rather than the cookies.\n\n"
+            "<i>Owner: <code>/igtest</code> to confirm.</i>")
         return
 
     await _safe_edit(status,
-                     f"🔄 <b>Rate-limit khatam</b> — retry {attempt}/{MAX_AUTO_RETRIES}…")
+                     f"<b>Rate limit cleared</b> — retry {attempt}/{MAX_AUTO_RETRIES}…")
     try:
         ok = await _deliver_instagram(client, info, uid, status=status,
                                       retry_attempt=attempt)
@@ -3837,7 +3906,7 @@ async def _show_rate_limit_countdown(status, remaining: int,
             except Exception:
                 pass
     except Exception as e:
-        await _safe_edit(status, f"❌ Auto-retry failed:\n<code>{str(e)[:200]}</code>")
+        await _safe_edit(status, f"Auto-retry failed:\n<code>{str(e)[:200]}</code>")
 
 
 async def _send_cached_instagram(client, info, cached) -> bool:
@@ -3936,22 +4005,22 @@ async def _deliver_instagram(client, info, uid, status=None, quiet=False,
         return False
     except Exception as e:
         if not quiet and status:
-            await _safe_edit(status, f"❌ Instagram download failed:\n<code>{str(e)[:400]}</code>")
+            await _safe_edit(status, f"Instagram download failed:\n<code>{str(e)[:400]}</code>")
         return False
 
     if not files:
         if not quiet and status:
-            await _safe_edit(status, "❌ Is post mein koi media nahi mila.")
+            await _safe_edit(status, "No media found in this post.")
         return False
 
     if status and not quiet:
-        await _safe_edit(status, f"📤 {len(files)} item upload ho rahe hain…")
+        await _safe_edit(status, f"{len(files)} item upload ho rahe hain…")
 
     caption = build_post_caption(meta, url)
     # Be honest when only part of a carousel could be fetched
     if meta.get("partial"):
-        caption = (f"⚠️ <i>{meta['partial']} items mile (baaki Instagram se "
-                   f"nahi aa paye)</i>\n\n" + caption)[:1024]
+        caption = (f"<i>{meta['partial']} items mile (baaki Instagram se"
+                   f"could not be retrieved)</i>\n\n" + caption)[:1024]
     total, sent_msgs = await _send_instagram_media(
         client, uid, info["chat_id"], info["reply_to"], files,
         caption=caption, return_messages=True)
@@ -3988,7 +4057,7 @@ async def _run_instagram_download(client, status, info, uid, tid=None):
     kind = content_kind(info["url"])
     label = {"story": "Story", "highlight": "Highlight",
              "reel": "Reel", "post": "Post"}.get(kind, "Post")
-    await _safe_edit(status, f"📸 Instagram {label} download ho raha hai…")
+    await _safe_edit(status, f"Instagram {label} download in progress…")
 
     ok = await _deliver_instagram(client, info, uid, status=status)
     if ok:
@@ -4015,7 +4084,7 @@ async def _do_ytdl_download(client, cq, tid, idx):
     formats=info["formats"]
     if idx<0 or idx>=len(formats): await cq.message.reply_text("Invalid choice."); return
     fmt=formats[idx]; url=info["url"]; temp_root=Path(info["temp_root"])
-    try: await cq.message.edit_text(f"⬇️ Downloading <b>{fmt['label']}</b>…\n<code>{url}</code>")
+    try: await cq.message.edit_text(f"Downloading <b>{fmt['label']}</b>…\n<code>{url}</code>")
     except Exception: pass
     # ── Instagram handling ──
     # All Instagram links (photos, carousels, reels, stories, highlights) go
@@ -4034,13 +4103,13 @@ async def _do_ytdl_download(client, cq, tid, idx):
                 "empty media response", "requested format")):
             await _handle_instagram_task(client, cq, info, tid)
             return
-        try: await cq.message.edit_text(f"❌ Download failed:\n<code>{err_str[:500]}</code>")
+        try: await cq.message.edit_text(f"Download failed:\n<code>{err_str[:500]}</code>")
         except Exception: pass
         YTDL_TASKS.pop(tid, None); return
 
     basename=os.path.basename(dl_path)
     status=cq.message; start_u=time.time()
-    try: await status.edit_text(f"📤 Uploading: <code>{basename}</code>")
+    try: await status.edit_text(f"Uploading: <code>{basename}</code>")
     except Exception: pass
     try:
         # Check if multiple files were downloaded (e.g. Instagram carousel)
@@ -4048,7 +4117,7 @@ async def _do_ytdl_download(client, cq, tid, idx):
         media_files = [p for p in all_files if p.is_file() and p.suffix.lower() not in (".json",".part",".ytdl")]
         # Use the latest file as primary
         if not media_files:
-            await status.edit_text("❌ No file downloaded."); YTDL_TASKS.pop(tid,None); return
+            await status.edit_text("No file downloaded."); YTDL_TASKS.pop(tid,None); return
         # Send each file (carousel support)
         for i, fpath in enumerate(media_files):
             fname_i = fpath.name
@@ -4079,34 +4148,34 @@ async def _do_ytdl_download(client, cq, tid, idx):
                     await log_output(client, cq.from_user, sent, f"ytdl: {url}")
                     await update_user_stats(uid, sum(f.stat().st_size for f in media_files)/(1024*1024))
             except Exception as e:
-                await client.send_message(info["chat_id"], f"❌ File {i+1} upload failed: <code>{e}</code>",
+                await client.send_message(info["chat_id"], f"File {i+1} upload failed: <code>{e}</code>",
                     reply_to_message_id=info["reply_to"])
     except Exception as e:
-        try: await status.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+        try: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
         except Exception: pass
     YTDL_TASKS.pop(tid,None)
 
 # ── Cloud Upload ──────────────────────────────────────────────────────────────
 async def _do_cloud_upload(client, cq, orig, platform):
     media=orig.document or orig.video
-    if not media: await cq.message.reply_text("File nahi mili."); return
+    if not media: await cq.message.reply_text("File not found."); return
     uid=cq.from_user.id
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     fname=media.file_name or "file"
-    status=await cq.message.reply_text(f"📥 Downloading {fname}…"); start=time.time()
+    status=await cq.message.reply_text(f"Downloading {fname}…"); start=time.time()
     try:
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
-    except Exception as e: await status.edit_text(f"❌ Download failed:\n<code>{e}</code>"); return
-    await status.edit_text(f"☁️ Uploading to {platform}…")
+    except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
+    await status.edit_text(f"Uploading to {platform}…")
     try:
         if platform=="gofile": url=await upload_to_gofile(dl)
         elif platform=="catbox": url=await upload_to_catbox(dl)
         else: url=await smart_upload(dl)
         await status.edit_text(
-            f"✅ <b>Uploaded to {platform}!</b>\n\n🔗 <a href='{url}'>Download Link</a>\n<code>{url}</code>")
-    except Exception as e: await status.edit_text(f"❌ Cloud upload failed:\n<code>{e}</code>")
+            f"<b>Uploaded to {platform}!</b>\n\n<a href='{url}'>Download Link</a>\n<code>{url}</code>")
+    except Exception as e: await status.edit_text(f"Cloud upload failed:\n<code>{e}</code>")
 
 # ════════════════════════════════════════════════════════════════════════════
 # M3U8 & LINKS
@@ -4115,37 +4184,37 @@ async def offer_m3u8_menu(client, cq, uid, url, temp_root):
     chat_id=cq.message.chat.id; reply_to=cq.message.id
     try: variants=await get_m3u8_variants(url)
     except Exception as e:
-        await client.send_message(chat_id,f"❌ m3u8 parse failed:\n<code>{e}</code>",reply_to_message_id=reply_to); return
+        await client.send_message(chat_id,f"m3u8 parse failed:\n<code>{e}</code>",reply_to_message_id=reply_to); return
     base=url.split("?",1)[0].split("#",1)[0].rsplit("/",1)[-1] or "stream"
     if base.endswith(".m3u8"): base=base[:-5]
     if not variants: variants=[{"name":"Auto","url":url}]
     tid=uuid.uuid4().hex
     M3U8_TASKS[tid]={"user_id":uid,"url":url,"variants":variants,"temp_root":str(temp_root),"base_name":base}
     buttons=[[_btn(v["name"], f"m3q|{tid}|{i}", "primary")] for i,v in enumerate(variants)]
-    await client.send_message(chat_id,f"📺 m3u8:\n<code>{url}</code>\n\nQuality:",
+    await client.send_message(chat_id,f"m3u8:\n<code>{url}</code>\n\nQuality:",
         reply_markup=InlineKeyboardMarkup(buttons),reply_to_message_id=reply_to)
 
 async def handle_m3u8_quality_choice(client, cq, tid, idx):
     info=M3U8_TASKS.get(tid)
     if not info: await cq.answer("Task expired.",show_alert=True); return
-    if not cq.from_user or cq.from_user.id!=info["user_id"]: await cq.answer("Ye tumhara task nahi.",show_alert=True); return
+    if not cq.from_user or cq.from_user.id!=info["user_id"]: await cq.answer("This is not your task.",show_alert=True); return
     variants=info["variants"]
     if idx<0 or idx>=len(variants): await cq.answer("Invalid.",show_alert=True); return
     v=variants[idx]; url=v["url"]; name=v["name"]
     temp_root=Path(info["temp_root"]); base=info["base_name"]
     chat_id=cq.message.chat.id; uid=cq.from_user.id; reply_to=cq.message.id
     await cq.answer()
-    try: await cq.message.edit_text(f"📥 Downloading {name} stream…")
+    try: await cq.message.edit_text(f"Downloading {name} stream…")
     except Exception: pass
     dest=str(temp_root/f"{base}_{name}.mp4")
     try: await download_m3u8_stream(url,dest)
     except Exception as e:
-        try: await cq.message.edit_text(f"❌ m3u8 download failed:\n<code>{e}</code>")
+        try: await cq.message.edit_text(f"m3u8 download failed:\n<code>{e}</code>")
         except Exception: pass
         M3U8_TASKS.pop(tid,None); return
     cap=await build_caption(uid,f"{base} [{name}]"); thumb=await choose_thumbnail(uid,dest)
     dur=await _get_video_duration(dest)
-    try: await cq.message.edit_text("📤 Uploading m3u8 video…")
+    try: await cq.message.edit_text("Uploading m3u8 video…")
     except Exception: pass
     start_u=time.time()
     try:
@@ -4155,7 +4224,7 @@ async def handle_m3u8_quality_choice(client, cq, tid, idx):
         except Exception: pass
         await log_output(client,cq.from_user,sent,f"m3u8: {url}")
     except Exception as e:
-        try: await cq.message.edit_text(f"❌ Upload failed:\n<code>{e}</code>")
+        try: await cq.message.edit_text(f"Upload failed:\n<code>{e}</code>")
         except Exception: pass
     M3U8_TASKS.pop(tid,None)
 
@@ -4167,7 +4236,7 @@ async def _upload_one_file(client, uid, fp, chat_id, reply_to, status,
             return False
         bn = os.path.basename(fp)
         size = os.path.getsize(fp)
-        await _safe_edit(status, f"📤 Uploading{label}: {bn[:45]}")
+        await _safe_edit(status, f"Uploading{label}: {bn[:45]}")
         start_u = time.time()
         if is_video_path(bn):
             cap = await build_caption(uid, bn)
@@ -4209,7 +4278,7 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
 
     if kind == "unknown":
         raise GDriveError(
-            "❌ <b>Ye Google Drive link samajh nahi aaya.</b>\n\n"
+            "<b>That Google Drive link was not recognised.</b>\n\n"
             "Supported:\n"
             "• <code>/file/d/&lt;id&gt;/view</code>\n"
             "• <code>/drive/folders/&lt;id&gt;</code>\n"
@@ -4217,7 +4286,7 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
 
     # ── Single file ──
     if kind == "file":
-        await _safe_edit(status, "☁️ Drive file download ho rahi hai…")
+        await _safe_edit(status, "Downloading the Drive file…")
         fp = await download_gdrive_file(url, str(dest_dir))
         good = await _upload_one_file(client, uid, fp, chat_id, reply_to, status)
         if good:
@@ -4226,7 +4295,7 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
         return (1, 0) if good else (0, 1)
 
     # ── Folder ──
-    await _safe_edit(status, "📂 Folder ka content check kar raha hoon…")
+    await _safe_edit(status, "Reading the folder contents…")
     try:
         listing = await list_gdrive_folder(url)
     except GDriveError:
@@ -4235,10 +4304,10 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
     if listing:
         await _safe_edit(
             status,
-            f"📂 <b>{len(listing)} files</b> mili — download shuru…\n"
-            "<i>Bade folders me time lag sakta hai.</i>")
+            f"<b>{len(listing)} files</b> found - starting download…\n"
+            "<i>Large folders may take a while.</i>")
     else:
-        await _safe_edit(status, "📂 Folder download ho raha hai…")
+        await _safe_edit(status, "Downloading the folder…")
 
     # Live progress: a large folder can take minutes, and Google throttles
     # per file, so the user needs to see it is still working.
@@ -4251,9 +4320,9 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
         _last["t"] = now
         await _safe_edit(
             status,
-            f"📂 <b>Downloading {idx}/{total}</b>\n"
-            f"📄 {name[:45]}\n"
-            f"✅ {done} ready")
+            f"<b>Downloading {idx}/{total}</b>\n"
+            f"{name[:45]}\n"
+            f"{done} ready")
 
     files = await download_gdrive_folder(
         url, str(dest_dir),
@@ -4261,9 +4330,9 @@ async def _handle_gdrive_link(client, uid, user, url, temp_root, chat_id,
         should_stop=lambda: bool(user_cancelled.get(uid)))
     if not files:
         raise GDriveError(
-            "❌ <b>Folder se koi file nahi mili.</b>\n\n"
-            "Folder khali hai, sirf sub-folders hain, ya Google ne "
-            "download quota lagayi hai.")
+            "<b>No files were found in the folder.</b>\n\n"
+            "The folder is empty, contains only sub-folders, or Google has "
+            "applied a download quota.")
 
     ok = failed = 0
     for i, fp in enumerate(files, 1):
@@ -4287,9 +4356,9 @@ def _tb_cookie_line() -> str:
     """One-line TeraBox cookie state for help text and /version."""
     from utils.terabox import cookie_problem, has_cookie
     if not has_cookie():
-        return "❌ not set"
+        return "not set"
     problem = cookie_problem()
-    return f"⚠️ {problem}" if problem else "✅ set"
+    return f"{problem}" if problem else "set"
 
 
 async def _start_terabox_flow(client, message, url):
@@ -4305,7 +4374,7 @@ async def _start_terabox_flow(client, message, url):
     temp_root.mkdir(parents=True, exist_ok=True)
     await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
 
-    status = await message.reply_text("📦 TeraBox link mila — check kar raha hoon…")
+    status = await message.reply_text("TeraBox link found — check in progress…")
     try:
         ok, failed = await _handle_terabox_link(
             client, uid, message.from_user, url, temp_root,
@@ -4315,15 +4384,15 @@ async def _start_terabox_flow(client, message, url):
             except Exception: pass
             if failed:
                 await message.reply_text(
-                    f"✅ {ok} file bheji, ⚠️ {failed} fail hui.")
+                    f"{ok} file bheji, {failed} fail hui.")
         elif not failed:
-            await _safe_edit(status, "📭 Koi file nahi mili.")
+            await _safe_edit(status, "No files were found.")
         else:
-            await _safe_edit(status, f"❌ {failed} file download nahi ho payi.")
+            await _safe_edit(status, f"{failed} file(s) could not be downloaded.")
     except TeraboxError as e:
         await _safe_edit(status, str(e))
     except Exception as e:
-        await _safe_edit(status, f"❌ TeraBox failed:\n<code>{str(e)[:250]}</code>")
+        await _safe_edit(status, f"TeraBox failed:\n<code>{str(e)[:250]}</code>")
 
 
 async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
@@ -4336,14 +4405,14 @@ async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
     from utils.terabox import (TeraboxError, download_file, human_size,
                                list_files)
 
-    await _safe_edit(status, "📦 TeraBox share check kar raha hoon…")
+    await _safe_edit(status, "Checking the TeraBox share…")
     files = await list_files(url)          # raises TeraboxError with guidance
 
     total_size = sum(f.get("size") or 0 for f in files)
     await _safe_edit(
         status,
-        f"📦 <b>{len(files)} file{'s' if len(files) != 1 else ''}</b> mili "
-        f"({human_size(total_size)})\nDownload shuru…")
+        f"<b>{len(files)} file{'s' if len(files) != 1 else ''}</b> found"
+        f"({human_size(total_size)})\nDownload starting…")
 
     dest_dir = Path(temp_root)/f"terabox_{uuid.uuid4().hex[:8]}"
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -4366,8 +4435,8 @@ async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
 
         await _safe_edit(
             status,
-            f"⬇️ <b>{i}/{len(files)}</b> — {name[:45]}\n"
-            f"📦 {human_size(size)}")
+            f"<b>{i}/{len(files)}</b> — {name[:45]}\n"
+            f"{human_size(size)}")
         try:
             fp = await download_file(entry, str(dest_dir))
         except Exception:
@@ -4429,7 +4498,7 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
         cmd += ["--cookies", cookie_path]
     cmd += [url]
 
-    await _safe_edit(status, f"🎬 Fetching…\n<code>{url[:70]}</code>")
+    await _safe_edit(status, f"Fetching…\n<code>{url[:70]}</code>")
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -4438,10 +4507,10 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
     except asyncio.TimeoutError:
         try: proc.kill()
         except Exception: pass
-        await _safe_edit(status, "❌ Timeout — ye link bahut slow hai.")
+        await _safe_edit(status, "Timeout — ye link bahut slow hai.")
         return False
     except FileNotFoundError:
-        await _safe_edit(status, "❌ yt-dlp installed nahi hai (owner: "
+        await _safe_edit(status, "yt-dlp is not installed (owner:"
                                  "<code>pip install -U yt-dlp</code>).")
         return False
 
@@ -4454,7 +4523,7 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
                 if "ERROR" in line:
                     detail = line.strip()[:200]; break
         if detail:
-            await _safe_edit(status, f"❌ <code>{detail}</code>")
+            await _safe_edit(status, f"<code>{detail}</code>")
         return False
 
     sent_any = False
@@ -4464,7 +4533,7 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
             if size < 1024:
                 continue
             bn = f.name
-            await _safe_edit(status, f"📤 Uploading: {bn[:50]}")
+            await _safe_edit(status, f"Uploading: {bn[:50]}")
             start_u = time.time()
             if is_video_path(bn):
                 cap = await build_caption(uid, bn)
@@ -4501,7 +4570,7 @@ async def handle_links_download_all(client, cq, original_msg):
     key=(original_msg.chat.id,original_msg.id); sess=LINK_SESSIONS.get(key)
     content=sess["content"] if sess else (original_msg.text or original_msg.caption or "") or ""
     all_links=sess["links"] if sess else find_links_in_text(content)
-    if not all_links: await cq.message.edit_text("Koi URL nahi mila."); return
+    if not all_links: await cq.message.edit_text("No URL was found."); return
     cats: Dict[str,list]={"direct":[],"m3u8":[],"gdrive":[],"telegram":[],
                           "ytdl":[],"filehost":[],"unknown":[]}
     for u in all_links:
@@ -4529,14 +4598,14 @@ async def handle_links_download_all(client, cq, original_msg):
 
     candidates=direct
     if not candidates and not m3u8s and not gdrives and not ytdls and not teraboxes:
-        await cq.message.edit_text("Koi supported link nahi mila."); return
+        await cq.message.edit_text("No supported link was found."); return
     if not cq.from_user: return
     user=cq.from_user; uid=user.id
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
     try: await cq.message.edit_text(
-        f"⬇️ Direct: {len(candidates)} | Video sites: {len(ytdls)} | "
+        f"Direct: {len(candidates)} | Video sites: {len(ytdls)} |"
         f"GDrive: {len(gdrives)} | TeraBox: {len(teraboxes)} | "
         f"m3u8: {len(m3u8s)}\nDownloading…")
     except Exception: pass
@@ -4550,9 +4619,9 @@ async def handle_links_download_all(client, cq, original_msg):
         base=url.split("?",1)[0].split("#",1)[0].rsplit("/",1)[-1] or f"file_{uuid.uuid4().hex[:8]}"
         dest=str(temp_root/base)
         try:
-            st=await client.send_message(chat_id,f"⬇️ {url[:60]}…",reply_to_message_id=reply_to)
+            st=await client.send_message(chat_id,f"{url[:60]}…",reply_to_message_id=reply_to)
             fp=await download_file(url,dest,status_message=st,file_name=base,direction="to server")
-            bn=os.path.basename(fp); await st.edit_text(f"📤 Uploading: {bn}")
+            bn=os.path.basename(fp); await st.edit_text(f"Uploading: {bn}")
             start_u=time.time()
             if is_video_path(bn):
                 cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
@@ -4570,7 +4639,7 @@ async def handle_links_download_all(client, cq, original_msg):
         if user_cancelled.get(uid): break
         st=None
         try:
-            st=await client.send_message(chat_id,f"☁️ GDrive: {url[:50]}…",
+            st=await client.send_message(chat_id,f"GDrive: {url[:50]}…",
                                          reply_to_message_id=reply_to)
             sent_n, failed_n = await _handle_gdrive_link(
                 client, uid, user, url, temp_root, chat_id, reply_to, st)
@@ -4583,14 +4652,14 @@ async def handle_links_download_all(client, cq, original_msg):
             if st: await _safe_edit(st, str(e))
         except Exception as e:
             fail+=1
-            if st: await _safe_edit(st, f"❌ GDrive failed:\n<code>{str(e)[:200]}</code>")
+            if st: await _safe_edit(st, f"GDrive failed:\n<code>{str(e)[:200]}</code>")
         await asyncio.sleep(0.4)
     # ── TeraBox shares (no yt-dlp extractor exists for these) ──
     for url in teraboxes:
         if user_cancelled.get(uid): break
         st=None
         try:
-            st=await client.send_message(chat_id,f"📦 TeraBox: {url[:50]}…",
+            st=await client.send_message(chat_id,f"TeraBox: {url[:50]}…",
                                          reply_to_message_id=reply_to)
             sent_n, failed_n = await _handle_terabox_link(
                 client, uid, user, url, temp_root, chat_id, reply_to, st)
@@ -4601,7 +4670,7 @@ async def handle_links_download_all(client, cq, original_msg):
         except Exception as e:
             fail+=1
             msg = str(e) if e.__class__.__name__=="TeraboxError" \
-                  else f"❌ TeraBox failed:\n<code>{str(e)[:200]}</code>"
+                  else f"TeraBox failed:\n<code>{str(e)[:200]}</code>"
             if st: await _safe_edit(st, msg)
         await asyncio.sleep(0.4)
 
@@ -4610,7 +4679,7 @@ async def handle_links_download_all(client, cq, original_msg):
         if user_cancelled.get(uid): break
         st=None
         try:
-            st=await client.send_message(chat_id,f"🎬 {url[:60]}…",
+            st=await client.send_message(chat_id,f"{url[:60]}…",
                                          reply_to_message_id=reply_to)
             sent_any=await _ytdl_direct_download(client,uid,url,temp_root,
                                                  chat_id,reply_to,st)
@@ -4620,29 +4689,29 @@ async def handle_links_download_all(client, cq, original_msg):
                 except Exception: pass
             else:
                 fail+=1
-                await _safe_edit(st,f"❌ Download nahi ho paya:\n<code>{url[:80]}</code>")
+                await _safe_edit(st,f"Download failed:\n<code>{url[:80]}</code>")
         except Exception as e:
             fail+=1
-            if st: await _safe_edit(st,f"❌ <code>{str(e)[:150]}</code>")
+            if st: await _safe_edit(st,f"<code>{str(e)[:150]}</code>")
         await asyncio.sleep(0.4)
 
     for url in m3u8s:
         if user_cancelled.get(uid): break
         await offer_m3u8_menu(client,cq,uid,url,temp_root)
     if ok and not fail:
-        summary = (f"✅ <b>Ho gaya!</b>  {ok} file"
+        summary = (f"<b>Complete.</b> {ok} file"
                    f"{'s' if ok!=1 else ''} bhej di.")
     elif ok and fail:
-        summary = (f"⚠️ <b>Adhoora</b>\n\n"
-                   f"✅ {ok} bhej di\n❌ {fail} nahi ho payi")
+        summary = (f"<b>Adhoora</b>\n\n"
+                   f"{ok} delivered\n{fail} failed")
     elif fail:
-        summary = (f"❌ <b>Download nahi ho paya</b>\n\n"
-                   f"<i>Upar har link ka alag message dekho — "
+        summary = (f"<b>Download failed</b>\n\n"
+                   f"<i>Upar har link ka alag message see — "
                    f"usme wajah likhi hai.</i>")
     else:
-        summary = "ℹ️ Kuch download karne layak nahi mila."
+        summary = "Nothing downloadable was found."
     if m3u8s:
-        summary += f"\n\n📺 {len(m3u8s)} stream — quality buttons upar hain."
+        summary += f"\n\n{len(m3u8s)} stream — quality buttons upar hain."
     try: await cq.message.edit_text(summary)
     except Exception: pass
     if is_priv and pinned:
@@ -4663,10 +4732,10 @@ async def song_cmd(client, message):
     query = " ".join(message.command[1:]).strip()
     if not query:
         await _safe_reply(message,
-            "🎵 <b>Song Search</b>\n\n"
+            "<b>Song Search</b>\n\n"
             "Usage: <code>/song song name artist</code>\n\n"
             "Examples:\n"
-            "• <code>/song Tere Bina Arijit Singh</code>\n"
+            "• <code>/song artist - track name</code>\n"
             "• <code>/song Kesariya Brahmastra</code>\n"
             "• <code>/song Bohemian Rhapsody Queen</code>"
         ); return
@@ -4676,7 +4745,7 @@ async def song_cmd(client, message):
     temp_root.mkdir(parents=True, exist_ok=True)
     await register_temp_path(uid, str(temp_root), Config.AUTO_DELETE_DEFAULT_MIN)
     status = await _safe_reply(message,
-        f"🔍 Searching: <b>{query}</b>\n⏳ Downloading audio…"
+        f"Searching: <b>{query}</b>\n⏳ Downloading audio…"
     )
     try:
         audio_path = await search_and_download_audio(query, str(temp_root))
@@ -4684,7 +4753,7 @@ async def song_cmd(client, message):
         cap = await build_caption(uid, fname)
         start_u = time.time()
         if status:
-            try: await status.edit_text(f"📤 Uploading: <code>{fname}</code>…")
+            try: await status.edit_text(f"Uploading: <code>{fname}</code>…")
             except Exception: pass
         sent = await client.send_audio(
             message.chat.id, audio_path, caption=cap,
@@ -4698,7 +4767,7 @@ async def song_cmd(client, message):
     except Exception as e:
         err = str(e)[:300]
         if status:
-            try: await status.edit_text(f"❌ Failed: <code>{err}</code>")
+            try: await status.edit_text(f"Failed: <code>{err}</code>")
             except Exception: pass
     finally:
         _safe_cleanup(str(temp_root))
@@ -4750,13 +4819,13 @@ async def cookie_monitor(client):
                 if ok is False and last_ok is not False:
                     await _notify_owners(
                         client,
-                        "🍪 <b>Instagram cookies problem</b>\n\n"
+                        "<b>Instagram cookies problem</b>\n\n"
                         f"{detail}\n\n"
                         "Instagram downloads ab fail ho sakte hain.\n"
-                        "✅ <b>Fix:</b> browser se fresh cookies export karke "
-                        "<code>INSTAGRAM_COOKIES</code> update karo.")
+                        "<b>Fix:</b> browser se fresh cookies export karke"
+                        "<code>INSTAGRAM_COOKIES</code> update please.")
                 elif ok and last_ok is False:
-                    await _notify_owners(client, "✅ <b>Instagram cookies working again.</b>")
+                    await _notify_owners(client, "<b>Instagram cookies working again.</b>")
                 last_ok = ok
         except asyncio.CancelledError:
             raise
@@ -4770,7 +4839,7 @@ async def main():
     await app.start()
     asyncio.create_task(cookie_monitor(app))
     handlers = sum(len(v) for v in app.dispatcher.groups.values())
-    print(f"✅ Serena Unzip Bot {BOT_VERSION} started. "
+    print(f"Serena Unzip Bot {BOT_VERSION} started."
           f"build={BUILD_VERSION} handlers={handlers}")
     await idle()
     await app.stop()
