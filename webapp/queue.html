@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<script src="https://telegram.org/js/telegram-web-app.js"></script><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_dashboard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{"colors":{"inverse-on-surface":"#302f3b","error":"#ffb4ab","on-surface":"#e4e0f0","primary-container":"#a078ff","primary":"#d0bcff","on-primary-container":"#340080","surface-variant":"#343440","secondary-fixed":"#acedff","surface":"#12121d","surface-dim":"#12121d","on-tertiary-fixed":"#001a42","on-tertiary-fixed-variant":"#004395","surface-container-highest":"#343440","secondary-fixed-dim":"#4cd7f6","on-surface-variant":"#cbc3d7","outline-variant":"#494454","on-secondary-container":"#00424e","tertiary":"#adc6ff","on-secondary-fixed":"#001f26","on-error":"#690005","surface-container":"#1f1f2a","surface-container-high":"#292934","on-secondary-fixed-variant":"#004e5c","surface-container-low":"#1b1b26","secondary":"#4cd7f6","outline":"#958ea0","on-primary-fixed-variant":"#5516be","primary-fixed-dim":"#d0bcff","secondary-container":"#03b5d3","tertiary-fixed-dim":"#adc6ff","surface-bright":"#393844","on-primary":"#3c0091","surface-tint":"#d0bcff","inverse-primary":"#6d3bd7","surface-container-lowest":"#0d0d18","error-container":"#93000a","tertiary-fixed":"#d8e2ff","background":"#12121d","on-background":"#e4e0f0","on-tertiary":"#002e6a","on-error-container":"#ffdad6","on-primary-fixed":"#23005c","on-secondary":"#003640","inverse-surface":"#e4e0f0","primary-fixed":"#e9ddff","tertiary-container":"#4d8eff","on-tertiary-container":"#00285d"},"borderRadius":{"DEFAULT":"0.25rem","lg":"0.5rem","xl":"0.75rem","full":"9999px"},"spacing":{"space-xl":"1.5rem","space-xs":"0.25rem","margin":"1rem","space-md":"0.75rem","space-lg":"1rem","space-sm":"0.5rem","gutter":"0.75rem"},"fontFamily":{"body-md":["Plus Jakarta Sans"],"label-sm":["JetBrains Mono"],"display-lg":["Plus Jakarta Sans"],"label-lg":["JetBrains Mono"],"headline-sm":["Plus Jakarta Sans"],"body-sm":["Plus Jakarta Sans"],"headline-lg":["Plus Jakarta Sans"],"headline-md":["Plus Jakarta Sans"],"code-sm":["JetBrains Mono"],"label-md":["JetBrains Mono"],"body-lg":["Plus Jakarta Sans"]},"fontSize":{"body-md":["14px",{"lineHeight":"20px","fontWeight":"400"}],"label-sm":["11px",{"lineHeight":"14px","fontWeight":"500"}],"display-lg":["32px",{"lineHeight":"40px","fontWeight":"800"}],"label-lg":["14px",{"lineHeight":"18px","fontWeight":"600"}],"headline-sm":["18px",{"lineHeight":"24px","fontWeight":"600"}],"body-sm":["12px",{"lineHeight":"16px","fontWeight":"400"}],"headline-lg":["24px",{"lineHeight":"32px","fontWeight":"700"}],"headline-md":["20px",{"lineHeight":"28px","fontWeight":"600"}],"code-sm":["11px",{"lineHeight":"14px","fontWeight":"400"}],"label-md":["12px",{"lineHeight":"16px","fontWeight":"500"}],"body-lg":["16px",{"lineHeight":"24px","fontWeight":"400"}]}}}};</script></head><body class="bg-background font-body-md text-body-md text-on-surface min-h-screen selection:bg-primary selection:text-on-primary"><aside class="fixed left-0 top-0 h-full w-72 bg-surface-container-lowest/80 backdrop-blur-2xl z-50 flex flex-col justify-between p-space-lg shadow-[0_1px_8px_rgba(0,0,0,0.3)]"><div class="flex flex-col gap-space-lg"><div class="flex items-center gap-space-sm px-space-xs py-space-xs"><div class="relative flex items-center justify-center w-8 h-8 rounded-lg bg-surface-container-high"><span class="material-symbols-outlined text-secondary text-[20px]">folder_zip</span><span class="absolute top-1 right-1 w-2 h-2 rounded-full bg-secondary animate-pulse"></span></div><div class="flex flex-col"><div class="flex items-center gap-space-xs"><span class="font-headline-sm text-headline-sm font-bold tracking-tight text-on-surface">SERENA UNZIP</span><span class="px-1.5 py-0.5 rounded font-label-sm text-label-sm bg-primary/10 text-primary uppercase">v2</span></div><span class="font-label-sm text-label-sm text-on-surface-variant flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>TG-WASM READY</span></div></div><div class="px-space-xs py-1 rounded-lg bg-surface-container/60"><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-on-surface-variant">DAEMON RUNTIME</span><span class="font-code-sm text-code-sm text-secondary">0.42ms idle</span></div></div><nav class="flex flex-col gap-space-xs" data-active-classes="bg-primary-container text-on-primary-container font-semibold shadow-[0_0_16px_-2px_rgba(139,92,246,0.35)]"><a class="flex items-center gap-space-md px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="main-app" href="#"><span class="material-symbols-outlined text-[20px]">grid_view</span><span class="font-body-md text-body-md">Main App</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="archive-selector" href="#"><span class="material-symbols-outlined text-[20px]">inventory_2</span><span class="font-body-md text-body-md">Archive Selector</span></a><a class="flex items-center justify-between px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="active-queue-and-tasks" href="#"><div class="flex items-center gap-space-md"><span class="material-symbols-outlined text-[20px]">motion_photos_on</span><span class="font-body-md text-body-md">Active Queue</span></div><span class="px-1.5 py-0.5 rounded font-label-sm text-label-sm bg-secondary/15 text-secondary">2 Live</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="admin-suite" href="#"><span class="material-symbols-outlined text-[20px]">terminal</span><span class="font-body-md text-body-md">Admin Suite</span></a><a class="flex items-center gap-space-md px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all" data-path="user-profile-and-limits" href="#"><span class="material-symbols-outlined text-[20px]">manage_accounts</span><span class="font-body-md text-body-md">Profile &amp; Limits</span></a></nav></div><div class="flex flex-col gap-space-sm p-space-sm rounded-xl bg-surface-container/50 shadow-[inset_0_1px_1px_rgba(255,255,255,0.06)]"><div class="flex items-center justify-between"><span class="font-label-sm text-label-sm text-on-surface-variant">MEM ENGINE</span><span class="font-label-sm text-label-sm text-primary">AES-GCM 512M</span></div><div class="w-full h-1.5 rounded-full bg-surface-container-highest overflow-hidden"><div class="h-full w-2/5 bg-secondary rounded-full"></div></div><div class="flex items-center justify-between font-code-sm text-code-sm text-on-surface-variant"><span>CACHE 204.8 MB</span><span class="text-secondary">ONLINE</span></div></div></aside><div class="pl-72"><header class="fixed top-0 left-72 right-0 h-16 bg-surface-container-lowest/80 backdrop-blur-xl z-40 flex items-center justify-between px-space-xl shadow-[0_1px_8px_rgba(0,0,0,0.2)]"><div class="flex items-center gap-space-md"><div class="flex items-center gap-space-xs px-2.5 py-1 rounded-full bg-surface-container font-label-sm text-label-sm text-secondary"><span class="w-2 h-2 rounded-full bg-secondary animate-ping"></span>TELEGRAM MINI APP V2</div><div class="hidden md:flex items-center gap-space-xs font-code-sm text-code-sm text-on-surface-variant"><span class="material-symbols-outlined text-[14px] text-primary">lock_open</span><span>SANDBOX SECURE</span></div></div><div class="flex items-center gap-space-md"><div class="flex items-center gap-space-xs px-space-sm py-1 rounded-lg bg-surface-container-low text-on-surface font-label-sm text-label-sm"><span class="material-symbols-outlined text-[16px] text-tertiary">bolt</span><span>120 MB/s</span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></header><main class="relative pt-16 w-full min-h-[calc(100vh-4rem)] pb-16 bg-background px-space-xl"><div class="flex flex-col w-full gap-space-xl">
+<!-- Dynamic Ambient Glow Layer -->
+<div class="relative w-full overflow-hidden rounded-xl bg-surface-container-lowest/60 backdrop-blur-2xl p-space-lg shadow-xl">
+<div class="absolute -top-24 -left-20 w-96 h-96 bg-primary/10 rounded-full blur-3xl pointer-events-none"></div>
+<div class="absolute -bottom-24 -right-20 w-96 h-96 bg-secondary/10 rounded-full blur-3xl pointer-events-none"></div>
+<!-- Section Header Block -->
+<div class="relative flex flex-col md:flex-row md:items-center justify-between gap-space-md">
+<div class="flex flex-col gap-space-xs">
+<div class="flex items-center gap-space-sm">
+<span class="font-headline-lg text-headline-lg tracking-tight text-on-surface">Batch Processing &amp; ZIP Queue</span>
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface-container text-secondary font-label-sm text-label-sm shadow-sm">
+<span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+            SYNCED
+          </span>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant flex items-center gap-2">
+<span>Worker Node:</span>
+<span class="font-label-sm text-label-sm text-primary">wkr-core-tg09 [WASM-SIMD]</span>
+<span class="text-outline-variant">•</span>
+<span>Thread pool saturation:</span>
+<span class="font-code-sm text-code-sm text-secondary">78.2%</span>
+</p>
+</div>
+<!-- Live Pipeline Status Badge -->
+<div class="flex items-center gap-space-sm px-space-md py-2 rounded-xl bg-surface-container/70 shadow-sm backdrop-blur-md">
+<div class="flex items-center justify-center w-7 h-7 rounded-lg bg-secondary/15 text-secondary">
+<span class="material-symbols-outlined text-[18px]">stream</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Engine Status</span>
+<span class="font-label-md text-label-md text-on-surface font-semibold flex items-center gap-1.5">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+            QUEUE ACTIVE: 4 Jobs in Pipeline • 1 Completed
+          </span>
+</div>
+</div>
+</div>
+</div>
+<!-- Queue Summary Metrics: 4 Glass Stat Cards -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-space-md">
+<!-- Card 1: Active Jobs -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-space-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Active Jobs</span>
+<div class="w-8 h-8 rounded-lg bg-primary-container/20 text-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">layers</span>
+</div>
+</div>
+<div class="flex items-baseline gap-space-xs">
+<span class="font-display-lg text-display-lg font-bold text-on-surface">3</span>
+<span class="font-label-sm text-label-sm text-secondary uppercase font-semibold">Processing</span>
+</div>
+<div class="mt-space-md flex items-center justify-between font-code-sm text-code-sm text-on-surface-variant pt-space-xs">
+<span>Concurrency Limit</span>
+<span class="text-on-surface">4 Concurrent</span>
+</div>
+<div class="w-full h-1 mt-2 rounded-full bg-surface-container-highest overflow-hidden">
+<div class="h-full w-3/4 bg-primary rounded-full"></div>
+</div>
+</div>
+<!-- Card 2: Completed Today -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-space-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Completed Today</span>
+<div class="w-8 h-8 rounded-lg bg-secondary/15 text-secondary flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">task_alt</span>
+</div>
+</div>
+<div class="flex items-baseline gap-space-xs">
+<span class="font-display-lg text-display-lg font-bold text-on-surface">18</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">/ 30 DAILY CAP</span>
+</div>
+<div class="mt-space-md flex items-center justify-between font-code-sm text-code-sm text-on-surface-variant pt-space-xs">
+<span>Success Ratio</span>
+<span class="text-secondary">98.4%</span>
+</div>
+<div class="w-full h-1 mt-2 rounded-full bg-surface-container-highest overflow-hidden">
+<div class="h-full w-[60%] bg-secondary rounded-full"></div>
+</div>
+</div>
+<!-- Card 3: Total Transferred -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-space-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Total Transferred</span>
+<div class="w-8 h-8 rounded-lg bg-tertiary-container/25 text-tertiary flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">swap_vert</span>
+</div>
+</div>
+<div class="flex items-baseline gap-space-xs">
+<span class="font-display-lg text-display-lg font-bold text-on-surface">6.84</span>
+<span class="font-label-sm text-label-sm text-tertiary font-semibold">GB</span>
+</div>
+<div class="mt-space-md flex items-center justify-between font-code-sm text-code-sm text-on-surface-variant pt-space-xs">
+<span>Peak Throughput</span>
+<span class="text-on-surface">34.2 MB/s</span>
+</div>
+<div class="w-full h-1 mt-2 rounded-full bg-surface-container-highest overflow-hidden">
+<div class="h-full w-4/5 bg-tertiary rounded-full"></div>
+</div>
+</div>
+<!-- Card 4: Est. Queue Clearance -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md flex flex-col justify-between">
+<div class="flex items-center justify-between mb-space-sm">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Est. Queue Clearance</span>
+<div class="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant flex items-center justify-center">
+<span class="material-symbols-outlined text-[20px]">timelapse</span>
+</div>
+</div>
+<div class="flex items-baseline gap-space-xs">
+<span class="font-display-lg text-display-lg font-bold text-on-surface">4m</span>
+<span class="font-headline-md text-headline-md text-on-surface font-semibold">12s</span>
+</div>
+<div class="mt-space-md flex items-center justify-between font-code-sm text-code-sm text-on-surface-variant pt-space-xs">
+<span>Telegram Latency</span>
+<span class="text-secondary">24ms (FRA)</span>
+</div>
+<div class="w-full h-1 mt-2 rounded-full bg-surface-container-highest overflow-hidden">
+<div class="h-full w-2/5 bg-secondary-container rounded-full animate-pulse"></div>
+</div>
+</div>
+</div>
+<!-- Control Toolbar -->
+<div class="flex flex-wrap items-center justify-between gap-space-sm p-space-sm rounded-xl bg-surface-container-low/80 backdrop-blur-xl shadow-sm">
+<div class="flex flex-wrap items-center gap-space-xs">
+<!-- Pause Entire Queue -->
+<button class="flex items-center gap-space-xs px-space-md py-2 rounded-lg bg-surface-container-high text-on-surface hover:bg-surface-bright hover:text-white font-label-md text-label-md transition-all shadow-sm" id="btn-pause-queue">
+<span class="material-symbols-outlined text-[18px] text-error">pause_circle</span>
+<span>Pause Entire Queue</span>
+</button>
+<!-- Set Global Password -->
+<button class="flex items-center gap-space-xs px-space-md py-2 rounded-lg bg-surface-container-high text-on-surface hover:bg-surface-bright hover:text-primary font-label-md text-label-md transition-all shadow-sm" id="btn-global-pass">
+<span class="material-symbols-outlined text-[18px] text-primary">key</span>
+<span>Set Global Password</span>
+<span class="font-code-sm text-code-sm px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant">/zqpass</span>
+</button>
+<!-- Clear Completed -->
+<button class="flex items-center gap-space-xs px-space-md py-2 rounded-lg bg-surface-container-high text-on-surface hover:bg-surface-bright hover:text-on-surface font-label-md text-label-md transition-all shadow-sm" id="btn-clear-completed">
+<span class="material-symbols-outlined text-[18px] text-outline">mop</span>
+<span>Clear Completed</span>
+</button>
+</div>
+<!-- Add Archive Primary Action -->
+<div class="flex items-center gap-space-xs">
+<button class="flex items-center gap-space-xs px-space-lg py-2.5 rounded-lg bg-primary text-on-primary hover:bg-primary-fixed font-headline-sm text-headline-sm font-semibold shadow-md transition-all">
+<span class="material-symbols-outlined text-[20px]">add_box</span>
+<span>Add Archive to Queue</span>
+</button>
+</div>
+</div>
+<!-- Global Password Quick Modal Prompt (Collapsible state preview) -->
+<div class="hidden flex-col gap-space-sm p-space-md rounded-xl bg-surface-container/90 backdrop-blur-2xl shadow-xl" id="pass-prompt">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs text-primary">
+<span class="material-symbols-outlined text-[18px]">lock_reset</span>
+<span class="font-label-md text-label-md font-semibold">GLOBAL DECRYPTION TOKEN VAULT</span>
+</div>
+<button class="text-on-surface-variant hover:text-on-surface" onclick="document.getElementById('pass-prompt').classList.add('hidden')">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</div>
+<div class="flex flex-col sm:flex-row gap-space-sm items-center">
+<input class="w-full h-11 px-space-md rounded-lg bg-surface-container-lowest text-on-surface placeholder:text-on-surface-variant/40 font-body-md text-body-md focus:outline-none focus:ring-1 focus:ring-primary shadow-inner" placeholder="Inject passphrase for encrypted volumes (AES-256 / 7z / RAR5)..." type="password"/>
+<button class="w-full sm:w-auto whitespace-nowrap px-space-lg h-11 rounded-lg bg-secondary text-on-secondary font-label-md text-label-md font-semibold hover:opacity-90 transition-opacity">
+        Apply Passphrase
+      </button>
+</div>
+</div>
+<!-- Section Title: Live Jobs -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-secondary text-[20px]">dynamic_feed</span>
+<span class="font-headline-md text-headline-md font-bold text-on-surface">Pipeline Queue</span>
+<span class="px-2 py-0.5 rounded font-code-sm text-code-sm bg-surface-container text-on-surface-variant">4 ITEMS</span>
+</div>
+<div class="flex items-center gap-space-sm font-label-sm text-label-sm text-on-surface-variant">
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-secondary"></span>Active Extraction</span>
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-tertiary"></span>Queued Staging</span>
+<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-outline"></span>Terminal Idle</span>
+</div>
+</div>
+<!-- Job Stack Cards -->
+<div class="flex flex-col gap-space-md">
+<!-- JOB 1 (Processing - 74%) -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/90 backdrop-blur-2xl p-space-lg shadow-xl flex flex-col gap-space-md">
+<!-- Glow Accent Rim -->
+<div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-secondary via-primary to-secondary-container"></div>
+<!-- Top Job Header -->
+<div class="flex flex-col md:flex-row md:items-center justify-between gap-space-sm">
+<div class="flex items-start gap-space-md">
+<div class="relative flex items-center justify-center w-12 h-12 rounded-xl bg-secondary/10 text-secondary shadow-inner">
+<span class="material-symbols-outlined text-[28px]">folder_zip</span>
+<span class="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-secondary flex items-center justify-center">
+<span class="material-symbols-outlined text-on-secondary text-[10px] font-bold">play_arrow</span>
+</span>
+</div>
+<div class="flex flex-col">
+<div class="flex flex-wrap items-center gap-space-xs">
+<span class="font-headline-sm text-headline-sm font-bold text-on-surface">dataset_part_01_training.zip</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-secondary/15 text-secondary font-semibold">890 MB</span>
+<span class="px-2 py-0.5 rounded font-code-sm text-code-sm bg-primary/10 text-primary">#JOB-9941</span>
+</div>
+<!-- Pipeline Steps Route -->
+<div class="flex flex-wrap items-center gap-1.5 mt-1 font-code-sm text-code-sm text-on-surface-variant">
+<span class="text-on-surface">Unzip</span>
+<span class="text-outline">→</span>
+<span class="text-on-surface">Extract Media</span>
+<span class="text-outline">→</span>
+<span class="text-secondary font-semibold">Downscale 1080p (FFmpeg)</span>
+<span class="text-outline">→</span>
+<span>Upload Telegram</span>
+</div>
+</div>
+</div>
+<!-- Action Buttons -->
+<div class="flex items-center gap-space-xs">
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-bright text-on-surface font-label-sm text-label-sm transition-all shadow-sm">
+<span class="material-symbols-outlined text-[16px]">pause</span>
+<span>Pause</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container-high hover:bg-surface-bright text-error font-label-sm text-label-sm transition-all shadow-sm">
+<span class="material-symbols-outlined text-[16px]">cancel</span>
+<span>Cancel</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary font-label-sm text-label-sm transition-all shadow-sm">
+<span class="material-symbols-outlined text-[16px]">terminal</span>
+<span>Inspect Log</span>
+</button>
+</div>
+</div>
+<!-- Realtime Progress Track & Micro-Metrics -->
+<div class="flex flex-col gap-space-xs bg-surface-container-lowest/60 p-space-md rounded-xl">
+<div class="flex items-center justify-between font-label-md text-label-md">
+<div class="flex items-center gap-space-xs">
+<span class="font-headline-sm text-headline-sm font-bold text-secondary">74%</span>
+<span class="text-on-surface-variant font-code-sm text-code-sm">(658 MB / 890 MB)</span>
+</div>
+<div class="flex items-center gap-space-md font-code-sm text-code-sm">
+<span class="text-on-surface-variant">Throughput: <span class="text-secondary font-semibold">18.4 MB/s</span></span>
+<span class="text-on-surface-variant">Remaining: <span class="text-primary font-semibold">12s</span></span>
+</div>
+</div>
+<!-- Smooth Progress Bar -->
+<div class="w-full h-2.5 rounded-full bg-surface-container-highest overflow-hidden p-0.5">
+<div class="h-full w-[74%] rounded-full bg-gradient-to-r from-secondary-container via-secondary to-primary shadow-lg transition-all duration-300 relative">
+<span class="absolute right-0 top-0 bottom-0 w-2 bg-white/60 rounded-full animate-pulse"></span>
+</div>
+</div>
+<!-- Micro-steps Visualization -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-space-xs mt-space-sm pt-space-xs">
+<!-- Step 1 Done -->
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-container/60 text-secondary">
+<span class="material-symbols-outlined text-[16px]">check_circle</span>
+<span class="font-label-sm text-label-sm">1. Verification OK</span>
+</div>
+<!-- Step 2 Done -->
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-container/60 text-secondary">
+<span class="material-symbols-outlined text-[16px]">check_circle</span>
+<span class="font-label-sm text-label-sm">2. Extraction (2.4k)</span>
+</div>
+<!-- Step 3 Active -->
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary-container/20 text-primary animate-pulse">
+<span class="material-symbols-outlined text-[16px]">settings_slow_motion</span>
+<span class="font-label-sm text-label-sm font-semibold">3. CRF 23 H.264</span>
+</div>
+<!-- Step 4 Pending -->
+<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-container/40 text-on-surface-variant">
+<span class="material-symbols-outlined text-[16px]">hourglass_empty</span>
+<span class="font-label-sm text-label-sm">4. TG Dispatch</span>
+</div>
+</div>
+</div>
+</div>
+<!-- JOB 2 (Queued - Position #2) -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md flex flex-col md:flex-row md:items-center justify-between gap-space-md hover:bg-surface-container-low transition-all">
+<div class="flex items-start sm:items-center gap-space-md">
+<div class="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-high text-tertiary">
+<span class="material-symbols-outlined text-[22px]">video_library</span>
+</div>
+<div class="flex flex-col">
+<div class="flex flex-wrap items-center gap-space-xs">
+<span class="font-headline-sm text-headline-sm font-bold text-on-surface">instagram_reels_collection_batch.zip</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-container-highest text-on-surface-variant">340 MB</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-tertiary-container/20 text-tertiary">Queue Pos #2</span>
+</div>
+<div class="flex flex-wrap items-center gap-space-sm mt-1 font-code-sm text-code-sm text-on-surface-variant">
+<span class="flex items-center gap-1 text-tertiary">
+<span class="material-symbols-outlined text-[14px]">lock</span>
+              Protected: Key auto-detected (Hash #9A41)
+            </span>
+<span>•</span>
+<span>Waiting for Worker Slot #1</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-space-xs self-end md:self-center">
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-label-sm transition-all">
+<span class="material-symbols-outlined text-[16px]">vertical_align_top</span>
+<span>Move to Top</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-error-container hover:text-error text-on-surface-variant font-label-sm text-label-sm transition-all">
+<span class="material-symbols-outlined text-[16px]">delete</span>
+<span>Remove</span>
+</button>
+</div>
+</div>
+<!-- JOB 3 (Queued - Position #3) -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md flex flex-col md:flex-row md:items-center justify-between gap-space-md hover:bg-surface-container-low transition-all">
+<div class="flex items-start sm:items-center gap-space-md">
+<div class="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-high text-primary">
+<span class="material-symbols-outlined text-[22px]">cloud_sync</span>
+</div>
+<div class="flex flex-col">
+<div class="flex flex-wrap items-center gap-space-xs">
+<span class="font-headline-sm text-headline-sm font-bold text-on-surface">terabox_backup_drive_mirror.tar</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-container-highest text-on-surface-variant">1.85 GB</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-container text-on-surface-variant">Queue Pos #3</span>
+</div>
+<div class="flex flex-wrap items-center gap-space-sm mt-1 font-code-sm text-code-sm text-on-surface-variant">
+<span class="flex items-center gap-1 text-primary">
+<span class="material-symbols-outlined text-[14px]">hub</span>
+              Proxy Assigned: Residential US-East (Sock5 Node 14)
+            </span>
+<span>•</span>
+<span>Chunk Segmentation: 92 Parts</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-space-xs self-end md:self-center">
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-label-sm transition-all">
+<span class="material-symbols-outlined text-[16px]">edit_note</span>
+<span>Edit Proxy</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-error-container hover:text-error text-on-surface-variant font-label-sm text-label-sm transition-all">
+<span class="material-symbols-outlined text-[16px]">close</span>
+<span>Cancel</span>
+</button>
+</div>
+</div>
+<!-- JOB 4 (Completed) -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low/50 backdrop-blur-xl p-space-md shadow-md flex flex-col md:flex-row md:items-center justify-between gap-space-md opacity-90">
+<div class="flex items-start sm:items-center gap-space-md">
+<div class="flex items-center justify-center w-10 h-10 rounded-xl bg-secondary/15 text-secondary">
+<span class="material-symbols-outlined text-[22px]">done_all</span>
+</div>
+<div class="flex flex-col">
+<div class="flex flex-wrap items-center gap-space-xs">
+<span class="font-headline-sm text-headline-sm font-semibold text-on-surface">serena_document_archive.rar</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-surface-container-highest text-on-surface-variant">124 MB</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-secondary/15 text-secondary font-semibold">Processed (28s)</span>
+</div>
+<div class="flex flex-wrap items-center gap-space-sm mt-1 font-code-sm text-code-sm text-on-surface-variant">
+<span class="text-secondary flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">send</span>
+              Delivered to Telegram Saved Messages (@UserVault)
+            </span>
+<span>•</span>
+<span>CRC32 Checksum: 0x93FA041B</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-space-xs self-end md:self-center">
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-label-sm transition-all">
+<span class="material-symbols-outlined text-[16px]">download</span>
+<span>Re-download</span>
+</button>
+<button class="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-bright text-on-surface-variant hover:text-error font-label-sm text-label-sm transition-all">
+<span class="material-symbols-outlined text-[16px]">delete_sweep</span>
+<span>Delete Temp Cache</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Realtime Worker Telemetry & Throughput Sparkline Visualization -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-space-md">
+<!-- Inline SVG Throughput Sparkline -->
+<div class="lg:col-span-2 flex flex-col justify-between rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md">
+<div class="flex items-center justify-between mb-space-sm">
+<div class="flex items-center gap-space-xs">
+<span class="material-symbols-outlined text-secondary text-[18px]">query_stats</span>
+<span class="font-headline-sm text-headline-sm font-semibold text-on-surface">Queue Network &amp; I/O Realtime Pipeline</span>
+</div>
+<span class="font-code-sm text-code-sm text-secondary">Sampling: 100ms</span>
+</div>
+<div class="w-full h-24 relative flex items-end">
+<!-- SVG Area Chart -->
+<svg class="w-full h-full text-secondary" fill="none" preserveaspectratio="none" viewbox="0 0 500 80">
+<defs>
+<lineargradient id="streamGrad" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="currentColor" stop-opacity="0.35"></stop>
+<stop offset="100%" stop-color="currentColor" stop-opacity="0.0"></stop>
+</lineargradient>
+</defs>
+<path d="M0,60 Q40,40 80,55 T160,25 T240,45 T320,15 T400,30 T480,8 L500,12 L500,80 L0,80 Z" fill="url(#streamGrad)"></path>
+<path d="M0,60 Q40,40 80,55 T160,25 T240,45 T320,15 T400,30 T480,8 L500,12" stroke="currentColor" stroke-linecap="round" stroke-width="2.5"></path>
+</svg>
+</div>
+<div class="flex items-center justify-between font-code-sm text-code-sm text-on-surface-variant mt-space-sm pt-space-xs">
+<span>T-60s (0.0 MB/s)</span>
+<span>T-30s (12.4 MB/s)</span>
+<span class="text-secondary font-semibold">T-Now (18.4 MB/s Peak)</span>
+</div>
+</div>
+<!-- Cluster Hardware Node Card -->
+<div class="flex flex-col justify-between rounded-xl bg-surface-container-low/70 backdrop-blur-xl p-space-md shadow-md">
+<div class="flex items-center justify-between mb-space-xs">
+<span class="font-headline-sm text-headline-sm font-semibold text-on-surface">Node Resources</span>
+<span class="px-2 py-0.5 rounded font-label-sm text-label-sm bg-primary/10 text-primary">Pyrogram 2.0</span>
+</div>
+<div class="flex flex-col gap-space-sm my-space-xs">
+<div class="flex flex-col gap-1">
+<div class="flex justify-between font-label-sm text-label-sm">
+<span class="text-on-surface-variant">RAM Allocation (Shared VFS)</span>
+<span class="text-secondary font-code-sm">1.4 GB / 4.0 GB</span>
+</div>
+<div class="w-full h-1.5 rounded-full bg-surface-container-highest">
+<div class="w-[35%] h-full rounded-full bg-secondary"></div>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<div class="flex justify-between font-label-sm text-label-sm">
+<span class="text-on-surface-variant">FFmpeg Hardware Encoder (VAAPI)</span>
+<span class="text-primary font-code-sm">Active (CRF 23)</span>
+</div>
+<div class="w-full h-1.5 rounded-full bg-surface-container-highest">
+<div class="w-[82%] h-full rounded-full bg-primary"></div>
+</div>
+</div>
+</div>
+<div class="pt-space-xs flex items-center justify-between font-label-sm text-label-sm text-on-surface-variant">
+<span>Daemon Status</span>
+<span class="text-secondary font-semibold flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span> HEALTHY
+        </span>
+</div>
+</div>
+</div>
+<!-- Logs Console Drawer: Glass collapsible terminal preview -->
+<div class="flex flex-col rounded-xl bg-surface-container-lowest/80 backdrop-blur-2xl shadow-xl overflow-hidden">
+<!-- Terminal Header / Accordion Bar -->
+<div class="flex items-center justify-between px-space-md py-space-sm bg-surface-container-low/90 cursor-pointer hover:bg-surface-container-high transition-colors" id="log-toggle">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-[18px] text-primary">terminal</span>
+<span class="font-headline-sm text-headline-sm font-semibold text-on-surface">Pyrogram &amp; FFmpeg Worker Engine Log</span>
+<span class="px-2 py-0.5 rounded font-code-sm text-code-sm bg-secondary/15 text-secondary">LIVE STREAM</span>
+</div>
+<div class="flex items-center gap-space-sm">
+<button class="font-code-sm text-code-sm text-on-surface-variant hover:text-on-surface px-2 py-1 rounded bg-surface-container" id="btn-clear-log">Flush</button>
+<span class="material-symbols-outlined text-[20px] text-on-surface-variant transition-transform duration-200" id="log-caret">expand_less</span>
+</div>
+</div>
+<!-- Terminal Body -->
+<div class="p-space-md font-code-sm text-code-sm flex flex-col gap-1.5 max-h-56 overflow-y-auto bg-surface-container-lowest" id="log-content">
+<div class="flex items-center gap-space-sm text-on-surface-variant">
+<span class="text-outline">[14:32:01.092]</span>
+<span class="px-1 py-0.2 rounded bg-surface-container text-tertiary">INFO</span>
+<span>[CoreDaemon] Initialized worker pipeline PID=14092 using libarchive-wasm-bindgen</span>
+</div>
+<div class="flex items-center gap-space-sm text-on-surface-variant">
+<span class="text-outline">[14:32:02.410]</span>
+<span class="px-1 py-0.2 rounded bg-surface-container text-secondary">DECRYPT</span>
+<span>[CryptoEngine] SHA256 integrity signature passed for dataset_part_01_training.zip</span>
+</div>
+<div class="flex items-center gap-space-sm text-on-surface-variant">
+<span class="text-outline">[14:32:04.180]</span>
+<span class="px-1 py-0.2 rounded bg-surface-container text-primary">FFMPEG</span>
+<span>[VideoFilter] Spawned downscale worker: scale=1920:1080:flags=lanczos, pix_fmt=yuv420p</span>
+</div>
+<div class="flex items-center gap-space-sm text-on-surface-variant">
+<span class="text-outline">[14:32:07.502]</span>
+<span class="px-1 py-0.2 rounded bg-surface-container text-secondary">PYROGRAM</span>
+<span>[TG-Bridge] Allocated chunk streaming socket via DC-4 (MIME=application/octet-stream)</span>
+</div>
+<div class="flex items-center gap-space-sm text-on-surface">
+<span class="text-outline">[14:32:09.114]</span>
+<span class="px-1 py-0.2 rounded bg-primary-container text-on-primary font-semibold">ACTIVE</span>
+<span class="text-secondary">[StreamBuffer] Frame 1420/2400 (658 MB written) @ 18.4 MB/s • CRF=23 ETA=12s</span>
+</div>
+</div>
+</div>
+<!-- Telegram Ergonomic Fixed Quick Action Prompt for Mobile / Bottom Clear -->
+<div class="p-space-md rounded-xl bg-surface-container-low/70 backdrop-blur-xl shadow-md flex flex-col sm:flex-row items-center justify-between gap-space-md">
+<div class="flex items-center gap-space-md">
+<div class="w-9 h-9 rounded-lg bg-surface-container-highest flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined text-[20px]">notifications_active</span>
+</div>
+<div class="flex flex-col">
+<span class="font-headline-sm text-headline-sm text-on-surface">Telegram Bot Notifications</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">Ping @username via inline mention whenever an archive finishes packaging</span>
+</div>
+</div>
+<!-- Modern Pill Switch -->
+<div class="flex items-center gap-space-sm self-end sm:self-center">
+<span class="font-label-sm text-label-sm text-secondary font-semibold">PING ON COMPLETE</span>
+<button class="w-11 h-6 rounded-full bg-secondary p-0.5 transition-colors relative" id="toggle-notifications">
+<div class="w-5 h-5 rounded-full bg-surface-container-lowest shadow-md transition-transform translate-x-5"></div>
+</button>
+</div>
+</div>
+</div>
+<script>
+  (function() {
+    // Accordion for Logs Console
+    const logToggle = document.getElementById('log-toggle');
+    const logContent = document.getElementById('log-content');
+    const logCaret = document.getElementById('log-caret');
+
+    if (logToggle && logContent && logCaret) {
+      logToggle.addEventListener('click', function(e) {
+        if (e.target.id === 'btn-clear-log') return;
+        const isCollapsed = logContent.classList.contains('hidden');
+        if (isCollapsed) {
+          logContent.classList.remove('hidden');
+          logCaret.style.transform = 'rotate(0deg)';
+        } else {
+          logContent.classList.add('hidden');
+          logCaret.style.transform = 'rotate(180deg)';
+        }
+      });
+    }
+
+    // Flush Terminal Log action
+    const btnClearLog = document.getElementById('btn-clear-log');
+    if (btnClearLog && logContent) {
+      btnClearLog.addEventListener('click', function(e) {
+        e.stopPropagation();
+        logContent.innerHTML = '<div class="text-outline font-code-sm text-code-sm">[Console flushed by user request] Ready for next signal...</div>';
+      });
+    }
+
+    // Toggle Password Prompt
+    const btnGlobalPass = document.getElementById('btn-global-pass');
+    const passPrompt = document.getElementById('pass-prompt');
+    if (btnGlobalPass && passPrompt) {
+      btnGlobalPass.addEventListener('click', function() {
+        passPrompt.classList.toggle('hidden');
+      });
+    }
+
+    // Pause Entire Queue State Toggle
+    const btnPauseQueue = document.getElementById('btn-pause-queue');
+    let isPaused = false;
+    if (btnPauseQueue) {
+      btnPauseQueue.addEventListener('click', function() {
+        isPaused = !isPaused;
+        const textSpan = btnPauseQueue.querySelector('span:not(.material-symbols-outlined)');
+        const iconSpan = btnPauseQueue.querySelector('.material-symbols-outlined');
+        if (isPaused) {
+          textSpan.textContent = 'Resume Queue';
+          iconSpan.textContent = 'play_circle';
+          iconSpan.classList.remove('text-error');
+          iconSpan.classList.add('text-secondary');
+        } else {
+          textSpan.textContent = 'Pause Entire Queue';
+          iconSpan.textContent = 'pause_circle';
+          iconSpan.classList.remove('text-secondary');
+          iconSpan.classList.add('text-error');
+        }
+      });
+    }
+
+    // Notification Pill Switch Toggle
+    const notifBtn = document.getElementById('toggle-notifications');
+    let notifActive = true;
+    if (notifBtn) {
+      notifBtn.addEventListener('click', function() {
+        notifActive = !notifActive;
+        const knob = notifBtn.firstElementChild;
+        if (notifActive) {
+          notifBtn.classList.remove('bg-surface-container-highest');
+          notifBtn.classList.add('bg-secondary');
+          knob.classList.remove('translate-x-0');
+          knob.classList.add('translate-x-5');
+        } else {
+          notifBtn.classList.remove('bg-secondary');
+          notifBtn.classList.add('bg-surface-container-highest');
+          knob.classList.remove('translate-x-5');
+          knob.classList.add('translate-x-0');
+        }
+      });
+    }
+  })();
+</script></main><footer class="fixed bottom-0 left-72 right-0 h-12 bg-surface-container-lowest/90 backdrop-blur-xl z-30 flex items-center justify-between px-space-xl text-on-surface-variant font-label-sm text-label-sm shadow-[0_-1px_4px_rgba(0,0,0,0.3)]"><span>SERENA UNZIP ENGINE • TELEGRAM CORE PROTOCOL</span><div class="flex items-center gap-space-md"><span class="text-secondary flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>WORKER READY</span><span class="text-on-surface-variant">CRC32 VERIFIED</span></div></footer></div>
+<script>
+(function () {
+  "use strict";
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+  const uid = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user)
+    ? tg.initDataUnsafe.user.id : null;
+
+  function toast(t) {
+    const d = document.createElement("div");
+    d.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);" +
+      "z-index:9999;background:#222;color:#fff;padding:10px 18px;border-radius:999px;font-size:13px";
+    d.textContent = t; document.body.appendChild(d);
+    setTimeout(() => d.remove(), 2200);
+  }
+
+  async function send(text) {
+    if (!text) return;
+    const initData = (tg && tg.initData) || "";
+    try {
+      const r = await fetch("/api/dispatch", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, init_data: initData }),
+      });
+      toast(r.ok ? "Sent - check the chat" : "Could not send");
+    } catch (e) { toast("Could not send"); }
+  }
+
+  // Sidebar: these are separate views in the design, but only this queue
+  // page and the main Mini App exist. Route to what is real instead of
+  // opening blank screens.
+  const routes = { "main-app": "/app", "archive-selector": "/app",
+                   "active-queue-and-tasks": null,
+                   "admin-suite": "/webapp/index.admin.html",
+                   "user-profile-and-limits": "/app" };
+  document.querySelectorAll("a[data-path]").forEach((a) => {
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const dest = routes[a.getAttribute("data-path")];
+      if (dest) window.location.href = dest;
+    });
+  });
+
+  const acts = { "btn-pause-queue": "/qcancel", "btn-global-pass": "/zqpass",
+                 "btn-clear-completed": "/cancelqueue" };
+  Object.keys(acts).forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("click", () => send(acts[id]));
+  });
+
+  document.querySelectorAll("button").forEach((b) => {
+    const t = (b.textContent || "").trim();
+    if (t.indexOf("Add Archive to Queue") === 0)
+      b.addEventListener("click", () => send("/zipqueue"));
+  });
+
+  // Replace the mockup's invented figures with the real quota.
+  (async function () {
+    if (!uid) return;
+    try {
+      const r = await fetch("/api/me/" + uid, { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      document.querySelectorAll("*").forEach((el) => {
+        if (el.children.length === 0 && el.textContent.trim() === "/ 30 DAILY CAP")
+          el.textContent = "/ " + d.tasks_limit + " DAILY CAP";
+      });
+    } catch (e) {}
+  })();
+})();
+</script>
+</body></html>

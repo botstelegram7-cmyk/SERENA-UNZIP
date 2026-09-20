@@ -1640,7 +1640,9 @@ async def _profile_posts_paginated(username: str, limit: int,
 
             # Pace the walk: Instagram flags rapid sequential paging as
             # automation, which is what gets an account challenged.
-            await asyncio.sleep(random.uniform(2.5, 5.0))
+            # One page reveals 12 posts, so this loop is the fastest way to
+            # look like a scraper. Keep it slow.
+            await asyncio.sleep(random.uniform(20.0, 45.0))
 
             edges, page_info = await _graphql_timeline_page(
                 session, user_id, cursor)

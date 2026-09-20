@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.7.2"
-BOT_CODENAME = "Commands With Links"
+BOT_VERSION  = "v3.8.0"
+BOT_CODENAME = "Account Safety"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.8.0": [
+        "Profile downloads slowed sharply to stop Instagram flagging the account",
+        "Request rate cut from roughly 250-770 per hour to 47-95",
+        "Occasional longer pauses, the way a person actually browses",
+        "New queue dashboard at <code>/queue</code>",
+    ],
     "v3.7.2": [
         "Fixed <code>/insta &lt;link&gt;</code> from the Mini App being echoed back instead of downloading",
         "Any command carrying a link now downloads it",
@@ -1603,9 +1609,17 @@ async def _run_profile_download(client, message, user, username: str,
             break
 
         if i < total:
-            # Randomised, lengthening pauses look far less like a script.
-            base = 4.0 if i < 10 else (7.0 if i < 30 else 11.0)
-            delay = random.uniform(base, base * 1.8)
+            # Pacing exists to keep the account safe, and the old figures
+            # were far too aggressive: 4-11s gaps work out at 250-770
+            # requests/hour, where a person browsing manages 20-60. That is
+            # what got the account flagged and deactivated, so the gaps are
+            # now measured in tens of seconds and widen as the run goes on.
+            base = 25.0 if i < 5 else (40.0 if i < 15 else 60.0)
+            delay = random.uniform(base, base * 1.6)
+            # Occasionally pause much longer, the way a real person stops
+            # to actually look at something.
+            if random.random() < 0.15:
+                delay += random.uniform(30.0, 90.0)
             waited = 0.0
             while waited < delay:
                 if user_cancelled.get(uid):

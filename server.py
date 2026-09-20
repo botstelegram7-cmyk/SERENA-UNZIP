@@ -212,6 +212,16 @@ async def mini_app():
     return HTMLResponse(content="<h1>Mini App not found</h1>", status_code=404)
 
 
+@fastapi_app.get("/queue", response_class=HTMLResponse)
+@fastapi_app.get("/queue/", response_class=HTMLResponse)
+async def queue_app():
+    """Desktop-style queue dashboard."""
+    path = BASE_DIR / "webapp" / "queue.html"
+    if path.exists():
+        return HTMLResponse(content=path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Queue view not found</h1>", status_code=404)
+
+
 @fastapi_app.get("/select", response_class=HTMLResponse)
 @fastapi_app.get("/select/", response_class=HTMLResponse)
 async def file_selector():
