@@ -7,7 +7,7 @@
       min-height: max(884px, 100dvh);
     }
   </style>
-  </head><body class="bg-surface text-on-surface flex flex-col min-h-screen selection:bg-primary-container selection:text-on-primary"><header class="fixed top-0 w-full z-50 pt-safe bg-surface/80 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]"><div class="h-16 px-gutter flex items-center justify-between"><div class="flex items-center gap-space-sm min-w-0"><img alt="Serena Unzip Bot Logo" class="h-8 w-auto object-contain shrink-0" src="https://lh3.googleusercontent.com/aida/AEtjO1VuEdfdkK7AXw6aFP59V8V2o3YJO5t5IEk0c2FOUmdgWTrSiG55kFTTsFmlxnrg8GJZM_HmbcVut6tvuVveuBZueSI_X97Fbtny9wOyKa7kxjoAz1tZCYR3xpI_v6xt9KKE7gRCx5e6dnBxyMwOhoZ_LiH9YDRYXDuo9jQBXyhEGQHTroQg7uB-Lv6exoTaT0N9qItuT2Xjv4bejbyf-uu8_FhIdQ6aI4S61zC1UTxVILZFQ0K9U30hUacP"/><div class="flex flex-col min-w-0"><div class="flex items-center gap-space-xs"><span class="font-headline-sm text-headline-sm text-on-surface truncate">Serena Unzip Bot</span><span class="font-code-sm text-code-sm text-secondary bg-secondary-container/20 px-1 rounded">v2</span></div><div class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></span><span class="font-label-sm text-label-sm text-secondary">online • bot</span><span class="text-outline font-label-sm text-label-sm">·</span><span class="font-label-sm text-label-sm text-on-surface-variant truncate">Tasks</span></div></div></div><div class="flex items-center gap-1 shrink-0"><button aria-label="Menu actions" class="w-11 h-11 flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[20px]">more_vert</span></button><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="flex-1 flex flex-col relative w-full px-gutter pt-16 pb-20 bg-surface"><div class="flex flex-col w-full space-y-space-lg pb-6">
+  </head><body class="bg-surface text-on-surface flex flex-col min-h-screen selection:bg-primary-container selection:text-on-primary"><header class="fixed top-0 w-full z-50 pt-safe bg-surface/80 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.35)]"><div class="h-16 px-gutter flex items-center justify-between"><div class="flex items-center gap-space-sm min-w-0"><img alt="Serena Unzip Bot Logo" class="h-8 w-auto object-contain shrink-0" src="https://lh3.googleusercontent.com/aida/AEtjO1VuEdfdkK7AXw6aFP59V8V2o3YJO5t5IEk0c2FOUmdgWTrSiG55kFTTsFmlxnrg8GJZM_HmbcVut6tvuVveuBZueSI_X97Fbtny9wOyKa7kxjoAz1tZCYR3xpI_v6xt9KKE7gRCx5e6dnBxyMwOhoZ_LiH9YDRYXDuo9jQBXyhEGQHTroQg7uB-Lv6exoTaT0N9qItuT2Xjv4bejbyf-uu8_FhIdQ6aI4S61zC1UTxVILZFQ0K9U30hUacP"/><div class="flex flex-col min-w-0"><div class="flex items-center gap-space-xs"><span class="font-headline-sm text-headline-sm text-on-surface truncate">Serena Unzip Bot</span><span class="font-code-sm text-code-sm text-secondary bg-secondary-container/20 px-1 rounded">v2</span></div><div class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></span><span class="font-label-sm text-label-sm text-secondary">online • bot</span><span class="text-outline font-label-sm text-label-sm">·</span><span class="font-label-sm text-label-sm text-on-surface-variant truncate">Tasks</span></div></div></div><div class="flex items-center gap-1 shrink-0"><button aria-label="Menu actions" class="w-11 h-11 flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[20px]">more_vert</span></button><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="flex-1 flex flex-col relative w-full px-gutter pt-16 pb-20 bg-surface"><div class="flex flex-col w-full space-y-space-lg pb-6" data-screen="tasks">
 <!-- Bot Header Status Card -->
 <div class="relative overflow-hidden rounded-xl bg-surface-container p-space-md shadow-xl">
 <div class="absolute -right-12 -top-12 w-36 h-36 rounded-full bg-primary-container/10 blur-2xl pointer-events-none"></div>
@@ -350,21 +350,35 @@
     setTimeout(() => t.remove(), 2200);
   }
 
-  // Put a command or link into the chat's input field.
+  // Send a link or command to the bot.
   //
-  // NOTE: do NOT use tg.sendData() here. Telegram closes the Mini App the
-  // moment it is called, and it only works for apps opened from a keyboard
-  // button - which is why sending a link appeared to crash the app.
-  // switchInlineQuery keeps the app open and drops the text into the chat.
-  function dispatch(text) {
+  // A Mini App cannot post messages on the user's behalf. sendData()
+  // would, but it closes the app and only works for keyboard-button
+  // launches. switchInlineQuery needs inline mode enabled on the bot.
+  // So the text is posted to our own backend, which verifies the signed
+  // initData and has the bot reply in the chat - the app stays open and
+  // nothing has to be pasted by hand.
+  async function dispatch(text) {
     if (!text) return;
     haptic("medium");
 
-    if (tg && typeof tg.switchInlineQuery === "function") {
-      try { tg.switchInlineQuery(text, ["users"]); return; } catch (e) {}
+    const initData = (tg && tg.initData) || "";
+    if (initData) {
+      try {
+        const r = await fetch("/api/dispatch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: text, init_data: initData }),
+        });
+        if (r.ok) { toast("Sent - check the chat"); return; }
+        const d = await r.json().catch(function () { return {}; });
+        if (d && d.error === "unverified") {
+          toast("Could not verify this session");
+        }
+      } catch (e) { /* fall through to copying */ }
     }
 
-    // Fallback: copy it so the user can paste it themselves.
+    // Fallback: put it on the clipboard so it can be pasted.
     let copied = false;
     try {
       const ta = document.createElement("textarea");
@@ -377,12 +391,10 @@
       copied = document.execCommand("copy");
       document.body.removeChild(ta);
     } catch (e) { copied = false; }
-
     if (!copied && navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).catch(function () {});
       copied = true;
     }
-
     toast(copied ? "Copied - paste it in the chat"
                  : "Close the app and send: " + text);
   }
@@ -435,17 +447,38 @@
     if (el) el.addEventListener("click", () => window.injectCommand(tiles[id]));
   });
 
-  // Bottom navigation: no routes exist yet, so prefill the relevant command
-  // instead of pretending to navigate.
-  const navCmd = { tasks: "/mystats", extractor: "/unzip",
-                   "media-tools": "/compress", commands: "/help" };
+  // Bottom navigation: switch between the real screens.
+  const ACTIVE = ["text-primary-container"];
+  function showScreen(name) {
+    document.querySelectorAll("[data-screen]").forEach((el) => {
+      const on = el.getAttribute("data-screen") === name;
+      el.classList.toggle("hidden", !on);
+      el.classList.toggle("flex", on);
+    });
+    document.querySelectorAll("nav a[data-path]").forEach((a) => {
+      const on = a.getAttribute("data-path") === name;
+      ACTIVE.forEach((c) => a.classList.toggle(c, on));
+      a.classList.toggle("text-on-surface-variant", !on);
+      if (on) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch (e) {}
+    haptic("light");
+  }
+
   document.querySelectorAll("nav a[data-path]").forEach((a) => {
     a.addEventListener("click", (ev) => {
       ev.preventDefault();
-      const cmd = navCmd[a.getAttribute("data-path")];
-      if (cmd) window.injectCommand(cmd);
+      showScreen(a.getAttribute("data-path"));
     });
   });
+
+  // Every tile on the secondary screens sends its command.
+  document.querySelectorAll("[data-cmd]").forEach((el) => {
+    el.addEventListener("click", () => dispatch(el.getAttribute("data-cmd")));
+  });
+
+  showScreen("tasks");
 
   // ── Live figures, replacing the mockup's fixed numbers ──
   function setText(el, value) { if (el) el.textContent = value; }
@@ -489,4 +522,4 @@
   loadStats();
   setInterval(loadStats, 15000);
 })();
-</script></main><nav class="fixed bottom-0 w-full z-50 pb-safe bg-surface-container-lowest/85 backdrop-blur-xl shadow-[0_-2px_12px_rgba(0,0,0,0.4)]" data-active-classes="text-primary-container [&amp;&gt;span.material-symbols-outlined]:text-primary-container [&amp;&gt;span.material-symbols-outlined]:scale-110"><div class="flex items-center justify-around h-16 px-space-xs"><a aria-current="page" class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 transition-transform text-primary-container [&amp;&gt;span.material-symbols-outlined]:text-primary-container [&amp;&gt;span.material-symbols-outlined]:scale-110" data-path="tasks" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">task_alt</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Tasks</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 text-on-surface-variant transition-transform hover:text-on-surface" data-path="extractor" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">folder_zip</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Extractor</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 text-on-surface-variant transition-transform hover:text-on-surface" data-path="media-tools" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">auto_videocam</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Media Tools</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 text-on-surface-variant transition-transform hover:text-on-surface" data-path="commands" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">terminal</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Commands</span></a></div></nav></body></html>
+</script><div class="flex-col w-full space-y-space-md pb-6 hidden" data-screen="extractor"><h2 class="font-headline-sm text-on-surface font-bold pt-2">Extractor</h2><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/unzip"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">folder_zip</span><span class="font-headline-sm text-on-surface font-semibold">Extract Archive</span><span class="font-code-sm text-code-sm text-on-surface-variant">ZIP, RAR, 7Z, TAR and more</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/zipqueue"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">library_add</span><span class="font-headline-sm text-on-surface font-semibold">Batch Queue</span><span class="font-code-sm text-code-sm text-on-surface-variant">Process several archives in order</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/zip"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">archive</span><span class="font-headline-sm text-on-surface font-semibold">Create Archive</span><span class="font-code-sm text-code-sm text-on-surface-variant">Bundle files into one archive</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/zqpass"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">key</span><span class="font-headline-sm text-on-surface font-semibold">Queue Password</span><span class="font-code-sm text-code-sm text-on-surface-variant">One password for the whole queue</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/resume"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">play_circle</span><span class="font-headline-sm text-on-surface font-semibold">Resume Queue</span><span class="font-code-sm text-code-sm text-on-surface-variant">Continue after a restart</span></button></div><div class="flex-col w-full space-y-space-md pb-6 hidden" data-screen="media-tools"><h2 class="font-headline-sm text-on-surface font-bold pt-2">Media Tools</h2><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/compress"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">compress</span><span class="font-headline-sm text-on-surface font-semibold">Compress Video</span><span class="font-code-sm text-code-sm text-on-surface-variant">360p to 1080p re-encode</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/audio"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">music_note</span><span class="font-headline-sm text-on-surface font-semibold">Extract Audio</span><span class="font-code-sm text-code-sm text-on-surface-variant">Pull the audio track out</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/merge"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">merge</span><span class="font-headline-sm text-on-surface font-semibold">Merge Videos</span><span class="font-code-sm text-code-sm text-on-surface-variant">Join several into one</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/split"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">content_cut</span><span class="font-headline-sm text-on-surface font-semibold">Split File</span><span class="font-code-sm text-code-sm text-on-surface-variant">Divide a large file into parts</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/subs"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">subtitles</span><span class="font-headline-sm text-on-surface font-semibold">Subtitles</span><span class="font-code-sm text-code-sm text-on-surface-variant">Extract embedded subtitles</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/screenshot"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">photo_camera</span><span class="font-headline-sm text-on-surface font-semibold">Screenshots</span><span class="font-code-sm text-code-sm text-on-surface-variant">Capture frames from a video</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/watermark"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">branding_watermark</span><span class="font-headline-sm text-on-surface font-semibold">Watermark</span><span class="font-code-sm text-code-sm text-on-surface-variant">Overlay text on a video</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/rename"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">edit</span><span class="font-headline-sm text-on-surface font-semibold">Rename</span><span class="font-code-sm text-code-sm text-on-surface-variant">Change a file's name</span></button></div><div class="flex-col w-full space-y-space-md pb-6 hidden" data-screen="commands"><h2 class="font-headline-sm text-on-surface font-bold pt-2">Commands</h2><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/help"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">menu_book</span><span class="font-headline-sm text-on-surface font-semibold">All Commands</span><span class="font-code-sm text-code-sm text-on-surface-variant">Full reference with examples</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/insta"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">photo_library</span><span class="font-headline-sm text-on-surface font-semibold">Instagram</span><span class="font-code-sm text-code-sm text-on-surface-variant">Posts, reels and carousels</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/profile"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">account_circle</span><span class="font-headline-sm text-on-surface font-semibold">Profile Bulk</span><span class="font-code-sm text-code-sm text-on-surface-variant">Many posts from one account</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/ytdl"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">smart_display</span><span class="font-headline-sm text-on-surface font-semibold">Video Sites</span><span class="font-code-sm text-code-sm text-on-surface-variant">YouTube, TikTok, X and more</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/mystats"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">bar_chart</span><span class="font-headline-sm text-on-surface font-semibold">My Stats</span><span class="font-code-sm text-code-sm text-on-surface-variant">Usage, quota and plan</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/settings"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">tune</span><span class="font-headline-sm text-on-surface font-semibold">Settings</span><span class="font-code-sm text-code-sm text-on-surface-variant">Captions, thumbnails, renaming</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/limits"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">info</span><span class="font-headline-sm text-on-surface font-semibold">Known Limits</span><span class="font-code-sm text-code-sm text-on-surface-variant">What does not work, and why</span></button><button class="flex flex-col items-start p-space-md rounded-xl bg-surface-container hover:bg-surface-container-high transition-all text-left w-full active:scale-[0.98]" data-cmd="/cancel"><span class="material-symbols-outlined text-[20px] text-primary-container mb-1">cancel</span><span class="font-headline-sm text-on-surface font-semibold">Cancel</span><span class="font-code-sm text-code-sm text-on-surface-variant">Stop everything running</span></button></div></main><nav class="fixed bottom-0 w-full z-50 pb-safe bg-surface-container-lowest/85 backdrop-blur-xl shadow-[0_-2px_12px_rgba(0,0,0,0.4)]" data-active-classes="text-primary-container [&amp;&gt;span.material-symbols-outlined]:text-primary-container [&amp;&gt;span.material-symbols-outlined]:scale-110"><div class="flex items-center justify-around h-16 px-space-xs"><a aria-current="page" class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 transition-transform text-primary-container [&amp;&gt;span.material-symbols-outlined]:text-primary-container [&amp;&gt;span.material-symbols-outlined]:scale-110" data-path="tasks" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">task_alt</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Tasks</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 text-on-surface-variant transition-transform hover:text-on-surface" data-path="extractor" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">folder_zip</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Extractor</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 text-on-surface-variant transition-transform hover:text-on-surface" data-path="media-tools" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">auto_videocam</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Media Tools</span></a><a class="flex flex-col items-center justify-center min-w-[44px] min-h-[44px] w-16 text-on-surface-variant transition-transform hover:text-on-surface" data-path="commands" href="#"><span class="material-symbols-outlined text-[22px] transition-transform">terminal</span><span class="font-label-sm text-label-sm tracking-tight mt-0.5">Commands</span></a></div></nav></body></html>

@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.6.1"
-BOT_CODENAME = "Mini App Fix"
+BOT_VERSION  = "v3.7.0"
+BOT_CODENAME = "Working Tabs"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.7.0": [
+        "Mini App now sends links straight to the bot, with nothing to paste",
+        "Extractor, Media Tools and Commands tabs are real screens",
+        "21 one-tap action tiles across the new tabs",
+        "Requests are signature-verified before the bot acts on them",
+    ],
     "v3.6.1": [
         "Fixed the Mini App closing whenever a link or command was sent",
         "Text now goes into the chat input instead of closing the app",

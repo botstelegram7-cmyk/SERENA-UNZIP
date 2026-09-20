@@ -2,7 +2,7 @@
 import asyncio
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse
@@ -14,6 +14,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from bot import app as tg_app, tasks, GLOBAL_SEMAPHORE, is_video_path, build_caption, choose_thumbnail, _get_video_duration
+from config import Config
 from utils.cleanup import cleanup_worker
 from database import count_users, get_unzip_task, get_or_create_user, get_user_settings
 
@@ -90,6 +91,63 @@ async def api_me(uid: int):
         "max_file_mb": int(_C.YTDL_MAX_SIZE_MB),
         "total_tasks": int(st.get("total_tasks", 0) or 0),
     }
+
+
+def _verify_init_data(init_data: str) -> Optional[int]:
+    """Validate Telegram's initData and return the user id, or None.
+
+    Per the documented scheme: the hash is an HMAC-SHA256 of the
+    alphabetically sorted "key=value" lines, keyed by HMAC-SHA256 of the
+    bot token under the constant "WebAppData". Without this check the
+    Mini App could claim to be any user.
+    """
+    import hashlib, hmac, json as _json
+    from urllib.parse import parse_qsl
+    if not init_data:
+        return None
+    try:
+        pairs = dict(parse_qsl(init_data, strict_parsing=True))
+    except Exception:
+        return None
+    received = pairs.pop("hash", None)
+    if not received:
+        return None
+    check = "\n".join(f"{k}={pairs[k]}" for k in sorted(pairs))
+    secret = hmac.new(b"WebAppData", Config.BOT_TOKEN.encode(), hashlib.sha256).digest()
+    expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, received):
+        return None
+    try:
+        return int(_json.loads(pairs.get("user", "{}")).get("id"))
+    except Exception:
+        return None
+
+
+@fastapi_app.post("/api/dispatch")
+async def api_dispatch(req: Request):
+    """Run a link or command sent from the Mini App.
+
+    A Mini App cannot post messages on the user's behalf, and sendData()
+    closes the app. So the app posts here instead, the identity is
+    verified from initData, and the bot replies in the chat itself.
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "bad request"}, status_code=400)
+
+    text = (body.get("text") or "").strip()
+    uid = _verify_init_data(body.get("init_data") or "")
+    if not uid:
+        return JSONResponse({"ok": False, "error": "unverified"}, status_code=403)
+    if not text:
+        return JSONResponse({"ok": False, "error": "empty"}, status_code=400)
+
+    try:
+        await tg_app.send_message(uid, text)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:120]}, status_code=502)
+    return {"ok": True}
 
 
 # ── Mini App entry points ─────────────────────────────────────────────────────
