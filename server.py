@@ -143,11 +143,53 @@ async def api_dispatch(req: Request):
     if not text:
         return JSONResponse({"ok": False, "error": "empty"}, status_code=400)
 
+    # send_message only echoed the text back at the user. The point is to
+    # ACT on it, so the text is handed to the same handler that processes a
+    # pasted link, using a shim that looks like the message the user would
+    # have sent themselves.
     try:
-        await tg_app.send_message(uid, text)
+        from bot import process_links_message
+
+        anchor = await tg_app.send_message(uid, "Working on it...")
+        sender = await tg_app.get_users(uid)
+
+        class _MiniAppMessage:
+            """Enough of a Message for the link handlers to work with."""
+            def __init__(self, anchor, sender, text):
+                self._anchor = anchor
+                self.from_user = sender
+                self.chat = anchor.chat
+                self.id = anchor.id
+                self.text = text
+                self.caption = None
+                self.command = text.split() if text.startswith("/") else []
+                self.reply_to_message = None
+
+            async def reply_text(self, *a, **kw):
+                return await self._anchor.reply_text(*a, **kw)
+
+            async def reply_photo(self, *a, **kw):
+                return await self._anchor.reply_photo(*a, **kw)
+
+            async def delete(self):
+                try:
+                    return await self._anchor.delete()
+                except Exception:
+                    return None
+
+        shim = _MiniAppMessage(anchor, sender, text)
+
+        if text.startswith("/"):
+            # A command needs the real dispatcher, which the Mini App cannot
+            # reach. Tell the user plainly instead of pretending it ran.
+            await anchor.edit_text(
+                f"Send <code>{text}</code> in the chat to run it.")
+            return {"ok": True, "mode": "command"}
+
+        await process_links_message(tg_app, shim, text)
     except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)[:120]}, status_code=502)
-    return {"ok": True}
+        return JSONResponse({"ok": False, "error": str(e)[:160]}, status_code=502)
+    return {"ok": True, "mode": "link"}
 
 
 # ── Mini App entry points ─────────────────────────────────────────────────────

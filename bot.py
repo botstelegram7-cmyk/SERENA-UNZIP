@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.7.0"
-BOT_CODENAME = "Working Tabs"
+BOT_VERSION  = "v3.7.1"
+BOT_CODENAME = "Links That Act"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.7.1": [
+        "Links sent from the Mini App are now downloaded, not echoed back",
+        "Dashboard split into separate cards across four tabs",
+        "Console and service status moved off the home screen",
+        "Fixed the page script loading before the other tabs existed",
+    ],
     "v3.7.0": [
         "Mini App now sends links straight to the bot, with nothing to paste",
         "Extractor, Media Tools and Commands tabs are real screens",
