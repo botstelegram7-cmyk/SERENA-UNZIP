@@ -179,9 +179,19 @@ async def api_dispatch(req: Request):
 
         shim = _MiniAppMessage(anchor, sender, text)
 
+        # A command that carries a link is really a download request, so pull
+        # the link out and act on it. Bailing on the leading "/" meant
+        # "/insta <url>" was echoed back instead of downloading anything.
+        from utils.link_parser import find_links_in_text
+        links = find_links_in_text(text)
+
+        if links:
+            await process_links_message(tg_app, shim, " ".join(links))
+            return {"ok": True, "mode": "link"}
+
         if text.startswith("/"):
-            # A command needs the real dispatcher, which the Mini App cannot
-            # reach. Tell the user plainly instead of pretending it ran.
+            # A bare command needs the real dispatcher, which is not
+            # reachable from here. Say so rather than pretend it ran.
             await anchor.edit_text(
                 f"Send <code>{text}</code> in the chat to run it.")
             return {"ok": True, "mode": "command"}

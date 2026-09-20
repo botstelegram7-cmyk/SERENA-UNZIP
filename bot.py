@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.7.1"
-BOT_CODENAME = "Links That Act"
+BOT_VERSION  = "v3.7.2"
+BOT_CODENAME = "Commands With Links"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.7.2": [
+        "Fixed <code>/insta &lt;link&gt;</code> from the Mini App being echoed back instead of downloading",
+        "Any command carrying a link now downloads it",
+        "Bare commands still explain they must be sent in the chat",
+    ],
     "v3.7.1": [
         "Links sent from the Mini App are now downloaded, not echoed back",
         "Dashboard split into separate cards across four tabs",
