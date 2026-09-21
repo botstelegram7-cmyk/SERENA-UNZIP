@@ -146,9 +146,113 @@ def content_kind(url: str) -> str:
 
 # ── Cookie handling ──────────────────────────────────────────────────────────
 
+# ── Account rotation ─────────────────────────────────────────────────────────
+# One session doing all the work is what gets an account locked. When several
+# are configured we spread requests across them, always picking the one that
+# has been used least recently, and park any account Instagram pushes back on.
+
+_ACCOUNTS: List[Dict] = []
+_ACTIVE_IDX: Dict[str, int] = {"i": 0}
+# How long a challenged account sits out before we try it again.
+_ACCOUNT_COOLDOWN = 45 * 60
+
+
+def _load_accounts() -> List[Dict]:
+    """Build the pool from INSTAGRAM_COOKIES and its numbered siblings."""
+    raws = []
+    primary = (Config.INSTAGRAM_COOKIES or "").strip()
+    if primary:
+        raws.append(primary)
+    for n in range(2, 6):
+        extra = (getattr(Config, f"INSTAGRAM_COOKIES_{n}", "") or "").strip()
+        if extra:
+            raws.append(extra)
+
+    # Rebuild only when the configuration actually changed.
+    fingerprint = "|".join(str(hash(r)) for r in raws)
+    if _ACCOUNTS and _ACCOUNTS[0].get("_fp") == fingerprint:
+        return _ACCOUNTS
+
+    _ACCOUNTS.clear()
+    for i, raw in enumerate(raws):
+        _ACCOUNTS.append({
+            "_fp": fingerprint,
+            "index": i,
+            "raw": raw,
+            "blocked_until": 0.0,   # set when Instagram pushes back
+            "last_used": 0.0,
+            "uses": 0,
+        })
+    return _ACCOUNTS
+
+
+def account_count() -> int:
+    return len(_load_accounts())
+
+
+def current_account() -> Optional[Dict]:
+    """The account to use now: the idle one that is not cooling down."""
+    accounts = _load_accounts()
+    if not accounts:
+        return None
+    now = time.time()
+    available = [a for a in accounts if a["blocked_until"] <= now]
+    if not available:
+        # Everything is cooling down; fall back to whichever recovers first
+        # rather than refusing outright.
+        return min(accounts, key=lambda a: a["blocked_until"])
+    # Least recently used spreads load evenly.
+    return min(available, key=lambda a: a["last_used"])
+
+
+def rotate_account(reason: str = "") -> Optional[Dict]:
+    """Park the current account and hand back the next one."""
+    accounts = _load_accounts()
+    if len(accounts) < 2:
+        return accounts[0] if accounts else None
+    cur = accounts[_ACTIVE_IDX["i"] % len(accounts)]
+    cur["blocked_until"] = time.time() + _ACCOUNT_COOLDOWN
+    _ACTIVE_IDX["i"] = (_ACTIVE_IDX["i"] + 1) % len(accounts)
+    nxt = current_account()
+    try:
+        print(f"[instagram] rotating account ({reason}); "
+              f"{sum(1 for a in accounts if a['blocked_until'] <= time.time())} "
+              f"of {len(accounts)} available")
+    except Exception:
+        pass
+    return nxt
+
+
+def mark_account_used():
+    acc = current_account()
+    if acc:
+        acc["last_used"] = time.time()
+        acc["uses"] += 1
+
+
+def account_status() -> str:
+    """Human-readable pool state for diagnostics."""
+    accounts = _load_accounts()
+    if not accounts:
+        return "no accounts configured"
+    now = time.time()
+    bits = []
+    for a in accounts:
+        left = int(a["blocked_until"] - now)
+        state = f"cooling {left // 60}m" if left > 0 else "ready"
+        bits.append(f"#{a['index'] + 1} {state} ({a['uses']} uses)")
+    return " · ".join(bits)
+
+
+def _active_raw() -> str:
+    """Cookie text for the account currently in rotation."""
+    acc = current_account()
+    return acc["raw"] if acc else (Config.INSTAGRAM_COOKIES or "")
+
+
 def write_cookie_file() -> Optional[str]:
     """Materialise Config.INSTAGRAM_COOKIES into a Netscape file for yt-dlp."""
-    content = (Config.INSTAGRAM_COOKIES or "").strip()
+    content = _active_raw().strip()
     if not content:
         return None
     if "\\n" in content and "\n" not in content:
@@ -168,7 +272,7 @@ def write_cookie_file() -> Optional[str]:
 
 
 def has_cookies() -> bool:
-    return bool((Config.INSTAGRAM_COOKIES or "").strip())
+    return bool(_active_raw().strip())
 
 
 _LAST_COOKIE_FINGERPRINT: Dict[str, str] = {"v": ""}
@@ -180,7 +284,7 @@ def _note_cookie_change():
     A fresh session is a different identity to Instagram, so a cooldown
     earned by the previous cookies should not keep blocking the user.
     """
-    raw = (Config.INSTAGRAM_COOKIES or "").strip()
+    raw = _active_raw().strip()
     fp = str(hash(raw))
     if _LAST_COOKIE_FINGERPRINT["v"] and _LAST_COOKIE_FINGERPRINT["v"] != fp:
         clear_rate_limit()
@@ -191,7 +295,7 @@ def _note_cookie_change():
 def cookies_as_dict() -> Dict[str, str]:
     """Parse Netscape-format OR 'k=v; k=v' cookie string into a dict."""
     _note_cookie_change()      # fresh cookies clear a stale cooldown
-    raw = (Config.INSTAGRAM_COOKIES or "").strip()
+    raw = _active_raw().strip()
     if not raw:
         return {}
     if "\\n" in raw and "\n" not in raw:
@@ -1351,6 +1455,15 @@ def note_rate_limit() -> float:
     single incident, so the backoff only escalates when the *user* retries
     and is limited again — not once per internal sub-request.
     """
+    # With several accounts configured, a refusal means "use a different
+    # session", not "stop everything". Rotating keeps the run going and
+    # lets the flagged account rest.
+    try:
+        if account_count() > 1:
+            rotate_account("rate limited")
+    except Exception:
+        pass
+
     now = time.time()
     last = float(_RATE_LIMIT.get("last_hit") or 0)
 
@@ -1641,8 +1754,9 @@ async def _profile_posts_paginated(username: str, limit: int,
             # Pace the walk: Instagram flags rapid sequential paging as
             # automation, which is what gets an account challenged.
             # One page reveals 12 posts, so this loop is the fastest way to
-            # look like a scraper. Keep it slow.
-            await asyncio.sleep(random.uniform(20.0, 45.0))
+            # look like a scraper. Scale with the pool, but never go quick.
+            _pool = max(1, min(account_count(), 3))
+            await asyncio.sleep(random.uniform(20.0, 45.0) / _pool)
 
             edges, page_info = await _graphql_timeline_page(
                 session, user_id, cursor)
@@ -1928,7 +2042,10 @@ async def diagnose() -> str:
         if sid and "%3A" not in sid and ":" not in sid:
             out.append("<i>sessionid looks malformed</i>")
 
-    # 2. Current cooldown
+    # 2. Account pool
+    out += ["", f"Accounts: {account_status()}"]
+
+    # 3. Current cooldown
     rl = rate_limit_remaining()
     out += ["", f"⏳ Cooldown: {'<b>' + _fmt_duration(rl) + '</b> left' if rl else ' clear'}"]
 

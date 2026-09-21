@@ -93,6 +93,16 @@ class Config:
     # addresses regardless of cookie validity, so this is the only
     # dependable fix for /story and for profiles beyond the embed window.
     INSTAGRAM_PROXY    = os.getenv("INSTAGRAM_PROXY", "").strip()
+
+    # Additional Instagram sessions, so work can be spread across several
+    # accounts instead of hammering one. Set INSTAGRAM_COOKIES_2,
+    # INSTAGRAM_COOKIES_3 ... in the same format as INSTAGRAM_COOKIES.
+    # Rotating lowers the per-account request rate, which is what triggers
+    # the "suspicious activity" lock.
+    INSTAGRAM_COOKIES_2 = os.getenv("INSTAGRAM_COOKIES_2", "")
+    INSTAGRAM_COOKIES_3 = os.getenv("INSTAGRAM_COOKIES_3", "")
+    INSTAGRAM_COOKIES_4 = os.getenv("INSTAGRAM_COOKIES_4", "")
+    INSTAGRAM_COOKIES_5 = os.getenv("INSTAGRAM_COOKIES_5", "")
     YTDL_MAX_SIZE_MB   = int(os.getenv("YTDL_MAX_SIZE_MB", "2000"))
     YTDL_TIMEOUT_SEC   = int(os.getenv("YTDL_TIMEOUT_SEC", "600"))   # 10 min max per download
     COOKIE_FILE_PATH   = "/tmp/yt_cookies.txt"

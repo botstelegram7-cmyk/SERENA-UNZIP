@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.8.0"
-BOT_CODENAME = "Account Safety"
+BOT_VERSION  = "v3.9.0"
+BOT_CODENAME = "Account Rotation"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.9.0": [
+        "Several Instagram sessions can now share the work, via <code>INSTAGRAM_COOKIES_2</code> and up",
+        "A refused request switches accounts instead of stopping the run",
+        "Waits shorten as more accounts are added, while each stays inside safe limits",
+        "<code>/igtest</code> reports the pool and which sessions are resting",
+    ],
     "v3.8.0": [
         "Profile downloads slowed sharply to stop Instagram flagging the account",
         "Request rate cut from roughly 250-770 per hour to 47-95",
@@ -1609,17 +1615,25 @@ async def _run_profile_download(client, message, user, username: str,
             break
 
         if i < total:
-            # Pacing exists to keep the account safe, and the old figures
-            # were far too aggressive: 4-11s gaps work out at 250-770
-            # requests/hour, where a person browsing manages 20-60. That is
-            # what got the account flagged and deactivated, so the gaps are
-            # now measured in tens of seconds and widen as the run goes on.
+            # Pacing protects the account: the limit that matters is how many
+            # requests ONE session makes per hour, not how many the bot makes.
+            # With several accounts in rotation that load divides, so the wait
+            # can come down proportionally instead of staying punishing.
+            try:
+                from utils.instagram import account_count
+                pool = max(1, account_count())
+            except Exception:
+                pool = 1
+
             base = 25.0 if i < 5 else (40.0 if i < 15 else 60.0)
+            # Two accounts roughly halve each one's share; cap the benefit so
+            # a large pool cannot drive the gap down to something reckless.
+            base = max(8.0, base / min(pool, 3))
             delay = random.uniform(base, base * 1.6)
-            # Occasionally pause much longer, the way a real person stops
-            # to actually look at something.
+            # An occasional longer pause breaks up the rhythm, which is what
+            # makes a sequence look mechanical in the first place.
             if random.random() < 0.15:
-                delay += random.uniform(30.0, 90.0)
+                delay += random.uniform(20.0, 60.0) / min(pool, 3)
             waited = 0.0
             while waited < delay:
                 if user_cancelled.get(uid):

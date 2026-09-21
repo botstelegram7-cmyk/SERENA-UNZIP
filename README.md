@@ -215,6 +215,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
 | `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. A full Netscape `cookies.txt` export, a `k=v; k=v` string, or the bare `ndus` value are all accepted. |
 | `YOUTUBE_COOKIES` | ➖ | Netscape `cookies.txt` export from a signed-in browser. Clears YouTube's "Sign in to confirm you're not a bot" challenge, which hosted servers hit routinely. |
+| `INSTAGRAM_COOKIES_2` … `_5` | ➖ | Extra Instagram sessions from **different accounts**. Work is spread across the pool, so no single account sustains the request rate that triggers a lock. A refused request parks that account for 45 minutes and continues on the next. |
 | `INSTAGRAM_PROXY` | ➖ | Proxy for Instagram. The private API refuses hosted addresses regardless of cookies, so this is the only dependable fix for `/story` and for profiles beyond the embed window. |
 | `YTDL_PROXY` | ➖ | Proxy for yt-dlp traffic, e.g. `http://user:pass@host:port`. |
 | `TERABOX_PROXY` | ➖ | HTTP/SOCKS proxy for TeraBox, e.g. `http://user:pass@host:port`. TeraBox withholds signed download links from datacenter IPs even with a valid cookie, so a residential proxy is the only reliable fix. |
