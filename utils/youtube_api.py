@@ -143,18 +143,23 @@ def build_run_input(url: str, quality: str, preferred_format: Optional[str] = No
         "preferredQuality": q,
         "preferredFormat": fmt,
         "filenameTemplateParts": ["title"],
-        # Keep the cloud-output fields explicit (as in Apify's generated code)
-        # so the actor sees a complete schema even when those services are not
-        # used by this bot.
-        "s3AccessKeyId": None,
-        "s3SecretAccessKey": None,
-        "s3Bucket": os.getenv("APIFY_YOUTUBE_S3_BUCKET", "my-video-bucket"),
-        "s3Region": os.getenv("APIFY_YOUTUBE_S3_REGION", "us-west-1"),
-        "azureConnectionString": None,
-        "azureContainerName": os.getenv("APIFY_YOUTUBE_AZURE_CONTAINER", "my-video-container"),
-        "googleCloudServiceKey": None,
-        "googleCloudBucketName": os.getenv("APIFY_YOUTUBE_GCS_BUCKET", "my-video-bucket"),
     }
+
+    # Do not send None/null cloud storage values. This actor's schema declares
+    # these optional fields as strings, so JSON null causes HTTP 400 validation
+    # errors such as "input.s3AccessKeyId must be string". Only include cloud
+    # upload fields when the operator explicitly configured them.
+    optional_cloud_fields = {
+        "s3AccessKeyId": os.getenv("APIFY_YOUTUBE_S3_ACCESS_KEY_ID", "").strip(),
+        "s3SecretAccessKey": os.getenv("APIFY_YOUTUBE_S3_SECRET_ACCESS_KEY", "").strip(),
+        "s3Bucket": os.getenv("APIFY_YOUTUBE_S3_BUCKET", "").strip(),
+        "s3Region": os.getenv("APIFY_YOUTUBE_S3_REGION", "").strip(),
+        "azureConnectionString": os.getenv("APIFY_YOUTUBE_AZURE_CONNECTION_STRING", "").strip(),
+        "azureContainerName": os.getenv("APIFY_YOUTUBE_AZURE_CONTAINER", "").strip(),
+        "googleCloudServiceKey": os.getenv("APIFY_YOUTUBE_GCS_SERVICE_KEY", "").strip(),
+        "googleCloudBucketName": os.getenv("APIFY_YOUTUBE_GCS_BUCKET", "").strip(),
+    }
+    data.update({k: v for k, v in optional_cloud_fields.items() if v})
     transcribe = (Config.APIFY_YOUTUBE_TRANSCRIPTION or "").strip()
     if transcribe and transcribe.lower() not in ("0", "false", "off", "no", "none", "disabled"):
         data["transcriptionAndSubtitle"] = transcribe

@@ -254,18 +254,20 @@ fallback are intentionally disabled for YouTube downloads.
 UUhJDfKJT2SsXdclR
 ```
 
-The bot sends the same shape of input as Apify's generated Python snippet:
+The bot sends a schema-safe Apify input and keeps cloud-storage fields out unless you explicitly configure them:
 
 ```python
 run_input = {
     "videos": [{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}],
-    "storeInKVStore": None,
+    "storeInKVStore": True,
     "preferredQuality": "720p",
     "preferredFormat": "mp4",
     "filenameTemplateParts": ["title"],
     "transcriptionAndSubtitle": "ALWAYS_TRANSCRIBE",
 }
 ```
+
+Optional S3/Azure/GCS fields are omitted by default because this actor validates them as strings and rejects JSON `null`.
 
 **Setup**
 

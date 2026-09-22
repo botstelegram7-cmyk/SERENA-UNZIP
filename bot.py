@@ -281,11 +281,15 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.3"
-BOT_CODENAME = "YouTube API Boolean + Faster TeraBox API"
+BOT_VERSION  = "v3.12.4"
+BOT_CODENAME = "YouTube Apify Schema Fix"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.4": [
+        "Fixed Apify YouTube HTTP 400 by omitting unused null S3/Azure/GCS fields",
+        "YouTube API input now keeps storeInKVStore as a boolean and cloud fields as configured strings only",
+    ],
     "v3.12.3": [
         "Fixed Apify YouTube input: storeInKVStore is now sent as a real boolean, not the string 1",
         "TeraBox API downloads now try parallel range requests to improve speed on slow API links",
