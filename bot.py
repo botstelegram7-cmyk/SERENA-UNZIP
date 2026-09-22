@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.9.0"
-BOT_CODENAME = "Account Rotation"
+BOT_VERSION  = "v3.9.1"
+BOT_CODENAME = "Carousels & Spacing"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.9.1": [
+        "Multi-image posts now arrive complete instead of as a single photo",
+        "Several links in one message are spaced apart, not fired at once",
+        "Spacing shortens when more accounts are configured",
+    ],
     "v3.9.0": [
         "Several Instagram sessions can now share the work, via <code>INSTAGRAM_COOKIES_2</code> and up",
         "A refused request switches accounts instead of stopping the run",
@@ -2855,7 +2860,26 @@ async def process_links_message(client, message, content):
     if insta:
         try: await log_input(client, message, f"instagram: {insta[0]}")
         except Exception: pass
-        for u in insta[:3]:
+        # Several links in one message are still several requests to
+        # Instagram. Space them out, or a batch of three looks exactly like
+        # the scripted burst that gets an account challenged.
+        for n, u in enumerate(insta[:3]):
+            if n:
+                try:
+                    from utils.instagram import account_count
+                    pool = max(1, min(account_count(), 3))
+                except Exception:
+                    pool = 1
+                gap = random.uniform(20.0, 40.0) / pool
+                waited = 0.0
+                while waited < gap:
+                    if user_cancelled.get(message.from_user.id):
+                        break
+                    step = min(0.5, gap - waited)
+                    await asyncio.sleep(step)
+                    waited += step
+                if user_cancelled.get(message.from_user.id):
+                    break
             await _start_instagram_flow(client, message, u)
         others = [u for u in links if u not in insta]
         if not others:

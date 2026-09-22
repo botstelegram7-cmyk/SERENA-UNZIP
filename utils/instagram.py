@@ -705,7 +705,24 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[Li
                 thumb = html.unescape(tm.group(1)).replace("\\u0026", "&")
             return [_item(vurl, True, 1, thumb)], _meta_from_embed(body)
 
-    # Plain scrape of the <img class="EmbeddedMediaImage"> / og:image
+    # Carousels: the payload lists every child's display_url. Taking only
+    # the first match meant a multi-image post arrived as a single photo.
+    seen, shots = set(), []
+    for m in re.finditer(r'"display_url"\s*:\s*"(https://[^"\\\s]+)"', flat):
+        img = html.unescape(m.group(1)).replace("\\u0026", "&")
+        if not ("scontent" in img or "cdninstagram" in img or "fbcdn" in img):
+            continue
+        # Same photo at several resolutions repeats the media id; keep one.
+        key = re.sub(r"[?&].*$", "", img).rsplit("/", 1)[-1].split("_")[0]
+        if key in seen:
+            continue
+        seen.add(key)
+        shots.append(img)
+    if len(shots) > 1:
+        return ([_item(u, False, i) for i, u in enumerate(shots, 1)],
+                _meta_from_embed(body))
+
+    # Single image: the embed's own <img>, then og:image, then display_url
     for pattern in (
         r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"',
         r'property="og:image"\s+content="([^"]+)"',
@@ -716,6 +733,8 @@ async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[Li
             img = html.unescape(m.group(1)).replace("\\u0026", "&").replace("\\/", "/")
             if "scontent" in img or "cdninstagram" in img or "fbcdn" in img:
                 return [_item(img, False, 1)], _meta_from_embed(body)
+    if shots:
+        return [_item(shots[0], False, 1)], _meta_from_embed(body)
 
     # Last resort: pull any media CDN link out of the flattened payload
     for pat in (r'(https://[^"\\\s]*cdninstagram[^"\\\s]*\.mp4[^"\\\s]*)',
