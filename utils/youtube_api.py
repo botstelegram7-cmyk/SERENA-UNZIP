@@ -14,13 +14,15 @@ requests (and to Apify KV-store download URLs when the actor returns one).
 from __future__ import annotations
 
 import asyncio
+import html
+import io
 import json
 import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import aiohttp
 from pyrogram.errors import FloodWait, MessageNotModified
@@ -674,6 +676,268 @@ def _dataset_keys_preview(items: List[Dict[str, Any]]) -> str:
     return ", ".join(keys)[:260]
 
 
+def _youtube_video_id(url: str) -> str:
+    try:
+        parsed = urlparse(url if "://" in url else "https://" + url)
+        host = (parsed.hostname or "").lower()
+        if host == "youtu.be":
+            return parsed.path.strip("/").split("/", 1)[0]
+        qs = parse_qs(parsed.query or "")
+        if qs.get("v"):
+            return qs["v"][0]
+        parts = [x for x in parsed.path.split("/") if x]
+        for marker in ("shorts", "embed", "live"):
+            if marker in parts:
+                i = parts.index(marker)
+                if i + 1 < len(parts):
+                    return parts[i + 1]
+    except Exception:
+        pass
+    m = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([A-Za-z0-9_-]{6,})", url or "")
+    return m.group(1) if m else ""
+
+
+def _clean_meta_text(value: Any, limit: int = 2000) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, dict)):
+        return ""
+    text = str(value).strip()
+    if not text or _is_http_url(text):
+        return ""
+    text = re.sub(r"\s+", " ", text)
+    return text[:limit].strip()
+
+
+def _find_meta_value(items: List[Dict[str, Any]], keys: Tuple[str, ...], *, url_ok: bool = False) -> str:
+    wanted = {k.lower() for k in keys}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for path, value, _ in _walk(item):
+            key = (path[-1] if path else "").lower()
+            if key not in wanted:
+                continue
+            if url_ok:
+                if _is_http_url(value):
+                    return str(value).strip()
+            else:
+                text = _clean_meta_text(value)
+                if text:
+                    return text
+    return ""
+
+
+def build_youtube_metadata(items: List[Dict[str, Any]], source_url: str = "",
+                           asset: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Extract title/description/channel/thumbnail from Apify output.
+
+    The streamers actor has changed output shapes several times. Keep this
+    intentionally broad and supplement it with YouTube oEmbed below.
+    """
+    contexts: List[Dict[str, Any]] = []
+    if asset:
+        for key in ("parent", "item"):
+            value = asset.get(key)
+            if isinstance(value, dict):
+                contexts.append(value)
+    contexts.extend([x for x in items if isinstance(x, dict)])
+
+    def first_direct(keys: Tuple[str, ...], *, url_ok: bool = False) -> str:
+        text = _first_str(*contexts, keys=keys)
+        if text and (url_ok or not _is_http_url(text)):
+            return text.strip()
+        return _find_meta_value(contexts, keys, url_ok=url_ok)
+
+    title = first_direct((
+        "title", "videoTitle", "video_title", "name", "filename",
+        "fileName", "videoName", "video_name",
+    ))
+    # Do not use a generated fallback filename as a real title when better
+    # metadata can be fetched from oEmbed.
+    if title and title.lower().startswith("youtube_video"):
+        title = ""
+    desc = first_direct((
+        "description", "videoDescription", "video_description",
+        "shortDescription", "short_description", "caption", "text",
+    ))
+    channel = first_direct((
+        "channel", "channelName", "channelTitle", "channel_title",
+        "author", "authorName", "author_name", "uploader", "owner",
+    ))
+    thumb = first_direct((
+        "thumbnail", "thumbnailUrl", "thumbnail_url", "thumbnailURI",
+        "thumb", "thumbUrl", "image", "imageUrl", "poster", "cover",
+    ), url_ok=True)
+    src = source_url or first_direct(("input", "sourceUrl", "source_url", "youtubeUrl", "youtube_url"), url_ok=True)
+    vid = _youtube_video_id(src or source_url)
+
+    meta = {
+        "title": title,
+        "description": desc,
+        "channel": channel,
+        "thumbnail_url": thumb,
+        "source_url": src or source_url,
+        "video_id": vid,
+    }
+    return {k: v for k, v in meta.items() if v}
+
+
+async def fetch_youtube_oembed(url: str) -> Dict[str, Any]:
+    """Fetch public YouTube oEmbed metadata (no cookies, no yt-dlp)."""
+    if not url:
+        return {}
+    api = "https://www.youtube.com/oembed?format=json&url=" + quote(url, safe="")
+    timeout = aiohttp.ClientTimeout(total=15, sock_connect=8, sock_read=10)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(api, headers={"User-Agent": "Mozilla/5.0"}) as r:
+                if r.status != 200:
+                    return {}
+                data = await r.json(content_type=None)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out = {
+        "title": _clean_meta_text(data.get("title"), 300),
+        "channel": _clean_meta_text(data.get("author_name"), 200),
+        "thumbnail_url": data.get("thumbnail_url") if _is_http_url(data.get("thumbnail_url")) else "",
+        "source_url": url,
+        "video_id": _youtube_video_id(url),
+    }
+    return {k: v for k, v in out.items() if v}
+
+
+def merge_youtube_metadata(primary: Dict[str, Any], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(primary or {})
+    for k, v in (fallback or {}).items():
+        if v and not out.get(k):
+            out[k] = v
+    return out
+
+
+def build_youtube_caption(meta: Dict[str, Any], fallback: str = "YouTube video") -> str:
+    """Telegram caption using the real YouTube title/description when known."""
+    meta = meta or {}
+    title = _clean_meta_text(meta.get("title"), 300) or fallback or "YouTube video"
+    channel = _clean_meta_text(meta.get("channel"), 160)
+    desc = _clean_meta_text(meta.get("description"), 700)
+    src = meta.get("source_url") or ""
+
+    title_line = f"🎬 <b>{html.escape(title)}</b>"
+    lines = [title_line]
+    if channel:
+        lines.append(f"👤 {html.escape(channel)}")
+    if desc and desc.lower() != title.lower():
+        # Keep only a useful excerpt; YouTube descriptions can be huge and
+        # Telegram video captions are limited to ~1024 chars.
+        excerpt = desc[:520].rstrip()
+        if len(desc) > len(excerpt):
+            excerpt += "…"
+        lines += ["", html.escape(excerpt)]
+    if src:
+        lines += ["", f"🔗 <a href=\"{html.escape(src, quote=True)}\">YouTube</a>"]
+
+    caption = "\n".join(lines)
+    if len(caption) <= 1000:
+        return caption
+    # If HTML escaping made it too long, drop description first.
+    lines = [title_line]
+    if channel:
+        lines.append(f"👤 {html.escape(channel)}")
+    if src:
+        lines += ["", f"🔗 <a href=\"{html.escape(src, quote=True)}\">YouTube</a>"]
+    caption = "\n".join(lines)
+    if len(caption) <= 1000:
+        return caption
+    return html.escape(title[:900])
+
+
+async def download_youtube_thumbnail(meta: Dict[str, Any], output_dir: str) -> str:
+    """Download and resize YouTube thumbnail for Telegram send_video.thumb."""
+    meta = meta or {}
+    urls: List[str] = []
+    if _is_http_url(meta.get("thumbnail_url")):
+        urls.append(str(meta["thumbnail_url"]))
+    vid = meta.get("video_id") or _youtube_video_id(meta.get("source_url") or "")
+    if vid:
+        urls += [
+            f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg",
+            f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
+            f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
+        ]
+    # Deduplicate preserving order.
+    urls = list(dict.fromkeys([u for u in urls if u]))
+    if not urls:
+        return ""
+
+    out = Path(output_dir) / "youtube_thumbnail.jpg"
+    timeout = aiohttp.ClientTimeout(total=30, sock_connect=10, sock_read=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for url in urls:
+            try:
+                async with session.get(url, headers={"User-Agent": "Mozilla/5.0"}) as r:
+                    if r.status != 200:
+                        continue
+                    body = await r.read()
+                    ctype = (r.headers.get("Content-Type") or "").lower()
+                    if len(body) < 1024 or ("image" not in ctype and not url.lower().endswith((".jpg", ".jpeg", ".webp", ".png"))):
+                        continue
+            except Exception:
+                continue
+            try:
+                from PIL import Image
+                im = Image.open(io.BytesIO(body)).convert("RGB")
+                im.thumbnail((320, 320))
+                for q in (88, 80, 72, 64, 56):
+                    im.save(out, "JPEG", quality=q, optimize=True)
+                    if out.exists() and out.stat().st_size <= 200 * 1024:
+                        return str(out)
+                if out.exists():
+                    return str(out)
+            except Exception:
+                # Last resort: write JPEG bytes as-is if they look usable.
+                if "jpeg" in ctype or url.lower().endswith((".jpg", ".jpeg")):
+                    try:
+                        out.write_bytes(body)
+                        return str(out)
+                    except Exception:
+                        pass
+    return ""
+
+
+def youtube_metadata_sidecar(media_path: str) -> str:
+    return str(media_path) + ".ytmeta.json"
+
+
+def save_youtube_metadata(media_path: str, meta: Dict[str, Any]) -> None:
+    if not media_path or not meta:
+        return
+    try:
+        Path(youtube_metadata_sidecar(media_path)).write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def load_youtube_metadata(media_path: str) -> Dict[str, Any]:
+    try:
+        p = Path(youtube_metadata_sidecar(media_path))
+        if p.exists():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def youtube_thumbnail_for(media_path: str, meta: Optional[Dict[str, Any]] = None) -> str:
+    meta = meta or load_youtube_metadata(media_path)
+    thumb = meta.get("thumbnail_path") if isinstance(meta, dict) else ""
+    return thumb if thumb and os.path.exists(str(thumb)) else ""
+
+
 def _filename_from_cd(cd: str) -> str:
     if not cd:
         return ""
@@ -881,6 +1145,22 @@ async def download_youtube_via_api(url: str, output_dir: str, quality: str,
         "⬇️ Starting file download…"
     )
     path = await download_asset(asset, output_dir, token, status_message=status_message)
+
+    # Save real YouTube caption metadata and thumbnail beside the media file so
+    # bot.py can use them during Telegram upload without changing the existing
+    # return type of this API helper.
+    try:
+        meta = build_youtube_metadata(items, url, asset)
+        # Prefer oEmbed title/channel/thumbnail because Apify file names can be
+        # transliterated or storage keys; keep Apify-only description if present.
+        meta = merge_youtube_metadata(await fetch_youtube_oembed(url), meta)
+        thumb_path = await download_youtube_thumbnail(meta, output_dir)
+        if thumb_path:
+            meta["thumbnail_path"] = thumb_path
+        save_youtube_metadata(path, meta)
+    except Exception:
+        pass
+
     try:
         write_transcripts(items, output_dir, Path(path).stem)
     except Exception:

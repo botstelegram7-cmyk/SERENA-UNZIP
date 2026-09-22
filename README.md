@@ -309,6 +309,14 @@ Optional S3/Azure/GCS fields are omitted by default because this actor validates
   found, it retries once with the official minimal actor input and finally with
   direct API stream output.
 
+**Caption and thumbnail**
+
+- YouTube API uploads use the real YouTube title/channel/description as the
+  Telegram caption when Apify/oEmbed metadata is available.
+- The bot fetches the YouTube thumbnail and attaches it as the Telegram video
+  thumbnail. If YouTube does not provide one, Serena falls back to generating a
+  frame thumbnail from the downloaded video.
+
 **Progress display**
 
 API-created files are downloaded by the bot with the new ETA panel:

@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.5"
-BOT_CODENAME = "YouTube Apify No-Results Recovery"
+BOT_VERSION  = "v3.12.6"
+BOT_CODENAME = "YouTube Real Caption + Thumbnail"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.6": [
+        "YouTube API uploads now use the real YouTube title/channel/description as the Telegram caption when available",
+        "YouTube API uploads now fetch and attach the actual YouTube thumbnail instead of only generating a frame thumbnail",
+        "Thumbnail helper files are kept internal and are no longer uploaded as extra files",
+    ],
     "v3.12.5": [
         "YouTube API now recovers when Apify returns NO_RESULTS with only defaultKeyValueStoreId/error/note",
         "The bot lists Apify KV-store records to find produced media when the dataset omits downloadedFileUrl",
@@ -627,6 +632,24 @@ async def build_caption(uid, default):
     rf=cfg.get("replace_from"); rt=cfg.get("replace_to")
     if rf and rt is not None: cap=cap.replace(rf,rt)
     return cap
+
+
+def _youtube_caption_thumb_for(fp: str, fallback_name: str) -> Tuple[str, str]:
+    """Return real YouTube caption/thumbnail saved by utils.youtube_api.
+
+    Falls back silently for every non-YouTube file, so upload paths can call it
+    without needing to know how the file was downloaded.
+    """
+    try:
+        from utils.youtube_api import (
+            build_youtube_caption, load_youtube_metadata, youtube_thumbnail_for,
+        )
+        meta = load_youtube_metadata(fp)
+        if not meta:
+            return fallback_name, ""
+        return build_youtube_caption(meta, fallback_name), youtube_thumbnail_for(fp, meta)
+    except Exception:
+        return fallback_name, ""
 
 # ════════════════════════════════════════════════════════════════════════════
 # LOGGING
@@ -4814,7 +4837,9 @@ async def _do_ytdl_download(client, cq, tid, idx):
     try:
         # Check if multiple files were downloaded (e.g. Instagram carousel)
         all_files = sorted(Path(info["temp_root"]).rglob("*"), key=lambda p: p.stat().st_mtime)
-        media_files = [p for p in all_files if p.is_file() and p.suffix.lower() not in (".json",".part",".ytdl")]
+        media_files = [p for p in all_files if p.is_file()
+                       and p.suffix.lower() not in (".json",".part",".ytdl")
+                       and p.name != "youtube_thumbnail.jpg"]
         # Use the latest file as primary
         if not media_files:
             await status.edit_text("No file downloaded."); YTDL_TASKS.pop(tid,None); return
@@ -4824,13 +4849,14 @@ async def _do_ytdl_download(client, cq, tid, idx):
             ext_i = fpath.suffix.lower()
             try:
                 start_u_i = time.time()
-                cap_i = await build_caption(uid, fname_i) if i==0 else fname_i
+                default_cap_i, yt_thumb_i = _youtube_caption_thumb_for(str(fpath), fname_i)
+                cap_i = await build_caption(uid, default_cap_i) if i==0 else fname_i
                 if ext_i in IMAGE_EXT_SET:
                     # Instagram photo / story image
                     sent = await client.send_photo(info["chat_id"], str(fpath),
                         caption=cap_i, reply_to_message_id=info["reply_to"])
                 elif is_video_path(fname_i):
-                    thumb_i = await choose_thumbnail(uid, str(fpath))
+                    thumb_i = yt_thumb_i or await choose_thumbnail(uid, str(fpath))
                     dur_i = await _get_video_duration(str(fpath))
                     sent = await client.send_video(info["chat_id"], str(fpath),
                         caption=cap_i, thumb=thumb_i, duration=dur_i,
@@ -4946,8 +4972,9 @@ async def _upload_one_file(client, uid, fp, chat_id, reply_to, status,
         await _safe_edit(status, f"Uploading{label}: {bn[:45]}")
         start_u = time.time()
         if is_video_path(bn):
-            cap = await build_caption(uid, bn)
-            thumb = await choose_thumbnail(uid, fp)
+            default_cap, yt_thumb = _youtube_caption_thumb_for(fp, bn)
+            cap = await build_caption(uid, default_cap)
+            thumb = yt_thumb or await choose_thumbnail(uid, fp)
             sent = await client.send_video(
                 chat_id, fp, caption=cap, thumb=thumb,
                 duration=await _get_video_duration(fp), supports_streaming=True,
@@ -5273,7 +5300,8 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
             return False
 
     files = [p for p in sorted(out_dir.rglob("*")) if p.is_file()
-             and p.suffix.lower() not in (".part", ".ytdl", ".json")]
+             and p.suffix.lower() not in (".part", ".ytdl", ".json")
+             and p.name != "youtube_thumbnail.jpg"]
     if not files:
         detail = ""
         if err:
@@ -5332,8 +5360,9 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
             await _safe_edit(status, f"Uploading: {bn[:50]}")
             start_u = time.time()
             if is_video_path(bn):
-                cap = await build_caption(uid, bn)
-                thumb = await choose_thumbnail(uid, str(f))
+                default_cap, yt_thumb = _youtube_caption_thumb_for(str(f), bn)
+                cap = await build_caption(uid, default_cap)
+                thumb = yt_thumb or await choose_thumbnail(uid, str(f))
                 sent = await client.send_video(
                     chat_id, str(f), caption=cap, thumb=thumb,
                     duration=await _get_video_duration(str(f)),
@@ -5420,7 +5449,8 @@ async def handle_links_download_all(client, cq, original_msg):
             bn=os.path.basename(fp); await st.edit_text(f"Uploading: {bn}")
             start_u=time.time()
             if is_video_path(bn):
-                cap=await build_caption(uid,bn); thumb=await choose_thumbnail(uid,fp)
+                default_cap, yt_thumb = _youtube_caption_thumb_for(fp, bn)
+                cap=await build_caption(uid,default_cap); thumb=yt_thumb or await choose_thumbnail(uid,fp)
                 sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
             else:
