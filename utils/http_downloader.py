@@ -91,7 +91,7 @@ async def download_file(
                     f.write(chunk)
                     downloaded += len(chunk)
 
-                    if status_message and total > 0:
+                    if status_message:
                         await progress_for_pyrogram(
                             downloaded,
                             total,
@@ -99,10 +99,11 @@ async def download_file(
                             start,
                             fname,
                             direction,
+                            known_total=total,
                         )
 
-            # final 100% update agar total > 0
-            if status_message and total > 0 and downloaded == total:
+            # final 100% update
+            if status_message:
                 await progress_for_pyrogram(
                     downloaded,
                     total,
@@ -110,6 +111,7 @@ async def download_file(
                     start,
                     fname,
                     direction,
+                    known_total=total or downloaded,
                 )
 
     return final_path

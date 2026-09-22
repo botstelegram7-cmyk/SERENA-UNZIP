@@ -33,7 +33,7 @@
 |----------|----------|
 | 📦 **Archives** | ZIP, RAR, 7z, TAR extract · Password auto-detect · Nested archives · Preview before extract |
 | 🎬 **Video** | Compress (CRF control) · Resize · Watermark · Merge · Split · Screenshot · Subtitle extract |
-| 📥 **Downloader** | Instagram Photos/Reels/Stories/Highlights · YouTube · Twitter · TikTok · Facebook · M3U8 |
+| 📥 **Downloader** | Instagram Photos/Reels/Stories/Highlights · YouTube via Apify API · TeraBox via xAPIverse · Twitter · TikTok · Facebook · M3U8 |
 | ☁️ **Upload** | Telegram · GoFile cloud · Auto thumbnail · Custom caption |
 | 📦 **ZIP Queue** | Batch extract up to 100 ZIPs · Sequence preserved · Progress ETA · Auto cache delete |
 | 🔒 **Security** | Per-user rate limit · Daily task/size limit · Premium system · Ban/unban users |
@@ -214,7 +214,12 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
 | `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. A full Netscape `cookies.txt` export, a `k=v; k=v` string, or the bare `ndus` value are all accepted. |
-| `YOUTUBE_COOKIES` | ➖ | Netscape `cookies.txt` export from a signed-in browser. Clears YouTube's "Sign in to confirm you're not a bot" challenge, which hosted servers hit routinely. |
+| `APIFY_API_TOKEN` … `_5` | ➖ | API tokens for the Apify YouTube Downloader actor. Set `APIFY_API_TOKEN_2` … `_5` for extra quota; if one token is exhausted/rate-limited, the bot parks it and tries the next. Legacy aliases `APIFY_TOKEN` … `_5` are also accepted. |
+| `APIFY_YOUTUBE_ACTOR_ID` | ➖ | Apify actor id for YouTube downloads. Default: `UUhJDfKJT2SsXdclR`. |
+| `APIFY_YOUTUBE_DEFAULT_QUALITY` | ➖ | Quality used for auto-detected YouTube links. Default: `720p`. The `/ytdl` menu can request `360p`, `480p`, `720p`, `1080p`, or Best. |
+| `APIFY_YOUTUBE_TRANSCRIPTION` | ➖ | Transcription/subtitle mode passed to the actor. Default: `ALWAYS_TRANSCRIBE`. Set `disabled`/`off` to omit this field. |
+| `APIFY_YOUTUBE_TIMEOUT_SEC` | ➖ | Max time to wait for the Apify actor before falling back/failing. Default: `900`. |
+| `YOUTUBE_COOKIES` | ➖ | Netscape `cookies.txt` export from a signed-in browser for the yt-dlp fallback. The Apify API path is preferred when `APIFY_API_TOKEN` is set. |
 | `INSTAGRAM_COOKIES_2` … `_5` | ➖ | Extra Instagram sessions from **different accounts**. Work is spread across the pool, so no single account sustains the request rate that triggers a lock. A refused request parks that account for 45 minutes and continues on the next. |
 | `INSTAGRAM_PROXY` | ➖ | Proxy for Instagram. The private API refuses hosted addresses regardless of cookies, so this is the only dependable fix for `/story` and for profiles beyond the embed window. |
 | `YTDL_PROXY` | ➖ | Proxy for yt-dlp traffic, e.g. `http://user:pass@host:port`. |
@@ -226,9 +231,94 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `INSTAGRAM_COOKIES` | ⚠️ | Instagram cookies (Netscape or header format). **Strongly recommended** — Instagram blocks anonymous datacenter IPs. Required for Stories/Highlights. |
 | `QUEUE_END_GIF` | ⬜ | Giphy MP4 URL or Telegram sticker file_id — sent after each ZIP extract |
 | `TEMP_DIR` | ⬜ | Temp folder path (default: `./downloads`) |
+| `ETA_UPDATE_INTERVAL` | ⬜ | Progress/ETA edit delay in seconds. The bot clamps it to the requested 5–6 second window; default follows `PROGRESS_UPDATE_INTERVAL` or 5.5s. |
 | `MAX_FILE_SIZE_MB` | ⬜ | Max file size to process (default: `2000`) |
 | `FREE_DAILY_TASK_LIMIT` | ⬜ | Daily task limit for free users (default: `30`) |
 | `AUTO_DELETE_MINUTES` | ⬜ | Delete temp files after N minutes (default: `30`) |
+
+---
+
+## ▶️ YouTube Downloader via Apify API
+
+YouTube often blocks datacenter/hosting IPs with a bot-verification page before
+`yt-dlp` can fetch media. Serena now uses the supplied **Apify actor** first and
+keeps `yt-dlp` only as a fallback.
+
+**Actor used by default**
+
+```
+UUhJDfKJT2SsXdclR
+```
+
+The bot sends the same shape of input as Apify's generated Python snippet:
+
+```python
+run_input = {
+    "videos": [{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}],
+    "storeInKVStore": None,
+    "preferredQuality": "720p",
+    "preferredFormat": "mp4",
+    "filenameTemplateParts": ["title"],
+    "transcriptionAndSubtitle": "ALWAYS_TRANSCRIBE",
+}
+```
+
+**Setup**
+
+1. Open the actor in Apify Console and create/copy an API token.
+2. Set the token in your host environment:
+
+   ```env
+   APIFY_API_TOKEN=apify_api_your_token_here
+   ```
+
+3. Optional — add more quota/failover tokens:
+
+   ```env
+   APIFY_API_TOKEN_2=apify_api_second_token
+   APIFY_API_TOKEN_3=apify_api_third_token
+   ```
+
+4. Optional tuning:
+
+   ```env
+   APIFY_YOUTUBE_DEFAULT_QUALITY=720p
+   APIFY_YOUTUBE_FORMAT=mp4
+   APIFY_YOUTUBE_TRANSCRIPTION=ALWAYS_TRANSCRIBE
+   APIFY_YOUTUBE_TIMEOUT_SEC=900
+   ```
+
+**Multiple-token behaviour**
+
+- Tokens are tried in order: `APIFY_API_TOKEN`, then `_2`, `_3`, `_4`, `_5`.
+- A token that returns quota, credit, auth, or rate-limit errors is parked for
+  six hours.
+- If all tokens are parked, the bot retries them instead of refusing forever.
+- `/ytcheck` shows the actor id, token pool status, quality, format, and
+  transcription mode.
+
+**Progress display**
+
+API-created files are downloaded by the bot with the new ETA panel:
+
+```
+📥 Downloading YouTube
+
+📄 title.mp4
+[●●●●●●●●○○○○○○○○○○○○]
+📊 Progress : 40.0%
+📦 Size     : 128.00 MB / 320.00 MB
+🚀 Speed    : 4.20 MB/s
+⏳ ETA      : 45s
+⌛ Elapsed  : 30s
+📶 Network  : ⚡ Fast
+```
+
+The same display is used for Telegram uploads and TeraBox downloads. Updates are
+throttled to 5–6 seconds to avoid Telegram edit flood limits.
+
+> Use this only for videos you own or have permission to download. YouTube's
+> Terms of Service and copyright rules still apply.
 
 ---
 
@@ -370,18 +460,19 @@ Both formats are accepted:
 /zqpass      — Set queue password
 /cancelqueue — Cancel active queue
 /insta       — Instagram photos, carousels, reels, stories (alias: /ig)
-Paste any link  — YouTube, TikTok, Twitter/X, Facebook, Spotify, SoundCloud,
-                  Pinterest, Reddit, Rumble and 1800+ other sites via yt-dlp;
-                  direct file URLs; m3u8/DASH streams; Google Drive; and file
+Paste any link  — YouTube via Apify API/yt-dlp fallback, TikTok, Twitter/X,
+                  Facebook, Spotify, SoundCloud, Pinterest, Reddit, Rumble and
+                  1800+ other sites via yt-dlp; direct file URLs; m3u8/DASH streams; Google Drive; and file
                   hosts such as MEGA, MediaFire and Terabox. Links without a
                   file extension are probed at runtime and routed correctly.
 /profile     — Bulk-download a profile's latest posts (alias: /bulk)
 /story       — Download a user's active stories
 /version     — Build, changelog and live health (alias: /changelog)
 /terabox     — Download a TeraBox share link (alias: /tb)
-/tbtest      — Owner: probe TeraBox mirrors
+/tbtest      — Owner: probe TeraBox mirrors/API keys
+/ytcheck     — Owner: inspect YouTube Apify API + yt-dlp fallback
 /clearcache  — Owner: drop the Instagram file_id cache
-/ytdl        — Download from Twitter/TikTok/Facebook etc.
+/ytdl        — Download from YouTube/Twitter/TikTok/Facebook etc.
 /compress    — Compress video (reply to video)
 /resize      — Resize video
 /merge       — Merge multiple videos
@@ -413,7 +504,9 @@ serena-unzip-bot/
 ├── .env.example        # Environment template
 └── utils/
     ├── media_tools.py  # FFmpeg video processing
-    ├── ytdl_tools.py   # yt-dlp download wrapper
+    ├── ytdl_tools.py   # yt-dlp fallback wrapper
+    ├── youtube_api.py  # Apify YouTube downloader API
+    ├── terabox.py      # TeraBox API/scraper resolver
     ├── extractors.py   # Archive extraction
     ├── progress.py     # Upload/download progress
     ├── cloud_upload.py # GoFile upload
@@ -447,7 +540,8 @@ serena-unzip-bot/
 
 - **[Pyrogram](https://pyrogram.org)** — Telegram MTProto client
 - **[FFmpeg](https://ffmpeg.org)** — Video/audio processing
-- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — Media downloader
+- **[Apify](https://apify.com/)** — YouTube API actor path for hosted servers
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — Media downloader fallback
 - **[Motor](https://motor.readthedocs.io)** — Async MongoDB driver
 - **[FastAPI](https://fastapi.tiangolo.com)** — Health check server
 - **[py7zr](https://py7zr.readthedocs.io)** — 7-zip support
@@ -519,12 +613,12 @@ cookie alone does not lift it.
 
 | Platform | Status | Workaround |
 | --- | --- | --- |
-| **YouTube** | **Not working on hosted addresses.** Downloads are met with a bot-verification challenge. Tested extensively with a valid cookie export; the challenge persists because the block is applied to the address, not the session. | Residential proxy in `YTDL_PROXY` |
-| **TeraBox** | **Not working on hosted addresses.** Shares list correctly, but the signed download link is withheld. A valid `ndus` cookie does not change this. | Residential proxy in `TERABOX_PROXY` |
+| **YouTube** | Hosted addresses are often blocked by YouTube directly, so the bot uses the Apify actor first when configured. | `APIFY_API_TOKEN`; fallback: `YOUTUBE_COOKIES` or `YTDL_PROXY` |
+| **TeraBox** | Direct scraping on hosted addresses is blocked when the signed download link is withheld, so the bot uses xAPIverse first when configured. | `XAPIVERSE_KEY`; fallback: `TERABOX_PROXY` |
 | **Instagram** | Reels and posts work via the public embed; profiles and stories need the private API and are refused | Residential proxy |
 | **Google Drive, direct links, m3u8, archives, media tools** | Unaffected | — |
 
-Operators can check the live state with `/igtest` and `/tbtest <link>`.
+Operators can check the live state with `/ytcheck`, `/igtest`, and `/tbtest <link>`.
 Users can read the same summary in the bot via `/limits`.
 
 ---

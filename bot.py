@@ -281,11 +281,18 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.11.0"
-BOT_CODENAME = "TeraBox API"
-BOT_RELEASED = "19 Sep 2026"
+BOT_VERSION  = "v3.12.0"
+BOT_CODENAME = "YouTube API + Beautiful ETA"
+BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.0": [
+        "YouTube downloads now use the Apify API actor before falling back to yt-dlp",
+        "Multiple Apify API tokens are supported with automatic failover",
+        "Optional YouTube transcription/subtitle output is saved when the actor returns it",
+        "Download and upload ETA messages now show size, filled dots, speed, elapsed time and remaining time",
+        "TeraBox API downloads now show the same live ETA while fetching files",
+    ],
     "v3.11.0": [
         "TeraBox now works through an API that is not blocked by address",
         "Several API keys supported, with automatic switching when one runs out",
@@ -877,8 +884,8 @@ HELP_PAGES = {
             "<code>/story &lt;user&gt;</code> — currently active stories\n"
             "Example: <code>/profile natgeo 12</code>\n\n"
             "<b>Video platforms</b>\n"
-            "<code>/ytdl &lt;link&gt;</code> — YouTube, TikTok, X, Facebook,\n"
-            "Reddit, Vimeo and roughly 1800 further sites\n\n"
+            "<code>/ytdl &lt;link&gt;</code> — YouTube via API/fallback, TikTok, X,\n"
+            "Facebook, Reddit, Vimeo and roughly 1800 further sites\n\n"
             "<b>Cloud storage</b>\n"
             "Google Drive files and entire folders resolve automatically.\n"
             "<code>/terabox &lt;link&gt;</code> — TeraBox shares\n\n"
@@ -896,23 +903,19 @@ HELP_PAGES = {
             "Some platforms block requests coming from data centres. The bot\n"
             "runs on hosted infrastructure, so those services see a server\n"
             "address rather than a home connection and refuse it.\n\n"
-            "<b>YouTube and TeraBox do not work here.</b>\n"
-            "Both were investigated thoroughly. Cookies and configuration\n"
-            "cannot lift an address-level block, so please treat them as\n"
-            "unsupported on this deployment unless a residential proxy is\n"
-            "configured.\n\n"
-            "<b>YouTube</b>  ·  partially affected\n"
-            "Downloads may fail with a bot-verification challenge. Metadata\n"
-            "usually still resolves.\n"
-            "<i>Fix:</i> set <code>YOUTUBE_COOKIES</code> with a Netscape\n"
-            "cookies.txt export from a signed-in browser, or route traffic\n"
-            "through <code>YTDL_PROXY</code>.\n\n"
-            "<b>TeraBox</b>  ·  usually affected\n"
-            "Files are listed correctly, but the signed download link is\n"
-            "withheld from server addresses. A valid cookie is not enough,\n"
-            "because the restriction is applied to the address, not the\n"
-            "session.\n"
-            "<i>Fix:</i> a residential proxy in <code>TERABOX_PROXY</code>.\n\n"
+            "<b>YouTube and TeraBox need API/proxy help on hosted servers.</b>\n"
+            "Cookies alone cannot lift an address-level block, so the bot now\n"
+            "uses API providers first when their keys are configured.\n\n"
+            "<b>YouTube</b>  ·  API supported\n"
+            "Downloads use the Apify actor when <code>APIFY_API_TOKEN</code>\n"
+            "is set, with yt-dlp kept as a fallback. Optional transcription\n"
+            "is controlled by <code>APIFY_YOUTUBE_TRANSCRIPTION</code>.\n"
+            "<i>Fallback:</i> <code>YOUTUBE_COOKIES</code> or\n"
+            "<code>YTDL_PROXY</code>.\n\n"
+            "<b>TeraBox</b>  ·  API supported\n"
+            "Shares are resolved through xAPIverse when <code>XAPIVERSE_KEY</code>\n"
+            "is set. Without an API key, a residential proxy in\n"
+            "<code>TERABOX_PROXY</code> is still the direct-scrape fix.\n\n"
             "<b>Instagram</b>  ·  partially affected\n"
             "Reels and posts work through the public embed. Profiles and\n"
             "stories need the private API and are refused from hosted\n"
@@ -921,7 +924,8 @@ HELP_PAGES = {
             "Google Drive, direct links, m3u8 streams, archives and every\n"
             "media tool work normally.\n\n"
             "<i>Operators can confirm the current state with "
-            "<code>/igtest</code> and <code>/tbtest &lt;link&gt;</code>.</i>"
+            "<code>/ytcheck</code>, <code>/igtest</code> and "
+            "<code>/tbtest &lt;link&gt;</code>.</i>"
         ),
     },
     "account": {
@@ -963,8 +967,9 @@ HELP_PAGES = {
             "<code>/premium &lt;id&gt; [days]</code> — grant Premium\n"
             "<code>/ban &lt;id&gt;</code> · <code>/unban &lt;id&gt;</code>\n\n"
             "<b>Diagnostics</b>\n"
+            "<code>/ytcheck</code> — inspect YouTube API/fallback\n"
             "<code>/igtest</code> — probe Instagram endpoints\n"
-            "<code>/tbtest &lt;link&gt;</code> — probe TeraBox mirrors\n"
+            "<code>/tbtest &lt;link&gt;</code> — probe TeraBox mirrors/API keys\n"
             "<code>/resetlimit</code> — clear a rate-limit cooldown\n"
             "<code>/clearcache</code> — empty the media cache"
         ),
@@ -1065,29 +1070,29 @@ async def _send_limits_rich(chat_id: int, reply_to: int = None) -> bool:
         R.paragraph("Some platforms refuse requests from data centres. This "
                     "bot runs on hosted infrastructure, so those services see "
                     "a server address and turn it away."),
-        R.paragraph(R.bold("YouTube and TeraBox do not work on this host.")),
-        R.paragraph("Both have been tested at length. Neither can be fixed "
-                    "with cookies or configuration - only a residential "
-                    "proxy or a different host would change the outcome. "
-                    "Please use the services listed as working below."),
+        R.paragraph(R.bold("YouTube and TeraBox need API/proxy help on hosted servers.")),
+        R.paragraph("Cookies alone cannot change a server address. YouTube "
+                    "therefore uses the Apify actor when APIFY_API_TOKEN is "
+                    "set, and TeraBox uses xAPIverse when XAPIVERSE_KEY is set."),
         R.table(
             [[R.cell(R.bold("Service"), header=True),
               R.cell(R.bold("Status"), header=True),
               R.cell(R.bold("Remedy"), header=True)],
-             row("YouTube", "Partly blocked", "YOUTUBE_COOKIES"),
-             row("TeraBox", "Link withheld", "TERABOX_PROXY"),
+             row("YouTube", "API supported", "APIFY_API_TOKEN"),
+             row("TeraBox", "API supported", "XAPIVERSE_KEY"),
              row("Instagram", "Reels work", "Proxy for profiles"),
              row("Drive, direct, m3u8", "Working", "-")],
             bordered=True, striped=True, compact=True),
         R.expandable_quote(
             "A cookie proves who you are; it does not change where the "
             "request comes from. When a platform blocks an address, the "
-            "same cookie that works in your browser is still refused from "
-            "a server. Only a residential proxy changes that.",
+            "same cookie that works in your browser may still be refused "
+            "from a server. Use an API provider or a residential proxy.",
             credit="Why cookies alone are not enough"),
         R.buttons([
-            R.button("Copy /igtest", copy_text="/igtest", style="primary"),
+            R.button("Copy /ytcheck", copy_text="/ytcheck", style="primary"),
             R.button("Copy /tbtest", copy_text="/tbtest", style="primary"),
+            R.button("Copy /igtest", copy_text="/igtest", style="primary"),
         ]),
     ]
     res = await R.send(chat_id, blocks, reply_to=reply_to)
@@ -1294,6 +1299,11 @@ async def version_cmd(client, message):
         f"Cached posts: <b>{cache_n}</b>",
         f"TeraBox cookie: <b>{_tb_cookie_line()}</b>",
     ]
+    try:
+        from utils.youtube_api import api_key_status as _yt_api_keys
+        lines.append(f"YouTube API: <b>{_yt_api_keys()}</b>")
+    except Exception:
+        pass
     _rl = rate_limit_remaining()
     if _rl > 0:
         lines.append(f"⏳ Rate-limited: <b>{_fmt_duration(_rl)}</b> left (<code>{_rl}s</code>)")
@@ -1443,9 +1453,10 @@ async def ytcheck_cmd(client, message):
     """Owner: verify the YouTube cookie file is well formed and accepted."""
     if not message.from_user or not is_owner(message.from_user.id): return
     from utils.ytdl_tools import youtube_diagnose
+    args = message.command[1:]
     st = await message.reply_text("Checking YouTube access...")
     try:
-        await _safe_edit(st, await youtube_diagnose())
+        await _safe_edit(st, await youtube_diagnose(args[0] if args else ""))
     except Exception as e:
         await _safe_edit(st, f"Diagnostics failed:\n<code>{str(e)[:250]}</code>")
 
@@ -4732,7 +4743,9 @@ async def _do_ytdl_download(client, cq, tid, idx):
         return
 
     try:
-        dl_path = await ytdl_download(url, str(temp_root), format_id=fmt["format_id"], height=fmt.get("height", 0))
+        dl_path = await ytdl_download(
+            url, str(temp_root), format_id=fmt["format_id"],
+            height=fmt.get("height", 0), status_message=cq.message)
     except Exception as e:
         err_str = str(e)
         # Instagram fell back to yt-dlp and hit a photo post / missing formats
@@ -4761,6 +4774,7 @@ async def _do_ytdl_download(client, cq, tid, idx):
             fname_i = fpath.name
             ext_i = fpath.suffix.lower()
             try:
+                start_u_i = time.time()
                 cap_i = await build_caption(uid, fname_i) if i==0 else fname_i
                 if ext_i in IMAGE_EXT_SET:
                     # Instagram photo / story image
@@ -4772,14 +4786,20 @@ async def _do_ytdl_download(client, cq, tid, idx):
                     sent = await client.send_video(info["chat_id"], str(fpath),
                         caption=cap_i, thumb=thumb_i, duration=dur_i,
                         progress=progress_for_pyrogram,
-                        progress_args=(status, start_u, fname_i, "to Telegram"),
+                        progress_args=(status, start_u_i, fname_i, "to Telegram"),
                         reply_to_message_id=info["reply_to"])
                 elif is_audio_file(fname_i):
                     sent = await client.send_audio(info["chat_id"], str(fpath),
-                        caption=cap_i, reply_to_message_id=info["reply_to"])
+                        caption=cap_i,
+                        progress=progress_for_pyrogram,
+                        progress_args=(status, start_u_i, fname_i, "to Telegram"),
+                        reply_to_message_id=info["reply_to"])
                 else:
                     sent = await client.send_document(info["chat_id"], str(fpath),
-                        caption=cap_i, reply_to_message_id=info["reply_to"])
+                        caption=cap_i,
+                        progress=progress_for_pyrogram,
+                        progress_args=(status, start_u_i, fname_i, "to Telegram"),
+                        reply_to_message_id=info["reply_to"])
                 if i == 0:
                     try: await status.delete()
                     except Exception: pass
@@ -5076,7 +5096,13 @@ async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
             f"<b>{i}/{len(files)}</b> — {name[:45]}\n"
             f"{human_size(size)}")
         try:
-            fp = await download_file(entry, str(dest_dir))
+            start_d = time.time()
+            async def _tb_progress(cur, tot, _st=status, _start=start_d,
+                                   _name=name, _size=size):
+                await progress_for_pyrogram(
+                    cur, tot, _st, _start, _name,
+                    "Downloading TeraBox", known_total=_size)
+            fp = await download_file(entry, str(dest_dir), progress=_tb_progress)
         except Exception:
             fp = None
         if not fp:
@@ -5114,49 +5140,74 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
     out_dir = Path(temp_root)/uuid.uuid4().hex[:8]
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    cookie_path = None
-    try:
-        from utils.instagram import write_cookie_file
-        cookie_path = write_cookie_file()
-    except Exception:
-        pass
+    err = b""
+    api_error = ""
+    api_done = False
 
-    from utils.ytdl_tools import ytdl_network_args
-    cmd = ["yt-dlp", "--no-warnings", "--ignore-errors", "--no-abort-on-error",
-           *ytdl_network_args(url),
-           "--retries", "10", "--fragment-retries", "10",
-           "--retry-sleep", "exp=1:30", "--socket-timeout", "30",
-           "--concurrent-fragments", "4",
-           "--no-playlist",
-           "--max-filesize", f"{Config.YTDL_MAX_SIZE_MB}M",
-           # Prefer a ready-made MP4 so no ffmpeg merge is required
-           # A progressive MP4 avoids an ffmpeg merge when one exists, but
-           # YouTube rarely offers them now, so every fallback ends in a
-           # bare "best" - otherwise the selector can match nothing and
-           # yt-dlp reports "Requested format is not available".
-           "--format", ("best[ext=mp4][vcodec!=none][acodec!=none]/"
-                        "bestvideo*+bestaudio/bestvideo+bestaudio/best"),
-           "--merge-output-format", "mp4",
-           "--output", str(out_dir/"%(title).80s.%(ext)s")]
-    if cookie_path:
-        cmd += ["--cookies", cookie_path]
-    cmd += [url]
-
-    await _safe_edit(status, f"Fetching…\n<code>{url[:70]}</code>")
+    # YouTube links use the Apify API first when tokens are configured. This
+    # is the automatic paste-link path; the /ytdl quality-button path goes
+    # through utils.ytdl_tools.download_video and uses the same API module.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        _, err = await asyncio.wait_for(proc.communicate(),
-                                        timeout=Config.YTDL_TIMEOUT_SEC)
-    except asyncio.TimeoutError:
-        try: proc.kill()
-        except Exception: pass
-        await _safe_edit(status, "Timeout — ye link bahut slow hai.")
-        return False
-    except FileNotFoundError:
-        await _safe_edit(status, "yt-dlp is not installed (owner:"
-                                 "<code>pip install -U yt-dlp</code>).")
-        return False
+        from utils.youtube_api import (
+            download_youtube_via_api, has_api_tokens, is_youtube_url,
+        )
+        if is_youtube_url(url) and has_api_tokens():
+            await download_youtube_via_api(
+                url, str(out_dir), Config.APIFY_YOUTUBE_DEFAULT_QUALITY,
+                status_message=status)
+            api_done = True
+    except Exception as e:
+        api_error = str(e)
+        await _safe_edit(
+            status,
+            "<b>YouTube API failed, trying yt-dlp fallback…</b>\n\n"
+            f"<code>{api_error[:180]}</code>")
+        await asyncio.sleep(1)
+
+    if not api_done:
+        cookie_path = None
+        try:
+            from utils.instagram import write_cookie_file
+            cookie_path = write_cookie_file()
+        except Exception:
+            pass
+
+        from utils.ytdl_tools import ytdl_network_args
+        cmd = ["yt-dlp", "--no-warnings", "--ignore-errors", "--no-abort-on-error",
+               *ytdl_network_args(url),
+               "--retries", "10", "--fragment-retries", "10",
+               "--retry-sleep", "exp=1:30", "--socket-timeout", "30",
+               "--concurrent-fragments", "4",
+               "--no-playlist",
+               "--max-filesize", f"{Config.YTDL_MAX_SIZE_MB}M",
+               # Prefer a ready-made MP4 so no ffmpeg merge is required
+               # A progressive MP4 avoids an ffmpeg merge when one exists, but
+               # YouTube rarely offers them now, so every fallback ends in a
+               # bare "best" - otherwise the selector can match nothing and
+               # yt-dlp reports "Requested format is not available".
+               "--format", ("best[ext=mp4][vcodec!=none][acodec!=none]/"
+                            "bestvideo*+bestaudio/bestvideo+bestaudio/best"),
+               "--merge-output-format", "mp4",
+               "--output", str(out_dir/"%(title).80s.%(ext)s")]
+        if cookie_path:
+            cmd += ["--cookies", cookie_path]
+        cmd += [url]
+
+        await _safe_edit(status, f"Fetching…\n<code>{url[:70]}</code>")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            _, err = await asyncio.wait_for(proc.communicate(),
+                                            timeout=Config.YTDL_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            try: proc.kill()
+            except Exception: pass
+            await _safe_edit(status, "Timeout — ye link bahut slow hai.")
+            return False
+        except FileNotFoundError:
+            await _safe_edit(status, "yt-dlp is not installed (owner:"
+                                     "<code>pip install -U yt-dlp</code>).")
+            return False
 
     files = [p for p in sorted(out_dir.rglob("*")) if p.is_file()
              and p.suffix.lower() not in (".part", ".ytdl", ".json")]
@@ -5166,6 +5217,8 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
             for line in err.decode("utf-8", "ignore").splitlines():
                 if "ERROR" in line:
                     detail = line.strip()[:200]; break
+        if not detail and api_error:
+            detail = api_error[:200]
         low = detail.lower()
         # "Failed to extract any player response" is the same YouTube wall,
         # just worded differently depending on the extraction path taken.
@@ -5300,7 +5353,7 @@ async def handle_links_download_all(client, cq, original_msg):
         dest=str(temp_root/base)
         try:
             st=await client.send_message(chat_id,f"{url[:60]}…",reply_to_message_id=reply_to)
-            fp=await download_file(url,dest,status_message=st,file_name=base,direction="to server")
+            fp=await download_file(url,dest,status_message=st,file_name=base,direction="Downloading")
             bn=os.path.basename(fp); await st.edit_text(f"Uploading: {bn}")
             start_u=time.time()
             if is_video_path(bn):

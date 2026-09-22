@@ -92,11 +92,29 @@ class Config:
 
     # YouTube cookies, in Netscape cookies.txt format. YouTube increasingly
     # answers datacenter IPs with a "Sign in to confirm you're not a bot"
-    # challenge; exporting cookies from a logged-in browser clears it.
+    # challenge; exporting cookies from a signed-in browser may clear it on
+    # some hosts. The Apify API path below is preferred when configured.
     YOUTUBE_COOKIES    = os.getenv("YOUTUBE_COOKIES", "")
     YOUTUBE_COOKIE_FILE = "/tmp/yt_dlp_cookies.txt"
 
-    # Optional proxy for yt-dlp (YouTube and friends). Same format as
+    # Apify YouTube Downloader API. The default actor id is the one supplied
+    # by the operator. Several tokens can be configured; a token that returns
+    # quota/rate/auth errors is parked briefly and the next one is tried.
+    APIFY_API_TOKEN    = (os.getenv("APIFY_API_TOKEN") or os.getenv("APIFY_TOKEN", "")).strip()
+    APIFY_API_TOKEN_2  = (os.getenv("APIFY_API_TOKEN_2") or os.getenv("APIFY_TOKEN_2", "")).strip()
+    APIFY_API_TOKEN_3  = (os.getenv("APIFY_API_TOKEN_3") or os.getenv("APIFY_TOKEN_3", "")).strip()
+    APIFY_API_TOKEN_4  = (os.getenv("APIFY_API_TOKEN_4") or os.getenv("APIFY_TOKEN_4", "")).strip()
+    APIFY_API_TOKEN_5  = (os.getenv("APIFY_API_TOKEN_5") or os.getenv("APIFY_TOKEN_5", "")).strip()
+    APIFY_YOUTUBE_ACTOR_ID = os.getenv("APIFY_YOUTUBE_ACTOR_ID", "UUhJDfKJT2SsXdclR").strip()
+    APIFY_YOUTUBE_DEFAULT_QUALITY = os.getenv("APIFY_YOUTUBE_DEFAULT_QUALITY", "720p").strip()
+    APIFY_YOUTUBE_FORMAT = os.getenv("APIFY_YOUTUBE_FORMAT", "mp4").strip()
+    APIFY_YOUTUBE_TRANSCRIPTION = (
+        os.getenv("APIFY_YOUTUBE_TRANSCRIPTION")
+        or os.getenv("YOUTUBE_API_TRANSCRIPTION", "ALWAYS_TRANSCRIBE")
+    ).strip()
+    APIFY_YOUTUBE_TIMEOUT_SEC = int(os.getenv("APIFY_YOUTUBE_TIMEOUT_SEC", "900"))
+
+    # Optional proxy for yt-dlp (YouTube fallback and friends). Same format as
     # TERABOX_PROXY: http://user:pass@host:port or socks5://host:1080
     YTDL_PROXY         = os.getenv("YTDL_PROXY", "").strip()
 

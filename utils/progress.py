@@ -1,13 +1,14 @@
-# utils/progress.py — Fixed: no branding, handles total=0, PROGRESS_GIF support
+# utils/progress.py — beautiful ETA display, throttled to 5–6 seconds
 import asyncio
+import os
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from pyrogram.errors import FloodWait, MessageNotModified
 from pyrogram.types import Message
 from config import Config
 
-_last_update: Dict[int, float] = {}
+_last_update: Dict[Tuple[int, int], float] = {}
 
 
 def human_bytes(size: int) -> str:
@@ -24,8 +25,11 @@ def human_bytes(size: int) -> str:
 def human_time(seconds: int) -> str:
     if seconds <= 0:
         return "0s"
-    m, s = divmod(int(seconds), 60)
-    h, m = divmod(m, 60)
+    d, rem = divmod(int(seconds), 86400)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    if d:
+        return f"{d}d {h}h {m}m"
     if h:
         return f"{h}h {m}m {s}s"
     if m:
@@ -35,10 +39,42 @@ def human_time(seconds: int) -> str:
 
 def _network_quality(speed_bps: float) -> str:
     mb = speed_bps / (1024 * 1024)
-    if mb < 0.5:  return "🐢 Slow"
-    if mb < 3:    return "📶 Normal"
-    if mb < 10:   return "⚡ Fast"
+    if mb < 0.5:
+        return "🐢 Slow"
+    if mb < 3:
+        return "📶 Normal"
+    if mb < 10:
+        return "⚡ Fast"
     return "🚀 Very Fast"
+
+
+def _progress_key(message: Message) -> Tuple[int, int]:
+    chat = getattr(message, "chat", None)
+    return (int(getattr(chat, "id", 0) or 0), int(getattr(message, "id", 0) or 0))
+
+
+def _update_interval() -> float:
+    """Keep ETA edits in the requested 5–6 second window."""
+    raw = os.getenv("ETA_UPDATE_INTERVAL", str(getattr(Config, "PROGRESS_UPDATE_INTERVAL", 5) or 5))
+    try:
+        val = float(raw)
+    except Exception:
+        val = 5.5
+    return max(5.0, min(6.0, val))
+
+
+def _dot_bar(percent: float, width: int = 20) -> str:
+    percent = max(0.0, min(100.0, percent))
+    filled = int(round(width * percent / 100.0))
+    return "●" * filled + "○" * (width - filled)
+
+
+def _direction_icon(direction: str) -> str:
+    d = (direction or "").lower()
+    # "to server" is a download into the bot; "to Telegram" is an upload.
+    if "telegram" in d or "upload" in d:
+        return "📤"
+    return "📥"
 
 
 async def _safe_edit_msg(message: Message, text: str):
@@ -51,7 +87,7 @@ async def _safe_edit_msg(message: Message, text: str):
     except MessageNotModified:
         pass
     except FloodWait as e:
-        await asyncio.sleep(min(e.value, 10))
+        await asyncio.sleep(min(int(getattr(e, "value", 5)), 10))
         try:
             if getattr(message, "animation", None) or getattr(message, "video", None):
                 await message.edit_caption(text)
@@ -97,57 +133,73 @@ async def progress_for_pyrogram(
     start_time: float,
     file_name: str,
     direction: str = "Downloading",
-    known_total: int = 0,    # ← pass finfo["size"] when Telegram total=0
+    known_total: int = 0,    # pass known size when Telegram/HTTP total=0
 ):
     """
-    Upload/download progress callback for Pyrogram.
-    Handles total=0 (unknown file size) gracefully using known_total hint.
-    No branding — clean progress display.
-    """
-    now    = time.time()
-    msg_id = message.id
-    last   = _last_update.get(msg_id, 0)
+    Upload/download progress callback for Pyrogram and HTTP downloads.
 
-    # Throttle updates
-    if now - last < float(Config.PROGRESS_UPDATE_INTERVAL) and current != total:
+    Display includes:
+      • current size out of total size
+      • filled/blank dot progress bar
+      • percentage
+      • network speed
+      • remaining time / ETA
+      • elapsed time
+
+    Telegram edits are throttled to 5–6 seconds by default to avoid flood waits.
+    """
+    if not message:
         return
-    _last_update[msg_id] = now
+
+    now = time.time()
+    key = _progress_key(message)
+    last = _last_update.get(key, 0)
+
+    actual_total = total if total and total > 0 else (known_total or 0)
+    is_done = bool(actual_total and current >= actual_total) or (total and current == total)
+
+    if now - last < _update_interval() and not is_done:
+        return
+    _last_update[key] = now
 
     elapsed = max(now - start_time, 0.001)
-    speed   = current / elapsed  # bytes/sec
-
-    # Use known_total as fallback when Telegram gives 0
-    actual_total = total if total > 0 else known_total
+    speed = max(float(current) / elapsed, 0.0)  # bytes/sec
 
     if actual_total > 0:
-        percent   = min((current * 100 / actual_total), 100.0)
-        filled    = int(20 * percent / 100)
-        bar       = "●" * filled + "○" * (20 - filled)   # dots style
-        remaining = actual_total - current
-        eta       = int(remaining / speed) if speed > 0 else 0
-        size_str  = f"{human_bytes(current)} of {human_bytes(actual_total)}"
-        pct_str   = f"{percent:.1f}%"
-        eta_str   = human_time(eta)
+        current = min(int(current), int(actual_total))
+        percent = min((current * 100 / actual_total), 100.0)
+        bar = _dot_bar(percent)
+        remaining = max(actual_total - current, 0)
+        eta = int(remaining / speed) if speed > 0 and remaining > 0 else 0
+        size_str = f"{human_bytes(current)} / {human_bytes(actual_total)}"
+        pct_str = f"{percent:.1f}%"
+        eta_str = human_time(eta) if remaining > 0 else "done"
     else:
-        # Total unknown — empty dots indeterminate bar
-        bar      = "○" * 20
-        pct_str  = "..."
-        size_str = human_bytes(current)
-        eta_str  = "calculating..."
+        percent = 0.0
+        bar = _dot_bar(0)
+        size_str = f"{human_bytes(current)} / detecting…"
+        pct_str = "calculating…"
+        eta_str = "calculating…"
 
-    icon = "📥" if "down" in direction.lower() else "📤"
+    icon = _direction_icon(direction)
+    title = direction or "Transferring"
+    if title.lower() == "to server":
+        title = "Downloading to server"
+    elif title.lower() == "to telegram":
+        title = "Uploading to Telegram"
     text = (
-        f"{icon} <b>{direction}</b>\n\n"
+        f"{icon} <b>{title}</b>\n\n"
         f"📄 <code>{file_name}</code>\n"
-        f" [{bar}] \n"
-        f"◌ Progress 😉 : 〘 {pct_str} 〙\n"
-        f"✅ Done       : 〘 {size_str} 〙\n"
-        f"🚀 Speed      : 〘 {human_bytes(int(speed))}/s 〙\n"
-        f"⏳ ETA        : 〘 {eta_str} 〙\n"
-        f"📶 Network    : {_network_quality(speed)}"
+        f"<code>[{bar}]</code>\n"
+        f"📊 Progress : <b>{pct_str}</b>\n"
+        f"📦 Size     : <b>{size_str}</b>\n"
+        f"🚀 Speed    : <b>{human_bytes(int(speed))}/s</b>\n"
+        f"⏳ ETA      : <b>{eta_str}</b>\n"
+        f"⌛ Elapsed  : <b>{human_time(int(elapsed))}</b>\n"
+        f"📶 Network  : <b>{_network_quality(speed)}</b>"
     )
 
     await _safe_edit_msg(message, text)
 
-    if current == total and total > 0:
-        _last_update.pop(msg_id, None)
+    if is_done:
+        _last_update.pop(key, None)

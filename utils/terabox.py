@@ -30,6 +30,7 @@ before download and never cached.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -787,7 +788,9 @@ async def download_file(entry: Dict, output_dir: str,
                             done += len(chunk)
                             if progress:
                                 try:
-                                    progress(done, total + (have if mode == "ab" else 0))
+                                    ret = progress(done, total + (have if mode == "ab" else 0))
+                                    if inspect.isawaitable(ret):
+                                        await ret
                                 except Exception:
                                     pass
                 if os.path.exists(dest) and os.path.getsize(dest) > 1024:

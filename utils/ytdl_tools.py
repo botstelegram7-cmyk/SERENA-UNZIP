@@ -143,6 +143,17 @@ async def get_formats(url: str) -> List[Dict]:
     if _is_instagram_url(url):
         return await _instagram_formats(url)
 
+    # ── YouTube API mode: do not probe YouTube with yt-dlp just to build the
+    # quality menu. Hosted IPs often get challenged at that stage, while the
+    # Apify actor can accept a requested quality directly.
+    if _is_youtube(url):
+        try:
+            from utils.youtube_api import has_api_tokens, youtube_api_formats
+            if has_api_tokens():
+                return youtube_api_formats()
+        except Exception:
+            pass
+
     try:
         info = await get_video_info(url)
     except Exception:
@@ -226,12 +237,34 @@ async def _download_instagram_photos(url: str, output_dir: str) -> List[str]:
     return await download_instagram(url, output_dir)
 
 
-async def download_video(url: str, output_dir: str, format_id: str = "best", height: int = 0) -> str:
+async def download_video(
+    url: str,
+    output_dir: str,
+    format_id: str = "best",
+    height: int = 0,
+    status_message=None,
+) -> str:
     os.makedirs(output_dir, exist_ok=True)
     out_tmpl = os.path.join(output_dir, "%(title).80s.%(ext)s")
 
     url = _normalize_instagram_url(url)  # handle encoded highlight URLs
     is_insta = _is_instagram_url(url)
+    youtube_api_error = ""
+
+    # YouTube first goes through the configured Apify actor. If the API is not
+    # configured, or if audio-only was explicitly requested, the legacy yt-dlp
+    # path below remains available as a fallback.
+    if _is_youtube(url) and format_id != "bestaudio":
+        try:
+            from utils.youtube_api import (
+                download_youtube_via_api, has_api_tokens, quality_from_choice,
+            )
+            if has_api_tokens():
+                quality = quality_from_choice(format_id, height)
+                return await download_youtube_via_api(
+                    url, output_dir, quality, status_message=status_message)
+        except Exception as e:
+            youtube_api_error = str(e)
 
     if format_id == "bestaudio":
         fmt_str = "bestaudio/best"
@@ -295,7 +328,14 @@ async def download_video(url: str, output_dir: str, format_id: str = "best", hei
         last_err = err
 
     if code != 0:
-        raise RuntimeError(_clean_err(last_err) or "yt-dlp download failed after all retries")
+        fallback_err = _clean_err(last_err) or "yt-dlp download failed after all retries"
+        if youtube_api_error:
+            raise RuntimeError(
+                "YouTube API failed, then yt-dlp fallback also failed.\n\n"
+                f"API: {youtube_api_error[:260]}\n"
+                f"yt-dlp: {fallback_err[:260]}"
+            )
+        raise RuntimeError(fallback_err)
 
     return _latest_file(output_dir)
 
@@ -334,14 +374,24 @@ def is_supported_url(url: str) -> bool:
     return not any(b in u for b in BLOCKED_PLATFORMS)
 
 
-async def youtube_diagnose() -> str:
-    """Report whether YOUTUBE_COOKIES is usable, and what YouTube says.
-
-    The user set cookies and still saw failures, so the useful question is
-    whether the file is well formed and actually being accepted.
-    """
+async def youtube_diagnose(url: str = "") -> str:
+    """Report YouTube API readiness plus yt-dlp fallback health."""
     out = ["<b>YouTube Diagnostics</b>", ""]
 
+    try:
+        from utils.youtube_api import api_key_status, has_api_tokens, is_youtube_url
+        out.append(f"Apify actor: <code>{Config.APIFY_YOUTUBE_ACTOR_ID}</code>")
+        out.append(f"API tokens: {api_key_status()}")
+        out.append(f"API mode: <b>{'ready' if has_api_tokens() else 'not configured'}</b>")
+        out.append(f"Quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b> · Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
+        out.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
+        if url:
+            out.append(f"Input link: <b>{'YouTube' if is_youtube_url(url) else 'not YouTube'}</b>")
+        out.append("")
+    except Exception:
+        pass
+
+    out.append("<b>yt-dlp fallback</b>")
     raw = (Config.YOUTUBE_COOKIES or "")
     if not raw.strip():
         out.append("Cookies: <b>not set</b>")
@@ -411,19 +461,26 @@ def youtube_block_help() -> str:
     extract any player response" - the same refusal, worded differently
     depending on which extraction path was tried.
     """
+    api_hint = "Set <code>APIFY_API_TOKEN</code> to use the Apify YouTube API path."
+    try:
+        from utils.youtube_api import has_api_tokens
+        if has_api_tokens():
+            api_hint = "Apify API is configured; run <code>/ytcheck</code> to inspect token status."
+    except Exception:
+        pass
     if has_youtube_cookies():
         return (
             "<b>YouTube refused this download.</b>\n\n"
             "Cookies are configured but were still rejected. Either they have "
             "expired, or this address is flagged regardless of the session.\n\n"
-            "<i>Export fresh cookies from a signed-in browser, or set "
+            f"<i>{api_hint} Fallback options: export fresh cookies or set "
             "<code>YTDL_PROXY</code>.</i>")
     return (
         "<b>YouTube refused this download.</b>\n\n"
         "It asks hosted servers to confirm they are not a bot. The link is "
         "fine - the address making the request is the problem.\n\n"
-        "<i>Operator: set <code>YOUTUBE_COOKIES</code> to a cookies.txt "
-        "export from a signed-in browser. See <code>/limits</code>.</i>")
+        f"<i>Operator: {api_hint} yt-dlp fallback can also use "
+        "<code>YOUTUBE_COOKIES</code> or <code>YTDL_PROXY</code>.</i>")
 
 
 def blocked_reason(url: str) -> str:
@@ -439,6 +496,7 @@ def blocked_reason(url: str) -> str:
 
 def get_site_name(url: str) -> str:
     mapping = {
+        "youtube.com": "YouTube", "youtu.be": "YouTube", "youtube-nocookie.com": "YouTube",
         "instagram.com": "Instagram", "twitter.com": "Twitter/X", "x.com": "Twitter/X",
         "facebook.com": "Facebook", "fb.watch": "Facebook", "tiktok.com": "TikTok",
         "vimeo.com": "Vimeo", "dailymotion.com": "Dailymotion", "reddit.com": "Reddit",
