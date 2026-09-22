@@ -213,19 +213,21 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `API_HASH` | ✅ | Telegram API Hash from [my.telegram.org](https://my.telegram.org) |
 | `BOT_TOKEN` | ✅ | Bot token from [@BotFather](https://t.me/BotFather) |
 | `MONGO_URI` | ✅ | MongoDB connection string (free at [mongodb.com](https://mongodb.com)) |
-| `TERABOX_COOKIE` | ➖ | The `ndus` cookie from a logged-in TeraBox session. Without it TeraBox answers errno 140 (IP walled) to datacenter servers. Chrome → F12 → Application → Cookies → terabox.com → `ndus`. A full Netscape `cookies.txt` export, a `k=v; k=v` string, or the bare `ndus` value are all accepted. |
+| `TERABOX_COOKIE` | ➖ | Ignored for TeraBox downloads in API-only mode. TeraBox uses `XAPIVERSE_KEY`, not cookies. |
 | `APIFY_API_TOKEN` … `_5` | ➖ | API tokens for the Apify YouTube Downloader actor. Set `APIFY_API_TOKEN_2` … `_5` for extra quota; if one token is exhausted/rate-limited, the bot parks it and tries the next. Legacy aliases `APIFY_TOKEN` … `_5` are also accepted. |
+| `YOUTUBE_API_ONLY` | ➖ | Keep YouTube on Apify API only. Default: `1`. |
 | `APIFY_YOUTUBE_ACTOR_ID` | ➖ | Apify actor id for YouTube downloads. Default: `UUhJDfKJT2SsXdclR`. |
 | `APIFY_YOUTUBE_DEFAULT_QUALITY` | ➖ | Quality used for auto-detected YouTube links. Default: `720p`. The `/ytdl` menu can request `360p`, `480p`, `720p`, `1080p`, or Best. |
-| `APIFY_YOUTUBE_STORE_IN_KVSTORE` | ➖ | Store the API-created YouTube file in Apify KV store so the bot can fetch it reliably. Default: `1`. |
+| `APIFY_YOUTUBE_STORE_IN_KVSTORE` | ➖ | Optional Apify KV store id to pass as `storeInKVStore`. Default is blank, which sends `null` exactly like the Apify snippet. |
 | `APIFY_YOUTUBE_TRANSCRIPTION` | ➖ | Transcription/subtitle mode passed to the actor. Default: `ALWAYS_TRANSCRIBE`. Set `disabled`/`off` to omit this field. |
-| `APIFY_YOUTUBE_TIMEOUT_SEC` | ➖ | Max time to wait for the Apify actor before falling back/failing. Default: `900`. |
-| `YOUTUBE_COOKIES` | ➖ | Netscape `cookies.txt` export from a signed-in browser for the yt-dlp fallback. The Apify API path is preferred when `APIFY_API_TOKEN` is set. |
+| `APIFY_YOUTUBE_TIMEOUT_SEC` | ➖ | Max time to wait for the Apify actor before failing. No cookie/yt-dlp fallback is used for YouTube. Default: `900`. |
+| `YOUTUBE_COOKIES` | ➖ | Ignored for YouTube downloads in API-only mode. YouTube uses `APIFY_API_TOKEN`, not cookies. |
 | `INSTAGRAM_COOKIES_2` … `_5` | ➖ | Extra Instagram sessions from **different accounts**. Work is spread across the pool, so no single account sustains the request rate that triggers a lock. A refused request parks that account for 45 minutes and continues on the next. |
 | `INSTAGRAM_PROXY` | ➖ | Proxy for Instagram. The private API refuses hosted addresses regardless of cookies, so this is the only dependable fix for `/story` and for profiles beyond the embed window. |
-| `YTDL_PROXY` | ➖ | Proxy for yt-dlp traffic, e.g. `http://user:pass@host:port`. |
-| `XAPIVERSE_KEY` … `_5` | ➖ | API keys for the [xAPIverse TeraBox API](https://xapiverse.com/marketplace/terabox). The API resolves share links on its own infrastructure, so the address block that stops direct scraping does not apply — this is the most reliable way to make TeraBox work from a hosted server. The free tier is **100 credits per month per key**, so set `XAPIVERSE_KEY_2` … `_5` with keys from additional accounts and the bot moves to the next one when a key runs out. |
-| `TERABOX_PROXY` | ➖ | HTTP/SOCKS proxy for TeraBox, e.g. `http://user:pass@host:port`. TeraBox withholds signed download links from datacenter IPs even with a valid cookie, so a residential proxy is the only reliable fix. |
+| `YTDL_PROXY` | ➖ | Proxy for non-YouTube yt-dlp traffic, e.g. `http://user:pass@host:port`. YouTube is API-only. |
+| `XAPIVERSE_KEY` … `_5` | ➖ | API keys for the [xAPIverse TeraBox API](https://xapiverse.com/marketplace/terabox). Required for TeraBox downloads in API-only mode. The free tier is **100 credits per month per key**, so set `XAPIVERSE_KEY_2` … `_5` with keys from additional accounts and the bot moves to the next one when a key runs out. |
+| `TERABOX_API_ONLY` | ➖ | Keep TeraBox on xAPIverse API only. Default: `1`. |
+| `TERABOX_PROXY` | ➖ | Legacy direct-scrape proxy. Ignored while `TERABOX_API_ONLY=1` (default). |
 | `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
 | `FORCE_SUB_CHANNEL` | ⬜ | Channel username users must join |
@@ -241,9 +243,9 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 
 ## ▶️ YouTube Downloader via Apify API
 
-YouTube often blocks datacenter/hosting IPs with a bot-verification page before
-`yt-dlp` can fetch media. Serena now uses the supplied **Apify actor** first and
-keeps `yt-dlp` only as a fallback.
+YouTube often blocks datacenter/hosting IPs with a bot-verification page. Serena
+therefore uses the supplied **Apify actor** only for YouTube. Cookies and yt-dlp
+fallback are intentionally disabled for YouTube downloads.
 
 **Actor used by default**
 
@@ -256,7 +258,7 @@ The bot sends the same shape of input as Apify's generated Python snippet:
 ```python
 run_input = {
     "videos": [{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}],
-    "storeInKVStore": True,
+    "storeInKVStore": None,
     "preferredQuality": "720p",
     "preferredFormat": "mp4",
     "filenameTemplateParts": ["title"],
@@ -285,7 +287,7 @@ run_input = {
    ```env
    APIFY_YOUTUBE_DEFAULT_QUALITY=720p
    APIFY_YOUTUBE_FORMAT=mp4
-   APIFY_YOUTUBE_STORE_IN_KVSTORE=1
+   # optional: APIFY_YOUTUBE_STORE_IN_KVSTORE=your_kv_store_id
    APIFY_YOUTUBE_TRANSCRIPTION=ALWAYS_TRANSCRIBE
    APIFY_YOUTUBE_TIMEOUT_SEC=900
    ```
@@ -462,7 +464,7 @@ Both formats are accepted:
 /zqpass      — Set queue password
 /cancelqueue — Cancel active queue
 /insta       — Instagram photos, carousels, reels, stories (alias: /ig)
-Paste any link  — YouTube via Apify API/yt-dlp fallback, TikTok, Twitter/X,
+Paste any link  — YouTube via Apify API only, TikTok, Twitter/X,
                   Facebook, Spotify, SoundCloud, Pinterest, Reddit, Rumble and
                   1800+ other sites via yt-dlp; direct file URLs; m3u8/DASH streams; Google Drive; and file
                   hosts such as MEGA, MediaFire and Terabox. Links without a
@@ -471,8 +473,8 @@ Paste any link  — YouTube via Apify API/yt-dlp fallback, TikTok, Twitter/X,
 /story       — Download a user's active stories
 /version     — Build, changelog and live health (alias: /changelog)
 /terabox     — Download a TeraBox share link (alias: /tb)
-/tbtest      — Owner: probe TeraBox mirrors/API keys
-/ytcheck     — Owner: inspect YouTube Apify API + yt-dlp fallback
+/tbtest      — Owner: inspect TeraBox API keys/result
+/ytcheck     — Owner: inspect YouTube Apify API access
 /clearcache  — Owner: drop the Instagram file_id cache
 /ytdl        — Download from YouTube/Twitter/TikTok/Facebook etc.
 /compress    — Compress video (reply to video)
@@ -615,8 +617,8 @@ cookie alone does not lift it.
 
 | Platform | Status | Workaround |
 | --- | --- | --- |
-| **YouTube** | Hosted addresses are often blocked by YouTube directly, so the bot uses the Apify actor first when configured. | `APIFY_API_TOKEN`; fallback: `YOUTUBE_COOKIES` or `YTDL_PROXY` |
-| **TeraBox** | Direct scraping on hosted addresses is blocked when the signed download link is withheld, so the bot uses xAPIverse first when configured. | `XAPIVERSE_KEY`; fallback: `TERABOX_PROXY` |
+| **YouTube** | API-only. Cookies and yt-dlp are not used for YouTube downloads. | `APIFY_API_TOKEN` |
+| **TeraBox** | API-only. Cookies and mirror scraping are not used for TeraBox downloads. | `XAPIVERSE_KEY` |
 | **Instagram** | Reels and posts work via the public embed; profiles and stories need the private API and are refused | Residential proxy |
 | **Google Drive, direct links, m3u8, archives, media tools** | Unaffected | — |
 
@@ -628,9 +630,8 @@ Users can read the same summary in the bot via `/limits`.
 ### Getting a TeraBox API key
 
 TeraBox refuses signed download links to data-centre addresses, so scraping it
-from a hosted server fails regardless of how good the cookies are. Routing the
-request through an API avoids this, because the provider resolves the share on
-its own infrastructure.
+from a hosted server fails regardless of cookies. Serena uses the xAPIverse API
+only; the provider resolves the share and returns API download URLs.
 
 1. Open **[xapiverse.com/marketplace/terabox](https://xapiverse.com/marketplace/terabox)**
    and create an account.
@@ -651,9 +652,9 @@ Check the state of the pool at any time with `/tbtest <link>`, which reports eac
 key as *ready* or *exhausted* and now also tests whether the API resolver returns
 real downloadable links for that share.
 
-**How the bot chooses:** with a key configured the API is tried first. If it
-cannot answer and `TERABOX_COOKIE` is set, the direct scraper runs as a
-fallback. With no key at all, behaviour is unchanged.
+**How the bot chooses:** TeraBox is API-only. The bot requires `XAPIVERSE_KEY`
+and does not use `TERABOX_COOKIE`, mirror scraping, or `TERABOX_PROXY` while
+`TERABOX_API_ONLY=1`.
 
 **A note on privacy:** download URLs returned by the API point at the provider's
 servers, not TeraBox, so the bot deliberately does **not** attach your

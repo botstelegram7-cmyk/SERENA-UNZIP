@@ -79,6 +79,10 @@ class Config:
     # fix. Example: http://user:pass@host:port  or  socks5://host:1080
     TERABOX_PROXY      = os.getenv("TERABOX_PROXY", "").strip()
 
+    # API-only mode for TeraBox. Cookies/direct scraping are intentionally not
+    # used for downloads; xAPIverse is the supported transport.
+    TERABOX_API_ONLY   = os.getenv("TERABOX_API_ONLY", "1").strip().lower() not in ("0", "false", "off", "no")
+
     # xAPIverse TeraBox API — resolves share links server-side, so the
     # address block that stops direct scraping does not apply.
     # Free tier is 100 credits/month per key, so several keys can be set
@@ -106,9 +110,12 @@ class Config:
     APIFY_API_TOKEN_4  = (os.getenv("APIFY_API_TOKEN_4") or os.getenv("APIFY_TOKEN_4", "")).strip()
     APIFY_API_TOKEN_5  = (os.getenv("APIFY_API_TOKEN_5") or os.getenv("APIFY_TOKEN_5", "")).strip()
     APIFY_YOUTUBE_ACTOR_ID = os.getenv("APIFY_YOUTUBE_ACTOR_ID", "UUhJDfKJT2SsXdclR").strip()
+    YOUTUBE_API_ONLY = os.getenv("YOUTUBE_API_ONLY", "1").strip().lower() not in ("0", "false", "off", "no")
     APIFY_YOUTUBE_DEFAULT_QUALITY = os.getenv("APIFY_YOUTUBE_DEFAULT_QUALITY", "720p").strip()
     APIFY_YOUTUBE_FORMAT = os.getenv("APIFY_YOUTUBE_FORMAT", "mp4").strip()
-    APIFY_YOUTUBE_STORE_IN_KVSTORE = os.getenv("APIFY_YOUTUBE_STORE_IN_KVSTORE", "1").strip().lower() not in ("0", "false", "off", "no", "none")
+    # Matches the Apify snippet: None/null by default. If you want to force a
+    # particular KV store, set APIFY_YOUTUBE_STORE_IN_KVSTORE to that store id.
+    APIFY_YOUTUBE_STORE_IN_KVSTORE = os.getenv("APIFY_YOUTUBE_STORE_IN_KVSTORE", "").strip()
     APIFY_YOUTUBE_TRANSCRIPTION = (
         os.getenv("APIFY_YOUTUBE_TRANSCRIPTION")
         or os.getenv("YOUTUBE_API_TRANSCRIPTION", "ALWAYS_TRANSCRIBE")

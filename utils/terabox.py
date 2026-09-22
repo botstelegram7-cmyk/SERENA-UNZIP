@@ -407,6 +407,19 @@ def has_api_key() -> bool:
     return bool(_api_keys())
 
 
+def _first_api_key() -> str:
+    keys = _usable_keys()
+    return keys[0] if keys else ""
+
+
+def _is_api_provider_url(url: str) -> bool:
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return host == "xapiverse.com" or host.endswith(".xapiverse.com") or host == "iteraplay.com" or host.endswith(".iteraplay.com")
+
+
 def _usable_keys() -> List[str]:
     """Keys not currently parked for being out of credit."""
     now = time.time()
@@ -478,6 +491,8 @@ def _first_api_link(entry: Dict) -> str:
         if isinstance(value, list):
             value = next((v for v in value if isinstance(v, str)), "")
         if isinstance(value, str) and value.startswith(("http://", "https://")):
+            if is_terabox_url(value):
+                continue
             low_key = key.lower()
             low_val = value.lower()
             if any(bad in low_key or bad in low_val for bad in ("thumb", "subtitle", "caption")):
@@ -587,9 +602,11 @@ async def list_files_via_api(url: str) -> List[Dict]:
 
 
 async def list_files(url: str) -> List[Dict]:
-    """Resolve a share link to a flat list of downloadable files.
+    """Resolve a share link through xAPIverse only.
 
-    Each entry: {name, size, fs_id, dlink, is_dir, path}
+    Cookies/direct scraping are deliberately not used for downloads. They are
+    kept only as low-level helpers for legacy diagnostics when API-only mode is
+    disabled by an operator.
     """
     if not is_terabox_url(url):
         raise TeraboxError("Ye TeraBox ka link nahi hai.")
@@ -598,96 +615,11 @@ async def list_files(url: str) -> List[Dict]:
         raise TeraboxError(
             "<b>Is link se share ID nahi mila.</b>\n\n"
             "Format aisa hona chahiye: <code>terabox.com/s/1xxxxxxx</code>")
-
-    # The API resolves the share on its own infrastructure, so it sidesteps
-    # the address block entirely. Try it first when a key is configured.
-    # If it fails and direct scraping also fails, include the API reason in the
-    # final error instead of hiding it behind the old IP-block message.
-    api_error = ""
-    if has_api_key():
-        try:
-            items = await list_files_via_api(url)
-            if items:
-                return items
-        except TeraboxError as e:
-            api_error = str(e)
-            if not has_cookie() and not _proxy():
-                raise          # nothing else to try
-        except Exception as e:
-            api_error = f"{type(e).__name__}: {str(e)[:160]}"
-            if not has_cookie() and not _proxy():
-                raise TeraboxError(api_error)
-
-    problem = cookie_problem()
-    if problem and problem != "not set":
+    if not has_api_key():
         raise TeraboxError(
-            f"<b>TERABOX_COOKIE is not usable:</b> {problem}.\n\n"
-            "Chrome → F12 → Application → Cookies → terabox.com → "
-            "copy the full <code>ndus</code> value.")
-
-    _LAST_TRANSPORT_ERROR["v"] = ""
-    jar = aiohttp.CookieJar(unsafe=True)
-    timeout = aiohttp.ClientTimeout(total=None, sock_connect=20, sock_read=30)
-    seen_errno = 0
-    withheld_names = ""
-
-    async with aiohttp.ClientSession(cookie_jar=jar, timeout=timeout) as session:
-        # Prefer the mirror the user actually pasted, then sweep the rest.
-        host = _host_of(url)
-        order = ([m for m in MIRRORS if host in m] +
-                 [m for m in MIRRORS if host not in m])
-
-        for mirror in order:
-            token = await _warm_up(session, mirror, surl)
-            entries, errno = await _list_on_mirror(session, mirror, surl, token)
-            if entries is not None:
-                files = await _flatten(session, mirror, surl, token, entries)
-                if files:
-                    if not any(f.get("dlink") for f in files):
-                        # /share/list often omits dlink even when the share
-                        # lists fine. Mint the links explicitly before
-                        # giving up — that path frequently works when the
-                        # listing one does not.
-                        await _mint_dlinks(session, mirror, surl, token, files)
-                    if not any(f.get("dlink") for f in files):
-                        # This mirror listed the file but withheld the dlink.
-                        # Do NOT stop here: /tbtest often shows another mirror
-                        # (for example dm.1024tera.com) can mint the same file.
-                        withheld_names = ", ".join(f["name"][:40] for f in files[:2])
-                        seen_errno = seen_errno or 140
-                        continue
-                    return files
-                raise TeraboxError(
-                    "<b>Is share me koi file nahi mili.</b>\n\n"
-                    "Folder khali hai ya uska content hata diya gaya hai.")
-            if errno:
-                seen_errno = errno
-            # Keep sweeping: 105 from one mirror does not mean the share is
-            # dead, since another mirror often resolves the same link.
-
-    if seen_errno in _ERRNO_HELP:
-        raise TeraboxError(_ERRNO_HELP[seen_errno])
-    if seen_errno in (140, 400210, 460020, -6):
-        msg = _wall_message()
-        if withheld_names:
-            msg += f"\n\n<i>File seen: {withheld_names}</i>"
-        if api_error:
-            msg += f"\n\n<b>API attempt failed:</b>\n<code>{api_error[:220]}</code>"
-        raise TeraboxError(msg)
-    transport = _LAST_TRANSPORT_ERROR.get("v") or ""
-    if not seen_errno and transport:
-        # Never reached TeraBox at all — say so rather than blaming its API
-        raise TeraboxError(
-            "<b>TeraBox tak request pahunch hi nahi payi.</b>\n\n"
-            f"<i>Reason: {transport}</i>\n\n"
-            + ("Cookie check karo — usme newline ya extra character to nahi?"
-               if "header" in transport.lower()
-               else "Thodi der baad try karo."))
-    raise TeraboxError(
-        "<b>TeraBox se file list nahi mili.</b>"
-        + (f"\n\n<i>errno: {seen_errno}</i>" if seen_errno else "")
-        + (f"\n<i>{transport}</i>" if transport else "")
-        + "\n\n<i>Owner: <code>/tbtest</code> chala kar mirrors ka status dekho.</i>")
+            "<b>TeraBox API is not configured.</b>\n\n"
+            "Set <code>XAPIVERSE_KEY</code>. Cookies are intentionally ignored.")
+    return await list_files_via_api(url)
 
 
 async def _share_meta(session: aiohttp.ClientSession, mirror: str,
@@ -810,42 +742,75 @@ async def _flatten(session: aiohttp.ClientSession, mirror: str, surl: str,
 
 async def download_file(entry: Dict, output_dir: str,
                         progress=None) -> Optional[str]:
-    """Download one resolved entry. Returns the saved path, or None."""
+    """Download one API-resolved TeraBox entry. Returns the saved path."""
     dlink = entry.get("dlink")
     if not dlink:
-        return None
+        raise TeraboxError("TeraBox API returned a file without a download URL.")
     os.makedirs(output_dir, exist_ok=True)
     name = _safe_name(entry.get("name") or "terabox_file")
     dest = os.path.join(output_dir, name)
-    mirror = entry.get("mirror") or MIRRORS[0]
+    mirror = entry.get("mirror") or "xapiverse"
+
+    if mirror != "xapiverse" and Config.TERABOX_API_ONLY:
+        raise TeraboxError("TeraBox direct/cookie downloads are disabled; API link required.")
 
     if mirror == "xapiverse":
-        # These URLs point at the API provider, not TeraBox. Sending the
-        # TeraBox session cookie there would hand a third party a
-        # logged-in credential it has no need for.
         headers = {"User-Agent": DESKTOP_UA, "Accept": "*/*"}
+        if _is_api_provider_url(dlink):
+            k = _first_api_key()
+            if k:
+                headers["xAPIverse-Key"] = k
     else:
         headers = _headers(f"https://{mirror}/")
         headers["Accept"] = "*/*"
 
     jar = aiohttp.CookieJar(unsafe=True)
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)
+    last_err = ""
     async with aiohttp.ClientSession(cookie_jar=jar, timeout=timeout) as session:
+        current_url = dlink
         for attempt in range(1, 4):
             try:
                 have = os.path.getsize(dest) if os.path.exists(dest) else 0
                 h = dict(headers)
                 if have > 1024:
                     h["Range"] = f"bytes={have}-"
-                async with session.get(dlink, headers=h, proxy=_proxy(),
+                async with session.get(current_url, headers=h,
+                                       proxy=None if mirror == "xapiverse" else _proxy(),
                                        allow_redirects=True) as r:
+                    ctype = (r.headers.get("Content-Type") or "").lower()
                     if r.status in (403, 410):
-                        return None          # signed link expired
+                        body = (await r.text())[:200]
+                        raise TeraboxError(f"TeraBox API download URL was refused: HTTP {r.status} {body}")
                     if r.status not in (200, 206):
+                        body = (await r.text())[:200]
+                        last_err = f"HTTP {r.status} {body}"
                         await asyncio.sleep(2 * attempt)
                         continue
+
+                    # Some API/provider endpoints answer JSON containing the
+                    # actual file URL. Follow that URL instead of saving JSON.
+                    if "json" in ctype or "text/" in ctype:
+                        text = await r.text()
+                        try:
+                            data = json.loads(text)
+                        except Exception:
+                            data = None
+                        if isinstance(data, dict):
+                            nested = _first_api_link(data)
+                            if nested and nested != current_url:
+                                current_url = nested
+                                if _is_api_provider_url(current_url):
+                                    k = _first_api_key()
+                                    if k:
+                                        headers["xAPIverse-Key"] = k
+                                continue
+                        last_err = text[:200]
+                        await asyncio.sleep(2 * attempt)
+                        continue
+
                     mode = "ab" if (r.status == 206 and have) else "wb"
-                    total = r.content_length or 0
+                    total = r.content_length or int(entry.get("size") or 0) or 0
                     done = have if mode == "ab" else 0
                     with open(dest, mode) as fh:
                         async for chunk in r.content.iter_chunked(1 << 16):
@@ -860,9 +825,14 @@ async def download_file(entry: Dict, output_dir: str,
                                     pass
                 if os.path.exists(dest) and os.path.getsize(dest) > 1024:
                     return dest
-            except Exception:
+            except TeraboxError:
+                raise
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:160]}"
                 await asyncio.sleep(2 * attempt)
-    return dest if os.path.exists(dest) and os.path.getsize(dest) > 1024 else None
+    if os.path.exists(dest) and os.path.getsize(dest) > 1024:
+        return dest
+    raise TeraboxError(f"TeraBox API file download failed. {last_err}")
 
 
 def _safe_name(name: str) -> str:
@@ -880,21 +850,13 @@ def human_size(n: int) -> str:
 
 
 async def diagnose(url: str = "") -> str:
-    """Owner-facing probe, mirrored on /igtest's style."""
+    """Owner-facing API-only TeraBox probe."""
     out = ["<b>TeraBox Diagnostics</b>", ""]
-    problem = cookie_problem()
-    if not has_cookie():
-        out.append("Cookie: <b>not set</b>")
-    elif problem:
-        out.append(f"Cookie: <b>{problem}</b>")
+    if has_cookie():
+        out.append("Cookie: <b>ignored</b> (API-only mode)")
     else:
-        ck = _cookie_header()
-        m = re.search(r"ndus=([^;]+)", ck, re.I)
-        val = m.group(1) if m else ""
-        out.append(f"Cookie: set (ndus, {len(val)} chars)")
+        out.append("Cookie: <b>not used</b> (API-only mode)")
     out.append(f"API keys: {api_key_status()}")
-    px = _proxy()
-    out.append(f"Proxy: {px.split('@')[-1][:32] if px else 'not set'}")
     if url:
         out.append(f"surl: <code>{extract_surl(url) or 'not parsed'}</code>")
     out.append("")
@@ -909,50 +871,15 @@ async def diagnose(url: str = "") -> str:
                 f"API resolve: <b>{len(api_items)} files</b> · "
                 f"links {api_links}/{len(api_items)}"
                 + (f" · {human_size(api_size)}" if api_size else ""))
+            for i, item in enumerate(api_items[:5], 1):
+                out.append(f"{i}. <code>{item.get('name') or 'file'}</code> — {human_size(item.get('size') or 0)}")
         except Exception as e:
-            out.append(f"API resolve: <b>failed</b> — <code>{str(e)[:180]}</code>")
-        out.append("")
-    if not surl:
-        out += ["<i>Tip: <code>/tbtest &lt;link&gt;</code> chalao — bina link ke "
-                "sirf reachability test hoti hai, file list nahi.</i>", ""]
-    jar = aiohttp.CookieJar(unsafe=True)
-    async with aiohttp.ClientSession(cookie_jar=jar) as session:
-        for mirror in MIRRORS[:5]:
-            token = await _warm_up(session, mirror, surl or "")
-            entries, errno = await _list_on_mirror(session, mirror,
-                                                   surl or "", token)
-            if entries is not None:
-                line = f"{mirror}: {len(entries)} entries"
-                # Listing working is only half the job — report whether a
-                # download link can actually be minted, which is the step
-                # that fails on a walled IP.
-                try:
-                    files = await _flatten(session, mirror, surl, token, entries)
-                    if files:
-                        have = sum(1 for f in files if f.get("dlink"))
-                        if not have:
-                            await _mint_dlinks(session, mirror, surl, token, files)
-                            have = sum(1 for f in files if f.get("dlink"))
-                        line += (f" · dlink {have}/{len(files)} "
-                                 + ("" if have else "withheld"))
-                except Exception:
-                    pass
-                out.append(line)
-            elif not surl:
-                # No link given: reaching the API at all is the useful signal
-                out.append(f"{'' if token else ''} {mirror}: reachable"
-                           f" (jsToken {'' if token else ''})")
-            else:
-                tag = {105: "share not found", 140: "IP walled",
-                       2: "download refused (IP/cookie)",
-                       4000020: "token rejected", -9: "password protected",
-                       400210: "verification required"}.get(errno, f"errno {errno}")
-                out.append(f"{mirror}: {tag}"
-                           + (f" (jsToken {'' if token else ''})"))
-    out += ["", "<i>Listing lekin dlink = TeraBox file dikhata hai par "
-            "download link rok raha hai. Ye IP-level block hai — cookie se "
-            "theek nahi hota.</i>"]
-    if not _proxy():
-        out.append("<i>Fix: API key working rakho, ya residential proxy laga kar "
-                   "<code>TERABOX_PROXY</code> set karo.</i>")
+            out.append(f"API resolve: <b>failed</b> — <code>{str(e)[:220]}</code>")
+    elif surl and not has_api_key():
+        out.append("API resolve: <b>not configured</b> — set <code>XAPIVERSE_KEY</code>")
+    else:
+        out.append("<i>Tip: <code>/tbtest &lt;link&gt;</code> chalao — bina link ke sirf API/token status dikhata hai.</i>")
+
+    out.append("")
+    out.append("<i>Direct mirror/cookie scraping is disabled. Downloader uses the API result only.</i>")
     return "\n".join(out)

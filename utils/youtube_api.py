@@ -131,10 +131,6 @@ def youtube_api_formats() -> List[Dict[str, Any]]:
         {"label": "720p",  "format_id": "ytapi_720p",  "height": 720,  "ext": "mp4", "size_approx": 0},
         {"label": "1080p", "format_id": "ytapi_1080p", "height": 1080, "ext": "mp4", "size_approx": 0},
         {"label": "Best",  "format_id": "ytapi_best",  "height": 0,    "ext": "mp4", "size_approx": 0},
-        # Audio still goes through yt-dlp because the supplied actor schema is
-        # video-oriented (preferredFormat=mp4).  Keeping the button preserves the
-        # previous UX for installations where cookies/proxy make yt-dlp work.
-        {"label": "🎵 Audio Only", "format_id": "bestaudio", "height": 0, "ext": "m4a", "size_approx": 0},
     ]
 
 
@@ -143,7 +139,7 @@ def build_run_input(url: str, quality: str, preferred_format: Optional[str] = No
     q = (quality or Config.APIFY_YOUTUBE_DEFAULT_QUALITY or "720p").strip() or "720p"
     data: Dict[str, Any] = {
         "videos": [{"url": url}],
-        "storeInKVStore": bool(getattr(Config, "APIFY_YOUTUBE_STORE_IN_KVSTORE", True)),
+        "storeInKVStore": (Config.APIFY_YOUTUBE_STORE_IN_KVSTORE or None),
         "preferredQuality": q,
         "preferredFormat": fmt,
         "filenameTemplateParts": ["title"],
@@ -679,10 +675,17 @@ async def download_youtube_via_api(url: str, output_dir: str, quality: str,
     items, token = await run_youtube_actor(url, quality, status_message=status_message)
     assets = extract_download_assets(items)
     if not assets:
+        err_bits = []
+        for item in items:
+            for k in ("error", "message", "statusMessage", "reason"):
+                v = item.get(k) if isinstance(item, dict) else None
+                if v:
+                    err_bits.append(str(v)[:180])
         keys = sorted({".".join(path) for item in items for path, _, _ in _walk(item)})[:20]
         raise YouTubeApiError(
             "Apify finished, but no downloadable file URL was found in the dataset.\n"
-            f"Dataset keys: {', '.join(keys)[:220]}"
+            + (("API message: " + " | ".join(err_bits[:2]) + "\n") if err_bits else "")
+            + f"Dataset keys: {', '.join(keys)[:220]}"
         )
     asset = assets[0]
     await _safe_edit(
@@ -725,7 +728,7 @@ async def diagnose(url: str = "") -> str:
     lines.append(f"API tokens: {api_key_status()}")
     lines.append(f"Default quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b>")
     lines.append(f"Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
-    lines.append(f"Store in KV: <b>{'yes' if Config.APIFY_YOUTUBE_STORE_IN_KVSTORE else 'no'}</b>")
+    lines.append(f"Store in KV: <b>{Config.APIFY_YOUTUBE_STORE_IN_KVSTORE or 'default/null'}</b>")
     lines.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
     if url:
         lines.append(f"Link parsed as YouTube: <b>{'yes' if is_youtube_url(url) else 'no'}</b>")

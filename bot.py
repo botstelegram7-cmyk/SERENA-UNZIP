@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.1"
-BOT_CODENAME = "API Download Fixes + ETA Everywhere"
+BOT_VERSION  = "v3.12.2"
+BOT_CODENAME = "API-only YouTube and TeraBox"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.2": [
+        "YouTube is now API-only: cookies and yt-dlp fallback are not used for YouTube downloads",
+        "TeraBox is now API-only: cookies and mirror scraping are not used for TeraBox downloads",
+        "TeraBox API download errors now show the actual API/provider HTTP response instead of a generic failure",
+        "YouTube diagnostics no longer reports cookie/yt-dlp checks; it focuses on Apify actor/token access",
+    ],
     "v3.12.1": [
         "TeraBox no longer stops at the first mirror when that mirror withholds dlink; it keeps trying mirrors such as dm.1024tera.com",
         "TeraBox diagnostics now tests the API resolver and shows the real API error/result",
@@ -892,7 +898,7 @@ HELP_PAGES = {
             "<code>/story &lt;user&gt;</code> — currently active stories\n"
             "Example: <code>/profile natgeo 12</code>\n\n"
             "<b>Video platforms</b>\n"
-            "<code>/ytdl &lt;link&gt;</code> — YouTube via API/fallback, TikTok, X,\n"
+            "<code>/ytdl &lt;link&gt;</code> — YouTube via API only, TikTok, X,\n"
             "Facebook, Reddit, Vimeo and roughly 1800 further sites\n\n"
             "<b>Cloud storage</b>\n"
             "Google Drive files and entire folders resolve automatically.\n"
@@ -911,19 +917,15 @@ HELP_PAGES = {
             "Some platforms block requests coming from data centres. The bot\n"
             "runs on hosted infrastructure, so those services see a server\n"
             "address rather than a home connection and refuse it.\n\n"
-            "<b>YouTube and TeraBox need API/proxy help on hosted servers.</b>\n"
-            "Cookies alone cannot lift an address-level block, so the bot now\n"
-            "uses API providers first when their keys are configured.\n\n"
-            "<b>YouTube</b>  ·  API supported\n"
+            "<b>YouTube and TeraBox are API-only in this build.</b>\n"
+            "Cookies are intentionally ignored for these two downloaders.\n\n"
+            "<b>YouTube</b>  ·  API only\n"
             "Downloads use the Apify actor when <code>APIFY_API_TOKEN</code>\n"
-            "is set, with yt-dlp kept as a fallback. Optional transcription\n"
-            "is controlled by <code>APIFY_YOUTUBE_TRANSCRIPTION</code>.\n"
-            "<i>Fallback:</i> <code>YOUTUBE_COOKIES</code> or\n"
-            "<code>YTDL_PROXY</code>.\n\n"
-            "<b>TeraBox</b>  ·  API supported\n"
+            "is set. Optional transcription is controlled by\n"
+            "<code>APIFY_YOUTUBE_TRANSCRIPTION</code>.\n\n"
+            "<b>TeraBox</b>  ·  API only\n"
             "Shares are resolved through xAPIverse when <code>XAPIVERSE_KEY</code>\n"
-            "is set. Without an API key, a residential proxy in\n"
-            "<code>TERABOX_PROXY</code> is still the direct-scrape fix.\n\n"
+            "is set. Cookies and mirror scraping are not used for downloads.\n\n"
             "<b>Instagram</b>  ·  partially affected\n"
             "Reels and posts work through the public embed. Profiles and\n"
             "stories need the private API and are refused from hosted\n"
@@ -975,9 +977,9 @@ HELP_PAGES = {
             "<code>/premium &lt;id&gt; [days]</code> — grant Premium\n"
             "<code>/ban &lt;id&gt;</code> · <code>/unban &lt;id&gt;</code>\n\n"
             "<b>Diagnostics</b>\n"
-            "<code>/ytcheck</code> — inspect YouTube API/fallback\n"
+            "<code>/ytcheck</code> — inspect YouTube API access\n"
             "<code>/igtest</code> — probe Instagram endpoints\n"
-            "<code>/tbtest &lt;link&gt;</code> — probe TeraBox mirrors/API keys\n"
+            "<code>/tbtest &lt;link&gt;</code> — inspect TeraBox API result\n"
             "<code>/resetlimit</code> — clear a rate-limit cooldown\n"
             "<code>/clearcache</code> — empty the media cache"
         ),
@@ -1078,10 +1080,10 @@ async def _send_limits_rich(chat_id: int, reply_to: int = None) -> bool:
         R.paragraph("Some platforms refuse requests from data centres. This "
                     "bot runs on hosted infrastructure, so those services see "
                     "a server address and turn it away."),
-        R.paragraph(R.bold("YouTube and TeraBox need API/proxy help on hosted servers.")),
-        R.paragraph("Cookies alone cannot change a server address. YouTube "
-                    "therefore uses the Apify actor when APIFY_API_TOKEN is "
-                    "set, and TeraBox uses xAPIverse when XAPIVERSE_KEY is set."),
+        R.paragraph(R.bold("YouTube and TeraBox are API-only in this build.")),
+        R.paragraph("Cookies are ignored for these two downloaders. YouTube "
+                    "uses the Apify actor with APIFY_API_TOKEN, and TeraBox "
+                    "uses xAPIverse with XAPIVERSE_KEY."),
         R.table(
             [[R.cell(R.bold("Service"), header=True),
               R.cell(R.bold("Status"), header=True),
@@ -1092,11 +1094,10 @@ async def _send_limits_rich(chat_id: int, reply_to: int = None) -> bool:
              row("Drive, direct, m3u8", "Working", "-")],
             bordered=True, striped=True, compact=True),
         R.expandable_quote(
-            "A cookie proves who you are; it does not change where the "
-            "request comes from. When a platform blocks an address, the "
-            "same cookie that works in your browser may still be refused "
-            "from a server. Use an API provider or a residential proxy.",
-            credit="Why cookies alone are not enough"),
+            "For YouTube and TeraBox this bot now avoids cookies entirely. "
+            "If one of them fails, check the API token, actor/API response, "
+            "and returned download URL with /ytcheck or /tbtest.",
+            credit="API-only mode"),
         R.buttons([
             R.button("Copy /ytcheck", copy_text="/ytcheck", style="primary"),
             R.button("Copy /tbtest", copy_text="/tbtest", style="primary"),
@@ -1436,7 +1437,9 @@ async def terabox_cmd(client, message):
         elif not failed:
             await _safe_edit(status, "No files were found.")
         else:
-            await _safe_edit(status, f"{failed} file(s) could not be downloaded.")
+            # _handle_terabox_link already leaves the exact API/download
+            # reason in the status message; do not overwrite it.
+            pass
     except TeraboxError as e:
         await _safe_edit(status, str(e))
     except Exception as e:
@@ -5135,10 +5138,17 @@ async def _handle_terabox_link(client, uid, user, url, temp_root, chat_id,
                     cur, tot, _st, _start, _name,
                     "Downloading TeraBox", known_total=_size)
             fp = await download_file(entry, str(dest_dir), progress=_tb_progress)
-        except Exception:
-            fp = None
+        except TeraboxError as e:
+            failed += 1
+            await _safe_edit(status, str(e))
+            continue
+        except Exception as e:
+            failed += 1
+            await _safe_edit(status, f"TeraBox API file download failed:\n<code>{str(e)[:220]}</code>")
+            continue
         if not fp:
             failed += 1
+            await _safe_edit(status, "TeraBox API returned no file bytes.")
             continue
         if await _upload_one_file(client, uid, fp, chat_id, reply_to, status,
                                   label=f" {i}/{len(files)}"):
@@ -5175,26 +5185,33 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
     err = b""
     api_error = ""
     api_done = False
+    is_youtube_api_target = False
 
-    # YouTube links use the Apify API first when tokens are configured. This
-    # is the automatic paste-link path; the /ytdl quality-button path goes
-    # through utils.ytdl_tools.download_video and uses the same API module.
+    # YouTube is API-only. Cookies and yt-dlp fallback are intentionally not
+    # used for YouTube downloads.
     try:
         from utils.youtube_api import (
             download_youtube_via_api, has_api_tokens, is_youtube_url,
         )
-        if is_youtube_url(url) and has_api_tokens():
+        is_youtube_api_target = is_youtube_url(url)
+        if is_youtube_api_target:
+            if not has_api_tokens():
+                await _safe_edit(status, "<b>YouTube API is not configured.</b>\n\nSet <code>APIFY_API_TOKEN</code>.")
+                return False
             await download_youtube_via_api(
                 url, str(out_dir), Config.APIFY_YOUTUBE_DEFAULT_QUALITY,
                 status_message=status)
             api_done = True
     except Exception as e:
         api_error = str(e)
-        await _safe_edit(
-            status,
-            "<b>YouTube API failed, trying yt-dlp fallback…</b>\n\n"
-            f"<code>{api_error[:180]}</code>")
-        await asyncio.sleep(1)
+        if is_youtube_api_target:
+            await _safe_edit(
+                status,
+                "<b>YouTube API failed.</b>\n\n"
+                f"<code>{api_error[:350]}</code>\n\n"
+                "<i>Cookies/yt-dlp are disabled for YouTube. Run "
+                "<code>/ytcheck &lt;link&gt;</code> to inspect the actor/token.</i>")
+            return False
 
     if not api_done:
         cookie_path = None
@@ -5469,9 +5486,9 @@ async def handle_links_download_all(client, cq, original_msg):
                         chat_id,
                         _blocked_service_blocks(
                             "TeraBox",
-                            "The share was found, but TeraBox withholds the "
-                            "signed download link from hosted addresses.",
-                            "TERABOX_PROXY",
+                            "The TeraBox downloader is API-only. Check the "
+                            "xAPIverse key or the API download URL returned.",
+                            "XAPIVERSE_KEY",
                             "Google Drive and direct links are unaffected."),
                         "", reply_to)
                 except Exception:

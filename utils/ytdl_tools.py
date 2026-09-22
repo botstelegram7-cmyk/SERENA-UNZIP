@@ -148,11 +148,10 @@ async def get_formats(url: str) -> List[Dict]:
     # Apify actor can accept a requested quality directly.
     if _is_youtube(url):
         try:
-            from utils.youtube_api import has_api_tokens, youtube_api_formats
-            if has_api_tokens():
-                return youtube_api_formats()
+            from utils.youtube_api import youtube_api_formats
+            return youtube_api_formats()
         except Exception:
-            pass
+            return _generic_formats()
 
     try:
         info = await get_video_info(url)
@@ -251,20 +250,18 @@ async def download_video(
     is_insta = _is_instagram_url(url)
     youtube_api_error = ""
 
-    # YouTube first goes through the configured Apify actor. If the API is not
-    # configured, or if audio-only was explicitly requested, the legacy yt-dlp
-    # path below remains available as a fallback.
-    if _is_youtube(url) and format_id != "bestaudio":
-        try:
-            from utils.youtube_api import (
-                download_youtube_via_api, has_api_tokens, quality_from_choice,
-            )
-            if has_api_tokens():
-                quality = quality_from_choice(format_id, height)
-                return await download_youtube_via_api(
-                    url, output_dir, quality, status_message=status_message)
-        except Exception as e:
-            youtube_api_error = str(e)
+    # YouTube is API-only. Do not use cookies or yt-dlp fallback for YouTube.
+    if _is_youtube(url):
+        from utils.youtube_api import (
+            download_youtube_via_api, has_api_tokens, quality_from_choice,
+        )
+        if not has_api_tokens():
+            raise RuntimeError("YouTube API is not configured. Set APIFY_API_TOKEN.")
+        if format_id == "bestaudio":
+            raise RuntimeError("Audio-only YouTube downloads are not supported by the configured API actor.")
+        quality = quality_from_choice(format_id, height)
+        return await download_youtube_via_api(
+            url, output_dir, quality, status_message=status_message)
 
     if format_id == "bestaudio":
         fmt_str = "bestaudio/best"
@@ -375,7 +372,7 @@ def is_supported_url(url: str) -> bool:
 
 
 async def youtube_diagnose(url: str = "") -> str:
-    """Report YouTube API readiness plus yt-dlp fallback health."""
+    """Report YouTube API readiness. Cookies/yt-dlp are intentionally ignored."""
     out = ["<b>YouTube Diagnostics</b>", ""]
 
     try:
@@ -385,7 +382,7 @@ async def youtube_diagnose(url: str = "") -> str:
         out.append(f"API mode: <b>{'ready' if has_api_tokens() else 'not configured'}</b>")
         out.append(f"Actor access: <b>{await check_actor_access()}</b>")
         out.append(f"Quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b> · Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
-        out.append(f"Store in KV: <b>{'yes' if Config.APIFY_YOUTUBE_STORE_IN_KVSTORE else 'no'}</b>")
+        out.append(f"Store in KV: <b>{Config.APIFY_YOUTUBE_STORE_IN_KVSTORE or 'default/null'}</b>")
         out.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
         if url:
             out.append(f"Input link: <b>{'YouTube' if is_youtube_url(url) else 'not YouTube'}</b>")
@@ -393,96 +390,26 @@ async def youtube_diagnose(url: str = "") -> str:
     except Exception:
         pass
 
-    out.append("<b>yt-dlp fallback</b>")
-    raw = (Config.YOUTUBE_COOKIES or "")
-    if not raw.strip():
-        out.append("Cookies: <b>not set</b>")
-    else:
-        path = write_youtube_cookie_file()
-        lines = names = 0
-        essential = set()
-        try:
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    lines += 1
-                    parts = re.split(r"\t+|\s{2,}", line)
-                    if len(parts) >= 7:
-                        names += 1
-                        essential.add(parts[5])
-        except Exception as e:
-            out.append(f"Cookies: <b>unreadable</b> ({str(e)[:40]})")
-            lines = -1
-
-        if lines == 0:
-            out.append("Cookies: <b>set but no valid rows parsed</b>")
-            out.append("<i>The value must be Netscape cookies.txt: seven "
-                       "TAB-separated fields per line. A browser 'k=v; k=v' "
-                       "string will not work here.</i>")
-        elif lines > 0:
-            out.append(f"Cookies: <b>{names} parsed</b> from {lines} rows")
-            have = [k for k in ("SID", "__Secure-1PSID", "__Secure-3PSID",
-                                "LOGIN_INFO", "HSID", "SSID") if k in essential]
-            out.append("Session keys: " +
-                       (", ".join(f"<code>{k}</code>" for k in have)
-                        if have else "<b>none found</b>"))
-            if not have:
-                out.append("<i>Without a login cookie such as LOGIN_INFO or "
-                           "__Secure-1PSID, YouTube treats the request as "
-                           "signed out. Export while logged in.</i>")
-
-    out += ["", f"Proxy: {'set' if Config.YTDL_PROXY else 'not set'}", ""]
-
-    # Ask yt-dlp itself, using exactly the flags the bot would use
-    cmd = ["yt-dlp", "--no-warnings", "--simulate",
-           *ytdl_network_args("https://www.youtube.com/"),
-           "--print", "%(title)s",
-           "https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
-    ret, sout, serr = await _run(cmd, timeout=60)
-    if ret == 0 and sout.strip():
-        out.append(f"Live check: <b>working</b> - {sout.strip()[:60]}")
-    else:
-        msg = (serr or "").strip().splitlines()
-        first = next((l for l in msg if "ERROR" in l), (msg[-1] if msg else ""))
-        low = first.lower()
-        if "not a bot" in low or "player response" in low:
-            out.append("Live check: <b>refused</b> - bot verification")
-            out.append("<i>Cookies are missing, expired, or from a signed-out "
-                       "session.</i>")
-        else:
-            out.append(f"Live check: <b>failed</b>\n<code>{first[:160]}</code>")
+    out.append("<b>Downloader mode</b>: API only")
+    out.append("<i>Cookies and yt-dlp are ignored for YouTube downloads.</i>")
     return "\n".join(out)
 
 
 def youtube_block_help() -> str:
-    """Guidance for YouTube's bot-detection wall.
-
-    Seen as either "Sign in to confirm you're not a bot" or "Failed to
-    extract any player response" - the same refusal, worded differently
-    depending on which extraction path was tried.
-    """
-    api_hint = "Set <code>APIFY_API_TOKEN</code> to use the Apify YouTube API path."
+    """Guidance for YouTube API-only mode."""
     try:
         from utils.youtube_api import has_api_tokens
         if has_api_tokens():
-            api_hint = "Apify API is configured; run <code>/ytcheck</code> to inspect token status."
+            return (
+                "<b>YouTube API failed.</b>\n\n"
+                "This bot is configured for API-only YouTube downloads, so "
+                "cookies and yt-dlp are not used. Run <code>/ytcheck &lt;link&gt;</code> "
+                "to verify actor/token access and inspect the API result.")
     except Exception:
         pass
-    if has_youtube_cookies():
-        return (
-            "<b>YouTube refused this download.</b>\n\n"
-            "Cookies are configured but were still rejected. Either they have "
-            "expired, or this address is flagged regardless of the session.\n\n"
-            f"<i>{api_hint} Fallback options: export fresh cookies or set "
-            "<code>YTDL_PROXY</code>.</i>")
     return (
-        "<b>YouTube refused this download.</b>\n\n"
-        "It asks hosted servers to confirm they are not a bot. The link is "
-        "fine - the address making the request is the problem.\n\n"
-        f"<i>Operator: {api_hint} yt-dlp fallback can also use "
-        "<code>YOUTUBE_COOKIES</code> or <code>YTDL_PROXY</code>.</i>")
+        "<b>YouTube API is not configured.</b>\n\n"
+        "Set <code>APIFY_API_TOKEN</code>. Cookies are intentionally ignored.")
 
 
 def blocked_reason(url: str) -> str:
