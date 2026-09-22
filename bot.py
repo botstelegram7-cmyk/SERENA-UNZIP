@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.10.1"
-BOT_CODENAME = "Honest Link Errors"
+BOT_VERSION  = "v3.11.0"
+BOT_CODENAME = "TeraBox API"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.11.0": [
+        "TeraBox now works through an API that is not blocked by address",
+        "Several API keys supported, with automatic switching when one runs out",
+        "<code>/tbtest</code> shows which keys are ready or exhausted",
+        "Setup instructions added to the README",
+    ],
     "v3.10.1": [
         "Expired links now say so, instead of showing a yt-dlp trace",
         "Token-style download gateways are treated as direct files",

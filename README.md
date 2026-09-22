@@ -218,6 +218,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `INSTAGRAM_COOKIES_2` … `_5` | ➖ | Extra Instagram sessions from **different accounts**. Work is spread across the pool, so no single account sustains the request rate that triggers a lock. A refused request parks that account for 45 minutes and continues on the next. |
 | `INSTAGRAM_PROXY` | ➖ | Proxy for Instagram. The private API refuses hosted addresses regardless of cookies, so this is the only dependable fix for `/story` and for profiles beyond the embed window. |
 | `YTDL_PROXY` | ➖ | Proxy for yt-dlp traffic, e.g. `http://user:pass@host:port`. |
+| `XAPIVERSE_KEY` … `_5` | ➖ | API keys for the [xAPIverse TeraBox API](https://xapiverse.com/marketplace/terabox). The API resolves share links on its own infrastructure, so the address block that stops direct scraping does not apply — this is the most reliable way to make TeraBox work from a hosted server. The free tier is **100 credits per month per key**, so set `XAPIVERSE_KEY_2` … `_5` with keys from additional accounts and the bot moves to the next one when a key runs out. |
 | `TERABOX_PROXY` | ➖ | HTTP/SOCKS proxy for TeraBox, e.g. `http://user:pass@host:port`. TeraBox withholds signed download links from datacenter IPs even with a valid cookie, so a residential proxy is the only reliable fix. |
 | `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
@@ -525,3 +526,38 @@ cookie alone does not lift it.
 
 Operators can check the live state with `/igtest` and `/tbtest <link>`.
 Users can read the same summary in the bot via `/limits`.
+
+---
+
+### Getting a TeraBox API key
+
+TeraBox refuses signed download links to data-centre addresses, so scraping it
+from a hosted server fails regardless of how good the cookies are. Routing the
+request through an API avoids this, because the provider resolves the share on
+its own infrastructure.
+
+1. Open **[xapiverse.com/marketplace/terabox](https://xapiverse.com/marketplace/terabox)**
+   and create an account.
+2. Subscribe to the TeraBox API — the free tier gives **100 credits per month**,
+   one credit per successful request. Failed requests are not charged.
+3. Copy the key (it looks like `xapi_…`) and set it in your environment:
+
+   ```
+   XAPIVERSE_KEY=xapi_your_key_here
+   ```
+
+4. **Optional — more than 100 downloads a month.** Create additional accounts,
+   and add their keys as `XAPIVERSE_KEY_2` through `XAPIVERSE_KEY_5`. When a key
+   returns "out of credit" the bot parks it for six hours and continues on the
+   next one, so a run is not interrupted.
+
+Check the state of the pool at any time with `/tbtest`, which reports each key
+as *ready* or *exhausted*.
+
+**How the bot chooses:** with a key configured the API is tried first. If it
+cannot answer and `TERABOX_COOKIE` is set, the direct scraper runs as a
+fallback. With no key at all, behaviour is unchanged.
+
+**A note on privacy:** download URLs returned by the API point at the provider's
+servers, not TeraBox, so the bot deliberately does **not** attach your
+`TERABOX_COOKIE` to those requests.

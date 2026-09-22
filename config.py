@@ -79,6 +79,17 @@ class Config:
     # fix. Example: http://user:pass@host:port  or  socks5://host:1080
     TERABOX_PROXY      = os.getenv("TERABOX_PROXY", "").strip()
 
+    # xAPIverse TeraBox API — resolves share links server-side, so the
+    # address block that stops direct scraping does not apply.
+    # Free tier is 100 credits/month per key, so several keys can be set
+    # and the bot moves to the next one when a key runs out.
+    # Get a key at https://xapiverse.com/marketplace/terabox
+    XAPIVERSE_KEY      = os.getenv("XAPIVERSE_KEY", "").strip()
+    XAPIVERSE_KEY_2    = os.getenv("XAPIVERSE_KEY_2", "").strip()
+    XAPIVERSE_KEY_3    = os.getenv("XAPIVERSE_KEY_3", "").strip()
+    XAPIVERSE_KEY_4    = os.getenv("XAPIVERSE_KEY_4", "").strip()
+    XAPIVERSE_KEY_5    = os.getenv("XAPIVERSE_KEY_5", "").strip()
+
     # YouTube cookies, in Netscape cookies.txt format. YouTube increasingly
     # answers datacenter IPs with a "Sign in to confirm you're not a bot"
     # challenge; exporting cookies from a logged-in browser clears it.

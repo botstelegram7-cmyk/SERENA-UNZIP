@@ -33,6 +33,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -380,6 +381,145 @@ async def _list_on_mirror(session: aiohttp.ClientSession, mirror: str,
     return None, last_errno
 
 
+# ── xAPIverse API ────────────────────────────────────────────────────────────
+# TeraBox refuses signed download links to datacenter addresses, so scraping
+# it from a hosted server fails no matter how good the cookies are. This API
+# resolves the share on its own infrastructure and hands back ready URLs.
+#
+# Free tier is 100 credits/month per key, so several keys are supported and
+# an exhausted one steps aside for the next.
+
+XAPIVERSE_URL = "https://xapiverse.com/api/terabox"
+
+# Keys observed to be out of credit, with the time they were parked.
+_KEY_STATE: Dict[str, float] = {}
+_KEY_COOLDOWN = 6 * 3600
+
+
+def _api_keys() -> List[str]:
+    keys = []
+    for name in ("XAPIVERSE_KEY", "XAPIVERSE_KEY_2", "XAPIVERSE_KEY_3",
+                 "XAPIVERSE_KEY_4", "XAPIVERSE_KEY_5"):
+        k = (getattr(Config, name, "") or "").strip()
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
+
+def has_api_key() -> bool:
+    return bool(_api_keys())
+
+
+def _usable_keys() -> List[str]:
+    """Keys not currently parked for being out of credit."""
+    now = time.time()
+    fresh = [k for k in _api_keys() if now - _KEY_STATE.get(k, 0) > _KEY_COOLDOWN]
+    # If every key is parked, try them all again rather than refusing.
+    return fresh or _api_keys()
+
+
+def api_key_status() -> str:
+    keys = _api_keys()
+    if not keys:
+        return "no API key set"
+    now = time.time()
+    bits = []
+    for i, k in enumerate(keys, 1):
+        parked = now - _KEY_STATE.get(k, 0) <= _KEY_COOLDOWN
+        left = int(_KEY_COOLDOWN - (now - _KEY_STATE.get(k, 0))) // 60
+        bits.append(f"#{i} " + (f"exhausted ({left}m)" if parked else "ready"))
+    return " · ".join(bits)
+
+
+def _items_from_api(payload: Dict) -> List[Dict]:
+    """Map the API response onto the same shape list_files() returns."""
+    out: List[Dict] = []
+    for e in (payload.get("list") or []):
+        if str(e.get("is_dir") or "0") == "1":
+            continue
+        link = (e.get("normal_dlink") or e.get("stream_url") or "").strip()
+        if not link:
+            continue
+        try:
+            size = int(e.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        out.append({
+            "name": e.get("name") or os.path.basename(
+                e.get("file_path") or "") or "file",
+            "size": size,
+            "fs_id": "",
+            "dlink": link,
+            "path": e.get("file_path") or "",
+            "is_dir": False,
+            "mirror": "xapiverse",
+            "thumbnail": e.get("thumbnail") or "",
+        })
+    return out
+
+
+async def list_files_via_api(url: str) -> List[Dict]:
+    """Resolve a share through xAPIverse. Raises TeraboxError on failure."""
+    keys = _usable_keys()
+    if not keys:
+        raise TeraboxError("No xAPIverse key configured.")
+
+    last_err = ""
+    timeout = aiohttp.ClientTimeout(total=60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for key in keys:
+            try:
+                async with session.post(
+                    XAPIVERSE_URL,
+                    json={"url": url},
+                    headers={"Content-Type": "application/json",
+                             "xAPIverse-Key": key},
+                ) as r:
+                    body = await r.text()
+                    status = r.status
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:80]}"
+                continue
+
+            # Out of credit / bad key: park it and try the next.
+            if status in (401, 402, 403, 429):
+                _KEY_STATE[key] = time.time()
+                last_err = f"HTTP {status}"
+                continue
+            if status != 200:
+                last_err = f"HTTP {status}"
+                continue
+
+            try:
+                data = json.loads(body)
+            except Exception:
+                last_err = "response was not JSON"
+                continue
+
+            if str(data.get("status", "")).lower() not in ("success", "ok", ""):
+                last_err = str(data.get("message")
+                               or data.get("error") or "API reported failure")
+                # A credit message means this key is spent, not that the
+                # link is bad.
+                if "credit" in last_err.lower() or "quota" in last_err.lower():
+                    _KEY_STATE[key] = time.time()
+                    continue
+                raise TeraboxError(
+                    f"<b>TeraBox API could not read this link.</b>\n\n"
+                    f"<i>{last_err[:160]}</i>")
+
+            items = _items_from_api(data)
+            if items:
+                return items
+            last_err = "API returned no files"
+
+    raise TeraboxError(
+        "<b>The TeraBox API could not resolve this link.</b>\n\n"
+        f"<i>{last_err or 'unknown error'}</i>\n\n"
+        "<i>If every key is out of credit, add another with "
+        "<code>XAPIVERSE_KEY_2</code>.</i>")
+
+
 async def list_files(url: str) -> List[Dict]:
     """Resolve a share link to a flat list of downloadable files.
 
@@ -393,12 +533,26 @@ async def list_files(url: str) -> List[Dict]:
             "<b>Is link se share ID nahi mila.</b>\n\n"
             "Format aisa hona chahiye: <code>terabox.com/s/1xxxxxxx</code>")
 
+    # The API resolves the share on its own infrastructure, so it sidesteps
+    # the address block entirely. Try it first when a key is configured,
+    # and fall back to scraping if it cannot answer.
+    if has_api_key():
+        try:
+            items = await list_files_via_api(url)
+            if items:
+                return items
+        except TeraboxError:
+            if not has_cookie():
+                raise          # nothing else to try
+        except Exception:
+            pass
+
     problem = cookie_problem()
     if problem and problem != "not set":
         raise TeraboxError(
-            f"<b>TERABOX_COOKIE thik nahi hai:</b> {problem}.\n\n"
+            f"<b>TERABOX_COOKIE is not usable:</b> {problem}.\n\n"
             "Chrome → F12 → Application → Cookies → terabox.com → "
-            "<code>ndus</code> → poori value copy karo.")
+            "copy the full <code>ndus</code> value.")
 
     _LAST_TRANSPORT_ERROR["v"] = ""
     jar = aiohttp.CookieJar(unsafe=True)
@@ -599,8 +753,14 @@ async def download_file(entry: Dict, output_dir: str,
     dest = os.path.join(output_dir, name)
     mirror = entry.get("mirror") or MIRRORS[0]
 
-    headers = _headers(f"https://{mirror}/")
-    headers["Accept"] = "*/*"
+    if mirror == "xapiverse":
+        # These URLs point at the API provider, not TeraBox. Sending the
+        # TeraBox session cookie there would hand a third party a
+        # logged-in credential it has no need for.
+        headers = {"User-Agent": DESKTOP_UA, "Accept": "*/*"}
+    else:
+        headers = _headers(f"https://{mirror}/")
+        headers["Accept"] = "*/*"
 
     jar = aiohttp.CookieJar(unsafe=True)
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)
@@ -664,6 +824,7 @@ async def diagnose(url: str = "") -> str:
         m = re.search(r"ndus=([^;]+)", ck, re.I)
         val = m.group(1) if m else ""
         out.append(f"Cookie: set (ndus, {len(val)} chars)")
+    out.append(f"API keys: {api_key_status()}")
     px = _proxy()
     out.append(f"Proxy: {'' + px.split('@')[-1][:32] if px else ' not set'}")
     if url:
