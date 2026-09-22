@@ -51,8 +51,17 @@ async def download_file(
     os.makedirs(dest_dir, exist_ok=True)
 
     timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+    # Some hosts reject requests with no User-Agent outright. Sending a
+    # browser-like one costs nothing and avoids an avoidable class of 403.
+    _hdrs = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/125.0.0.0 Safari/537.36"),
+        "Accept": "*/*",
+    }
     async with aiohttp.ClientSession(timeout=timeout_cfg) as session:
-        async with session.get(url) as resp:
+        async with session.get(url, headers=_hdrs,
+                               allow_redirects=True) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get("Content-Length") or 0)
             cd = resp.headers.get("Content-Disposition", "")

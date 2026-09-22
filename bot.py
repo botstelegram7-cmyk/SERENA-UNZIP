@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.10.0"
-BOT_CODENAME = "Highlights"
+BOT_VERSION  = "v3.10.1"
+BOT_CODENAME = "Honest Link Errors"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.10.1": [
+        "Expired links now say so, instead of showing a yt-dlp trace",
+        "Token-style download gateways are treated as direct files",
+        "Direct downloads send a browser User-Agent",
+        "Failures report the host and status code",
+    ],
     "v3.10.0": [
         "Short clips arrive as videos again, not GIFs",
         "Highlight links now download",
@@ -5161,11 +5167,37 @@ async def _ytdl_direct_download(client, uid, url, temp_root, chat_id,
             "sign in to confirm", "not a bot", "429", "too many requests",
             "unable to download webpage", "http error 403",
             "failed to extract any player response", "player response"))
-        if blocked:
+        if blocked and ("youtu" in url.lower() or "player response" in low):
             from utils.ytdl_tools import youtube_block_help
             await _safe_edit(status, youtube_block_help())
-        elif detail:
-            await _safe_edit(status, f"<code>{detail}</code>")
+        else:
+            # A 4xx/5xx from the host itself is not a bot problem: the link
+            # has expired, or the service behind it is refusing. Say that,
+            # rather than showing a yt-dlp trace that asks the user to open
+            # a bug report.
+            host = ""
+            try:
+                from urllib.parse import urlparse
+                host = urlparse(url).hostname or ""
+            except Exception:
+                pass
+            if any(k in low for k in ("http error 4", "http error 5",
+                                      "bad request", "unable to download webpage",
+                                      "502", "400", "403", "404", "410")):
+                await _safe_edit(
+                    status,
+                    "<b>This link is no longer valid.</b>\n\n"
+                    f"{('<code>' + host + '</code> ') if host else 'The host '}"
+                    "refused the request, which usually means the link has "
+                    "expired or was single-use.\n\n"
+                    "<i>Open the page again and copy a fresh link.</i>")
+            elif detail:
+                await _safe_edit(
+                    status,
+                    "<b>Download failed.</b>\n\n"
+                    f"<code>{detail[:180]}</code>")
+            else:
+                await _safe_edit(status, "<b>Download failed.</b>")
         return False
 
     sent_any = False
@@ -5275,7 +5307,33 @@ async def handle_links_download_all(client, cq, original_msg):
             try: await st.delete()
             except Exception: pass
             ok+=1; await log_output(client,user,sent,f"direct link: {url}")
-        except Exception: fail+=1
+        except Exception as e:
+            fail+=1
+            # Swallowing this left the user with a bare "Download failed"
+            # and no way to tell an expired link from a bot problem.
+            err = str(e)
+            code = ""
+            mm = re.search(r"\b(4\d\d|5\d\d)\b", err)
+            if mm: code = mm.group(1)
+            host = ""
+            try:
+                from urllib.parse import urlparse
+                host = urlparse(url).hostname or ""
+            except Exception:
+                pass
+            if code in ("400","401","403","404","410","502","503"):
+                msg = ("<b>This link is no longer valid.</b>\n\n"
+                       f"<code>{host}</code> answered <b>HTTP {code}</b>, "
+                       "which usually means it has expired or was single-use."
+                       "\n\n<i>Open the page again and copy a fresh link.</i>")
+            else:
+                msg = ("<b>Download failed.</b>\n\n"
+                       f"<code>{err[:160]}</code>")
+            try: await st.edit_text(msg)
+            except Exception:
+                try: await client.send_message(chat_id, msg,
+                                               reply_to_message_id=reply_to)
+                except Exception: pass
         await asyncio.sleep(0.4)
     for url in gdrives:
         if user_cancelled.get(uid): break

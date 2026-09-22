@@ -226,6 +226,13 @@ def classify_link(url: str) -> str:
         if ext in u_low:
             return "direct"
 
+    # Download-gateway shapes: a token endpoint that hands back a file.
+    # These have no extension in the path, so without this they fell
+    # through to yt-dlp, which has no extractor for them.
+    if any(k in u_low for k in ("dlink", "/dl?", "/dl/", "download",
+                                "getfile", "get_file", "fetch?", "token=")):
+        return "direct"
+
     return "unknown"
 
 
