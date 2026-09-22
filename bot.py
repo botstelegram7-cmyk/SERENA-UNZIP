@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.9.1"
-BOT_CODENAME = "Carousels & Spacing"
+BOT_VERSION  = "v3.9.2"
+BOT_CODENAME = "Photo Posts"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.9.2": [
+        "Fixed photo posts failing while reels worked",
+        "The embed page is retried instead of giving up after one dropped connection",
+        "Photo posts no longer fall through to the video-only fallback",
+        "A clear explanation when a post still cannot be read",
+    ],
     "v3.9.1": [
         "Multi-image posts now arrive complete instead of as a single photo",
         "Several links in one message are spaced apart, not fired at once",

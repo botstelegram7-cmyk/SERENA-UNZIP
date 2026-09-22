@@ -654,22 +654,43 @@ def _deep_unescape(text: str) -> str:
 
 async def _try_embed(session: aiohttp.ClientSession, shortcode: str) -> Tuple[List[Dict], Dict]:
     """Embed page needs no auth — great fallback for single public photos."""
-    url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-    try:
-        # Use the full browser-like header set. With only User-Agent and
-        # Accept-Language, Instagram serves a 628 KB shell that contains no
-        # media at all; the same URL with _base_headers() returns the real
-        # 273 KB payload carrying video_url. That difference is what broke
-        # reel and story downloads.
-        async with session.get(
-            url,
-            proxy=ig_proxy(), headers=_base_headers(),
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as r:
-            if r.status != 200:
-                return [], _empty_meta()
-            body = await r.text()
-    except Exception:
+    # Use the full browser-like header set. With only User-Agent and
+    # Accept-Language, Instagram serves a 628 KB shell that contains no
+    # media at all; the same URL with _base_headers() returns the real
+    # payload. That difference previously broke reel and story downloads.
+    #
+    # Instagram also drops the connection outright on hosted addresses
+    # (aiohttp reports status=0, no reply at all). A single attempt meant
+    # one dropped connection sent PHOTO posts on to the yt-dlp fallback,
+    # which has no photo extractor and fails with "No video formats
+    # found". Reels survived only because yt-dlp can handle those. So:
+    # retry, and try the /reel/ form too, since either path serves the
+    # same embed payload.
+    body = ""
+    paths = [f"https://www.instagram.com/p/{shortcode}/embed/captioned/",
+             f"https://www.instagram.com/reel/{shortcode}/embed/captioned/"]
+    for attempt in range(3):
+        url = paths[attempt % len(paths)]
+        try:
+            async with session.get(
+                url,
+                proxy=ig_proxy(), headers=_base_headers(),
+                allow_redirects=True,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                if r.status == 200:
+                    text = await r.text()
+                    if text and len(text) > 2000:
+                        body = text
+                        break
+                elif r.status == 429:
+                    note_rate_limit()
+        except Exception:
+            pass
+        if attempt < 2:
+            await asyncio.sleep(1.5 * (attempt + 1))
+
+    if not body:
         return [], _empty_meta()
 
     # Newer embeds inline a JSON blob containing the real media
@@ -2249,6 +2270,22 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
         return saved, meta
 
     # ── Path B: yt-dlp (reels, stories, highlights) ──
+    # yt-dlp has no photo extractor: on an image post it reports "No video
+    # formats found", which is a dead end rather than a real failure. Retry
+    # the embed instead, since that is the only thing that serves photos.
+    if kind in ("post", "photo"):
+        for pause in (3.0, 8.0):
+            await asyncio.sleep(pause)
+            try:
+                items, meta2 = await fetch_post(url)
+            except Exception:
+                items, meta2 = [], None
+            if items:
+                saved = await _download_items(items, output_dir, shortcode)
+                if saved:
+                    clear_rate_limit()
+                    return saved, (meta2 or meta)
+
     saved, yt_meta = await _ytdlp_fallback_with_meta(url, output_dir)
     if saved:
         for k, v in (yt_meta or {}).items():
@@ -2266,6 +2303,12 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
             msg = ("<b>yt-dlp server par installed nahi hai.</b>\n\n"
                    "Owner: <code>pip install -U yt-dlp</code> chalao "
                    "ya requirements.txt se redeploy karo.")
+        elif "no video formats" in low:
+            msg = ("<b>This post could not be read.</b>\n\n"
+                   "Instagram refused the page that carries photo posts, and "
+                   "the video fallback cannot handle images.\n\n"
+                   "<i>Reels still work. Try again shortly, or set "
+                   "INSTAGRAM_PROXY for a permanent fix.</i>")
         elif "login" in low or "rate-limit" in low or "429" in low:
             pass      # the friendly message already covers this
         else:
