@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.9.3"
-BOT_CODENAME = "Real Rotation"
+BOT_VERSION  = "v3.10.0"
+BOT_CODENAME = "Highlights"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.10.0": [
+        "Short clips arrive as videos again, not GIFs",
+        "Highlight links now download",
+        "Stories and highlights share one media reader",
+    ],
     "v3.9.3": [
         "Fixed rotation never advancing past the first account",
         "<code>/igtest</code> warns when accounts share one browser fingerprint",
@@ -4213,6 +4218,43 @@ async def _do_merge_videos(client, cq, uid):
     await update_user_stats(uid,os.path.getsize(out)/(1024*1024))
 
 # ── Instagram delivery helper ─────────────────────────────────────────────────
+async def _ensure_audio_track(path: str) -> str:
+    """Return a video that carries an audio stream.
+
+    Telegram classifies an MP4 with no audio as an animation, so it plays
+    as a looping, muted GIF with no controls. Short clips are the common
+    case because they are more often exported without sound. Muxing a
+    silent AAC track keeps the video a video; the picture is untouched
+    because the video stream is copied, not re-encoded.
+    """
+    try:
+        from utils.instagram import has_audio_track
+        if await has_audio_track(path):
+            return path
+    except Exception:
+        return path
+
+    out = str(Path(path).with_name(Path(path).stem + "_av" + Path(path).suffix))
+    cmd = ["ffmpeg", "-y", "-i", path,
+           "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+           "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac",
+           "-shortest", "-movflags", "+faststart", out]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(proc.communicate(), timeout=180)
+    except Exception:
+        return path
+    if os.path.exists(out) and os.path.getsize(out) > 1024:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        return out
+    return path
+
+
 def _file_id_of(msg):
     """Extract (type, file_id) from a sent message, for caching."""
     try:
@@ -4302,6 +4344,10 @@ async def _send_instagram_media(client, uid, chat_id, reply_to, files,
             elif kind == "video":
                 thumb = await choose_thumbnail(uid, fpath)
                 dur = await _get_video_duration(fpath)
+                # Telegram shows a silent MP4 as a GIF/animation, which is
+                # why short clips arrived looking like GIFs. Giving the file
+                # a silent audio track keeps it a normal video.
+                fpath = await _ensure_audio_track(fpath)
                 m = await _with_floodwait(lambda: client.send_video(
                     chat_id, fpath, caption=cap_text or None,
                     thumb=thumb, duration=dur, supports_streaming=True,

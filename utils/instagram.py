@@ -1937,6 +1937,111 @@ async def fetch_profile_posts(username: str, limit: int = 12,
     raise InstagramError(_friendly_error("profile"))
 
 
+def extract_highlight_id(url: str) -> Optional[str]:
+    """Pull the numeric id out of a highlight link.
+
+    Accepts /stories/highlights/<id>/ and the encoded /s/<base64> form,
+    which normalize_url() already rewrites into the first shape.
+    """
+    u = normalize_url(url or "")
+    m = re.search(r"/stories/highlights/(\d+)", u)
+    return m.group(1) if m else None
+
+
+async def fetch_highlight(url_or_id: str) -> Tuple[List[Dict], Dict]:
+    """Return (media items, info) for one highlight reel.
+
+    Highlights live behind the same reels_media endpoint as stories, but
+    keyed by "highlight:<id>" instead of a user id. Previously these links
+    were recognised and then handed to yt-dlp, which is why they failed.
+    """
+    hid = extract_highlight_id(url_or_id) or str(url_or_id).strip()
+    if not hid.isdigit():
+        raise InstagramError(
+            "<b>That highlight link was not recognised.</b>\n\n"
+            "Expected a link like "
+            "<code>instagram.com/stories/highlights/1790.../</code>")
+
+    raise_if_rate_limited()
+    if not has_cookies():
+        raise InstagramError(
+            "<b>Highlights require a signed-in session.</b>\n\n"
+            "Set <code>INSTAGRAM_COOKIES</code> to download them.")
+
+    jar = cookies_as_dict()
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+        if jar:
+            session.cookie_jar.update_cookies(
+                jar, response_url=aiohttp.helpers.URL("https://www.instagram.com"))
+        headers = _base_headers()
+        if jar.get("csrftoken"):
+            headers["X-CSRFToken"] = jar["csrftoken"]
+
+        url = ("https://i.instagram.com/api/v1/feed/reels_media/"
+               f"?reel_ids=highlight%3A{hid}")
+        async with session.get(url, proxy=ig_proxy(), headers=headers,
+                               timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status == 429:
+                note_rate_limit()
+                raise RateLimited()
+            if r.status in (401, 403):
+                raise InstagramError(_friendly_error("highlight"))
+            if r.status != 200:
+                raise InstagramError(
+                    f"Highlight fetch failed (HTTP {r.status}).")
+            data = await r.json(content_type=None)
+
+    reels = data.get("reels") or data.get("reels_media") or {}
+    node = None
+    if isinstance(reels, dict):
+        node = reels.get(f"highlight:{hid}") or reels.get(hid)
+        if node is None and reels:
+            node = next(iter(reels.values()))
+    elif isinstance(reels, list) and reels:
+        node = reels[0]
+
+    items_raw = (node or {}).get("items") or []
+    if not items_raw:
+        raise InstagramError(
+            "<b>This highlight is empty or not visible.</b>\n\n"
+            "<i>Private accounts must be followed by the signed-in "
+            "session.</i>")
+
+    items = _items_from_reel_entries(items_raw)
+    owner = ((node or {}).get("user") or {})
+    info = {
+        "username": owner.get("username") or "",
+        "full_name": _clean_text(owner.get("full_name") or ""),
+        "title": _clean_text((node or {}).get("title") or "Highlight"),
+        "count": len(items),
+    }
+    return items, info
+
+
+def _items_from_reel_entries(items_raw: List[Dict]) -> List[Dict]:
+    """Turn reels_media entries into downloadable items.
+
+    Shared by stories and highlights: both return the same shape, so the
+    video/image selection logic lives in one place.
+    """
+    items: List[Dict] = []
+    for i, it in enumerate(items_raw, 1):
+        vids = it.get("video_versions") or []
+        if vids:
+            u = _pick_best_video(vids)
+            if u:
+                thumb = _pick_best(
+                    (it.get("image_versions2") or {}).get("candidates") or [])
+                items.append(_item(u, True, i, thumb or ""))
+                continue
+        imgs = (it.get("image_versions2") or {}).get("candidates") or []
+        u = _pick_best(imgs)
+        if u:
+            items.append(_item(u, False, i))
+    return items
+
+
 async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
     """Return (media items, info) for a user's currently active stories."""
     username = (username or "").lstrip("@")
@@ -1978,19 +2083,7 @@ async def fetch_stories(username: str) -> Tuple[List[Dict], Dict]:
     if not items_raw:
         raise InstagramError(f"<b>@{username}</b> ki koi active story nahi hai.")
 
-    items: List[Dict] = []
-    for i, it in enumerate(items_raw, 1):
-        vids = it.get("video_versions") or []
-        if vids:
-            u = _pick_best_video(vids)
-            if u:
-                thumb = _pick_best((it.get("image_versions2") or {}).get("candidates") or [])
-                items.append(_item(u, True, i, thumb or ""))
-                continue
-        imgs = (it.get("image_versions2") or {}).get("candidates") or []
-        u = _pick_best(imgs)
-        if u:
-            items.append(_item(u, False, i))
+    items = _items_from_reel_entries(items_raw)
 
     info = {"username": user.get("username") or username,
             "full_name": _clean_text(user.get("full_name") or ""),
@@ -2291,6 +2384,26 @@ async def download_post(url: str, output_dir: str) -> Tuple[List[str], Dict]:
     raise_if_rate_limited()
 
     _LAST_YTDLP_ERROR["v"] = ""       # don't report a previous run's error
+
+    # Highlights have their own endpoint. They were detected by
+    # content_kind() but then fell through to the generic post handling and
+    # on to yt-dlp, which is why they never downloaded.
+    if kind == "highlight":
+        items, hinfo = await fetch_highlight(url)
+        files = await download_media_items(
+            items, output_dir, prefix=(hinfo.get("username") or "highlight"))
+        if not files:
+            raise InstagramError(
+                "<b>The highlight was found but nothing downloaded.</b>\n\n"
+                "<i>Instagram may have refused the media URLs; try again "
+                "shortly.</i>")
+        clear_rate_limit()
+        meta = _empty_meta()
+        meta["title"] = hinfo.get("title") or "Highlight"
+        meta["username"] = hinfo.get("username") or ""
+        meta["full_name"] = hinfo.get("full_name") or ""
+        return files, meta
+
     saved: List[str] = []
 
     # ── Path A: direct CDN download via Instagram's own APIs ──
