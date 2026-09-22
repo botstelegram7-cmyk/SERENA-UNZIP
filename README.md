@@ -218,7 +218,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `YOUTUBE_API_ONLY` | ➖ | Keep YouTube on Apify API only. Default: `1`. |
 | `APIFY_YOUTUBE_ACTOR_ID` | ➖ | Apify actor id for YouTube downloads. Default: `UUhJDfKJT2SsXdclR`. |
 | `APIFY_YOUTUBE_DEFAULT_QUALITY` | ➖ | Quality used for auto-detected YouTube links. Default: `720p`. The `/ytdl` menu can request `360p`, `480p`, `720p`, `1080p`, or Best. |
-| `APIFY_YOUTUBE_STORE_IN_KVSTORE` | ➖ | Optional Apify KV store id to pass as `storeInKVStore`. Default is blank, which sends `null` exactly like the Apify snippet. |
+| `APIFY_YOUTUBE_STORE_IN_KVSTORE` | ➖ | Boolean for Apify `storeInKVStore`. Use `1`/`true` or `0`/`false`. Default: `1`. |
 | `APIFY_YOUTUBE_TRANSCRIPTION` | ➖ | Transcription/subtitle mode passed to the actor. Default: `ALWAYS_TRANSCRIBE`. Set `disabled`/`off` to omit this field. |
 | `APIFY_YOUTUBE_TIMEOUT_SEC` | ➖ | Max time to wait for the Apify actor before failing. No cookie/yt-dlp fallback is used for YouTube. Default: `900`. |
 | `YOUTUBE_COOKIES` | ➖ | Ignored for YouTube downloads in API-only mode. YouTube uses `APIFY_API_TOKEN`, not cookies. |
@@ -227,6 +227,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `YTDL_PROXY` | ➖ | Proxy for non-YouTube yt-dlp traffic, e.g. `http://user:pass@host:port`. YouTube is API-only. |
 | `XAPIVERSE_KEY` … `_5` | ➖ | API keys for the [xAPIverse TeraBox API](https://xapiverse.com/marketplace/terabox). Required for TeraBox downloads in API-only mode. The free tier is **100 credits per month per key**, so set `XAPIVERSE_KEY_2` … `_5` with keys from additional accounts and the bot moves to the next one when a key runs out. |
 | `TERABOX_API_ONLY` | ➖ | Keep TeraBox on xAPIverse API only. Default: `1`. |
+| `TERABOX_API_CONNECTIONS` | ➖ | Parallel range connections for xAPIverse file download. Default: `6`; lower it if provider rate-limits. |
 | `TERABOX_PROXY` | ➖ | Legacy direct-scrape proxy. Ignored while `TERABOX_API_ONLY=1` (default). |
 | `OWNER_IDS` | ✅ | Comma-separated owner user IDs, e.g. `12345678,87654321`. Admin commands are disabled if unset. |
 | `LOG_CHANNEL` | ✅ | Channel ID for bot logs (e.g. `-100xxxxxxxxx`) |
@@ -287,7 +288,7 @@ run_input = {
    ```env
    APIFY_YOUTUBE_DEFAULT_QUALITY=720p
    APIFY_YOUTUBE_FORMAT=mp4
-   # optional: APIFY_YOUTUBE_STORE_IN_KVSTORE=your_kv_store_id
+   APIFY_YOUTUBE_STORE_IN_KVSTORE=1
    APIFY_YOUTUBE_TRANSCRIPTION=ALWAYS_TRANSCRIBE
    APIFY_YOUTUBE_TIMEOUT_SEC=900
    ```

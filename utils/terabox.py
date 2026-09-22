@@ -478,7 +478,8 @@ def _first_api_link(entry: Dict) -> str:
     then stream URLs; ignore thumbnails/subtitles.
     """
     keys = (
-        "fast_download_link", "fastDownloadLink", "normal_dlink",
+        "fast_download_link", "fastDownloadLink", "fast_download_url",
+        "fastDownloadUrl", "fast_download", "fastDownload", "normal_dlink",
         "normalDlink", "download_url", "downloadUrl", "download_link",
         "downloadLink", "dlink", "direct_link", "directLink",
         "file_url", "fileUrl", "stream_url", "streamUrl", "url", "link",
@@ -740,6 +741,111 @@ async def _flatten(session: aiohttp.ClientSession, mirror: str, surl: str,
     return out
 
 
+
+async def _range_probe(session: aiohttp.ClientSession, url: str,
+                       headers: Dict[str, str]) -> Tuple[int, str, str]:
+    """Return (total_bytes, final_url, content_type) if byte ranges work."""
+    h = dict(headers)
+    h["Range"] = "bytes=0-0"
+    async with session.get(url, headers=h, allow_redirects=True) as r:
+        ctype = r.headers.get("Content-Type", "") or ""
+        if r.status != 206:
+            return 0, str(r.url), ctype
+        cr = r.headers.get("Content-Range", "")
+        m = re.search(r"/(\d+)$", cr)
+        total = int(m.group(1)) if m else int(r.headers.get("Content-Length") or 0)
+        # Drain the one-byte body so aiohttp can reuse the connection.
+        await r.read()
+        return total, str(r.url), ctype
+
+
+async def _parallel_api_download(session: aiohttp.ClientSession, url: str,
+                                 headers: Dict[str, str], dest: str,
+                                 expected_size: int = 0,
+                                 progress=None) -> bool:
+    """Fast xAPIverse/Iteraplay file fetch using parallel Range requests.
+
+    API provider links can be slow per TCP connection. If the server supports
+    Range requests, splitting the file into several ranges usually improves
+    throughput. Falls back silently to the normal single stream when unsupported.
+    """
+    workers = max(1, min(int(getattr(Config, "TERABOX_API_CONNECTIONS", 6) or 6), 12))
+    if workers <= 1:
+        return False
+    try:
+        total, final_url, ctype = await _range_probe(session, url, headers)
+    except Exception:
+        return False
+    if not total or total < 8 * 1024 * 1024:
+        return False
+    if "json" in ctype.lower() or "text/" in ctype.lower():
+        return False
+    if expected_size and abs(total - expected_size) > max(2 * 1024 * 1024, expected_size * 0.05):
+        # The range endpoint is not returning the expected binary file.
+        return False
+
+    tmp = dest + ".part"
+    try:
+        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+        with open(tmp, "wb") as fh:
+            fh.truncate(total)
+
+        chunk = (total + workers - 1) // workers
+        ranges = []
+        for i in range(workers):
+            start = i * chunk
+            end = min(total - 1, ((i + 1) * chunk) - 1)
+            if start <= end:
+                ranges.append((i, start, end))
+        done = [0 for _ in ranges]
+
+        async def one(slot: int, start: int, end: int):
+            pos = start
+            # A small retry loop per range. Any hard failure falls back to the
+            # normal downloader by returning False from the wrapper.
+            for attempt in range(3):
+                try:
+                    h = dict(headers)
+                    h["Range"] = f"bytes={pos}-{end}"
+                    async with session.get(final_url, headers=h, allow_redirects=True) as r:
+                        if r.status != 206:
+                            raise RuntimeError(f"range HTTP {r.status}")
+                        with open(tmp, "r+b") as fh:
+                            fh.seek(pos)
+                            async for data in r.content.iter_chunked(256 * 1024):
+                                if not data:
+                                    continue
+                                fh.write(data)
+                                pos += len(data)
+                                done[slot] = pos - start
+                                if progress:
+                                    ret = progress(min(sum(done), total), total)
+                                    if inspect.isawaitable(ret):
+                                        await ret
+                    if pos > end:
+                        return
+                except Exception:
+                    await asyncio.sleep(1.5 * (attempt + 1))
+            raise RuntimeError("range failed")
+
+        await asyncio.gather(*(one(slot, st, en) for slot, st, en in ranges))
+        if os.path.getsize(tmp) != total:
+            return False
+        if progress:
+            ret = progress(total, total)
+            if inspect.isawaitable(ret):
+                await ret
+        os.replace(tmp, dest)
+        return True
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        return False
+
+
 async def download_file(entry: Dict, output_dir: str,
                         progress=None) -> Optional[str]:
     """Download one API-resolved TeraBox entry. Returns the saved path."""
@@ -773,6 +879,11 @@ async def download_file(entry: Dict, output_dir: str,
             try:
                 have = os.path.getsize(dest) if os.path.exists(dest) else 0
                 h = dict(headers)
+                if mirror == "xapiverse" and not os.path.exists(dest):
+                    if await _parallel_api_download(
+                        session, current_url, h, dest,
+                        int(entry.get("size") or 0), progress):
+                        return dest
                 if have > 1024:
                     h["Range"] = f"bytes={have}-"
                 async with session.get(current_url, headers=h,

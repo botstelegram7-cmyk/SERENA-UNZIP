@@ -82,6 +82,9 @@ class Config:
     # API-only mode for TeraBox. Cookies/direct scraping are intentionally not
     # used for downloads; xAPIverse is the supported transport.
     TERABOX_API_ONLY   = os.getenv("TERABOX_API_ONLY", "1").strip().lower() not in ("0", "false", "off", "no")
+    # Parallel API file download connections. Higher may be faster if the API
+    # provider throttles each connection, but too high can trigger limits.
+    TERABOX_API_CONNECTIONS = int(os.getenv("TERABOX_API_CONNECTIONS", "6"))
 
     # xAPIverse TeraBox API — resolves share links server-side, so the
     # address block that stops direct scraping does not apply.
@@ -113,9 +116,9 @@ class Config:
     YOUTUBE_API_ONLY = os.getenv("YOUTUBE_API_ONLY", "1").strip().lower() not in ("0", "false", "off", "no")
     APIFY_YOUTUBE_DEFAULT_QUALITY = os.getenv("APIFY_YOUTUBE_DEFAULT_QUALITY", "720p").strip()
     APIFY_YOUTUBE_FORMAT = os.getenv("APIFY_YOUTUBE_FORMAT", "mp4").strip()
-    # Matches the Apify snippet: None/null by default. If you want to force a
-    # particular KV store, set APIFY_YOUTUBE_STORE_IN_KVSTORE to that store id.
-    APIFY_YOUTUBE_STORE_IN_KVSTORE = os.getenv("APIFY_YOUTUBE_STORE_IN_KVSTORE", "").strip()
+    # Actor requires a boolean. Accept 1/true/on/yes and 0/false/off/no.
+    # Default True so the API stores a fetchable file for the bot.
+    APIFY_YOUTUBE_STORE_IN_KVSTORE = os.getenv("APIFY_YOUTUBE_STORE_IN_KVSTORE", "1").strip().lower() not in ("0", "false", "off", "no", "none", "null", "")
     APIFY_YOUTUBE_TRANSCRIPTION = (
         os.getenv("APIFY_YOUTUBE_TRANSCRIPTION")
         or os.getenv("YOUTUBE_API_TRANSCRIPTION", "ALWAYS_TRANSCRIBE")

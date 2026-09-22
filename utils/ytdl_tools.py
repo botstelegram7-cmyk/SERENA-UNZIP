@@ -382,7 +382,7 @@ async def youtube_diagnose(url: str = "") -> str:
         out.append(f"API mode: <b>{'ready' if has_api_tokens() else 'not configured'}</b>")
         out.append(f"Actor access: <b>{await check_actor_access()}</b>")
         out.append(f"Quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b> · Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
-        out.append(f"Store in KV: <b>{Config.APIFY_YOUTUBE_STORE_IN_KVSTORE or 'default/null'}</b>")
+        out.append(f"Store in KV: <b>{'yes' if Config.APIFY_YOUTUBE_STORE_IN_KVSTORE else 'no'}</b>")
         out.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
         if url:
             out.append(f"Input link: <b>{'YouTube' if is_youtube_url(url) else 'not YouTube'}</b>")

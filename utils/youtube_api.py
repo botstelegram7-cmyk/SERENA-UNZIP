@@ -139,7 +139,7 @@ def build_run_input(url: str, quality: str, preferred_format: Optional[str] = No
     q = (quality or Config.APIFY_YOUTUBE_DEFAULT_QUALITY or "720p").strip() or "720p"
     data: Dict[str, Any] = {
         "videos": [{"url": url}],
-        "storeInKVStore": (Config.APIFY_YOUTUBE_STORE_IN_KVSTORE or None),
+        "storeInKVStore": bool(Config.APIFY_YOUTUBE_STORE_IN_KVSTORE),
         "preferredQuality": q,
         "preferredFormat": fmt,
         "filenameTemplateParts": ["title"],
@@ -728,7 +728,7 @@ async def diagnose(url: str = "") -> str:
     lines.append(f"API tokens: {api_key_status()}")
     lines.append(f"Default quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b>")
     lines.append(f"Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
-    lines.append(f"Store in KV: <b>{Config.APIFY_YOUTUBE_STORE_IN_KVSTORE or 'default/null'}</b>")
+    lines.append(f"Store in KV: <b>{'yes' if Config.APIFY_YOUTUBE_STORE_IN_KVSTORE else 'no'}</b>")
     lines.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
     if url:
         lines.append(f"Link parsed as YouTube: <b>{'yes' if is_youtube_url(url) else 'no'}</b>")
