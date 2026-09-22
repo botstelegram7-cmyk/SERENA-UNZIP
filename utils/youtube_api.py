@@ -166,6 +166,20 @@ def build_run_input(url: str, quality: str, preferred_format: Optional[str] = No
     return data
 
 
+def build_safe_run_input(url: str, *, store: bool = True) -> Dict[str, Any]:
+    """Smallest reliable input for the streamers actor.
+
+    Used as an automatic retry when the configured input is accepted by the
+    schema but the actor returns NO_RESULTS/no file. This mirrors the official
+    API example and deliberately omits quality, format, transcription, and all
+    cloud fields.
+    """
+    data: Dict[str, Any] = {"videos": [{"url": url}]}
+    if store:
+        data["storeInKVStore"] = True
+    return data
+
+
 async def _safe_edit(message, text: str) -> None:
     if not message:
         return
@@ -314,12 +328,13 @@ async def _run_actor_once(session: aiohttp.ClientSession, token: str,
 
 
 async def run_youtube_actor(url: str, quality: str,
-                            status_message=None) -> Tuple[List[Dict[str, Any]], str]:
+                            status_message=None,
+                            run_input: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], str]:
     tokens = _usable_tokens()
     if not tokens:
         raise YouTubeApiError("No Apify API token configured")
 
-    run_input = build_run_input(url, quality)
+    run_input = run_input or build_run_input(url, quality)
     last_err = ""
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -464,6 +479,10 @@ def _asset_score(asset: Dict[str, Any]) -> int:
     score = 0
     if "download" in key:
         score += 80
+    if "video" in key:
+        score += 35
+    if "audio" in key:
+        score += 10
     if ext in _VIDEO_EXTS:
         score += 70
     if "video/" in ctype:
@@ -533,6 +552,126 @@ def extract_download_assets(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                     break
     assets.sort(key=_asset_score, reverse=True)
     return assets
+
+
+def _collect_kv_store_ids(items: List[Dict[str, Any]]) -> List[str]:
+    ids: List[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for key in (
+            "__defaultKeyValueStoreId", "defaultKeyValueStoreId",
+            "keyValueStoreId", "kvStoreId", "storeId",
+        ):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip() and value.strip() not in ids:
+                ids.append(value.strip())
+    return ids
+
+
+def _record_is_candidate(key: str, size: int, content_type: str = "") -> bool:
+    low = (key or "").lower().strip()
+    ctype = (content_type or "").lower()
+    if not low:
+        return False
+    ext = os.path.splitext(low)[1]
+    if ext in _VIDEO_EXTS + _AUDIO_EXTS + _SUBTITLE_EXTS:
+        return True
+    if "video/" in ctype or "audio/" in ctype:
+        return True
+    if low in ("input", "output", "state", "request_queue_state"):
+        return False
+    if any(x in low for x in _IMAGE_HINTS) or ext in (".jpg", ".jpeg", ".png", ".webp", ".gif", ".json", ".html"):
+        return False
+    # The actor sometimes stores the file under an opaque key; large records are
+    # more likely to be media than metadata.
+    return size >= 1024 * 1024
+
+
+async def discover_kv_assets(items: List[Dict[str, Any]], token: str) -> List[Dict[str, Any]]:
+    """List the run KV store and turn media-looking records into assets.
+
+    Some successful actor runs only expose defaultKeyValueStoreId in the dataset
+    (or omit fileKey/downloadedFileUrl). Listing the store lets the bot still
+    fetch the produced media through Apify API without falling back to cookies or
+    yt-dlp.
+    """
+    kv_ids = _collect_kv_store_ids(items)
+    if not kv_ids:
+        return []
+    assets: List[Dict[str, Any]] = []
+    seen = set()
+    timeout = aiohttp.ClientTimeout(total=45, sock_connect=20, sock_read=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for kv_id in kv_ids[:3]:
+            status, data, text = await _request_json(
+                session, "GET", f"{_APIFY_BASE}/key-value-stores/{kv_id}/keys",
+                token, params={"limit": 1000})
+            if status >= 400:
+                continue
+            records: List[Any] = []
+            if isinstance(data, dict):
+                records = data.get("items") or data.get("data") or []
+            elif isinstance(data, list):
+                records = data
+            if isinstance(records, dict):
+                records = records.get("items") or []
+            for rec in records:
+                if isinstance(rec, str):
+                    key, size, ctype = rec, 0, ""
+                elif isinstance(rec, dict):
+                    key = str(rec.get("key") or rec.get("name") or "")
+                    size = int(rec.get("size") or rec.get("contentLength") or 0)
+                    ctype = str(rec.get("contentType") or rec.get("content_type") or "")
+                else:
+                    continue
+                if not _record_is_candidate(key, size, ctype):
+                    continue
+                url = f"{_APIFY_BASE}/key-value-stores/{kv_id}/records/{quote(key, safe='')}"
+                if url in seen:
+                    continue
+                seen.add(url)
+                ext = os.path.splitext(key)[1]
+                if ext.lower() not in _VIDEO_EXTS + _AUDIO_EXTS + _SUBTITLE_EXTS:
+                    ext = _ext_from_ctype(ctype) or ".mp4"
+                assets.append({
+                    "url": url,
+                    "key": f"kv:{key}",
+                    "filename": _safe_name(os.path.basename(key) or "YouTube_video", ext),
+                    "size": size,
+                    "content_type": ctype or "video/mp4",
+                    "item": {"defaultKeyValueStoreId": kv_id},
+                    "parent": {},
+                })
+    assets.sort(key=_asset_score, reverse=True)
+    return assets
+
+
+def _items_messages(items: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for k in ("error", "message", "statusMessage", "reason", "note"):
+            v = item.get(k)
+            if v:
+                txt = str(v).strip()
+                if txt and txt not in out:
+                    out.append(txt[:220])
+    return out
+
+
+def _should_retry_safe_input(items: List[Dict[str, Any]]) -> bool:
+    joined = " ".join(_items_messages(items)).lower()
+    return (not items) or any(x in joined for x in (
+        "no_results", "no results", "no downloadable", "downloadedfileurl",
+        "download failed", "upload failed", "storage", "could not",
+    ))
+
+
+def _dataset_keys_preview(items: List[Dict[str, Any]]) -> str:
+    keys = sorted({".".join(path) for item in items for path, _, _ in _walk(item)})[:24]
+    return ", ".join(keys)[:260]
 
 
 def _filename_from_cd(cd: str) -> str:
@@ -680,17 +819,58 @@ async def download_youtube_via_api(url: str, output_dir: str, quality: str,
     items, token = await run_youtube_actor(url, quality, status_message=status_message)
     assets = extract_download_assets(items)
     if not assets:
-        err_bits = []
-        for item in items:
-            for k in ("error", "message", "statusMessage", "reason"):
-                v = item.get(k) if isinstance(item, dict) else None
-                if v:
-                    err_bits.append(str(v)[:180])
-        keys = sorted({".".join(path) for item in items for path, _, _ in _walk(item)})[:20]
+        assets = await discover_kv_assets(items, token)
+
+    # If the actor accepted the configured input but returned NO_RESULTS/no URL,
+    # automatically retry once with the official minimal schema. This avoids
+    # user-visible failures caused by optional quality/format/transcription
+    # combinations while keeping YouTube strictly API-only.
+    if not assets and _should_retry_safe_input(items):
+        await _safe_edit(
+            status_message,
+            "🎬 <b>YouTube API</b>\n\n"
+            "⚠️ Actor returned no file for the configured options.\n"
+            "🔁 Retrying with safe API input…"
+        )
+        retry_input = build_safe_run_input(url, store=bool(Config.APIFY_YOUTUBE_STORE_IN_KVSTORE))
+        retry_items, retry_token = await run_youtube_actor(
+            url, quality, status_message=status_message, run_input=retry_input)
+        retry_assets = extract_download_assets(retry_items)
+        if not retry_assets:
+            retry_assets = await discover_kv_assets(retry_items, retry_token)
+        if retry_assets:
+            items, token, assets = retry_items, retry_token, retry_assets
+        else:
+            # Keep the retry result so the user sees the latest actor reason.
+            items, token = retry_items or items, retry_token or token
+
+    # Last API-only fallback: run the official minimal input without storage.
+    # Some actor updates may fail only during KV/cloud upload, while still
+    # returning direct video/audio stream URLs in the dataset.
+    if not assets and _should_retry_safe_input(items):
+        await _safe_edit(
+            status_message,
+            "🎬 <b>YouTube API</b>\n\n"
+            "⚠️ Stored-file output was not available.\n"
+            "🔁 Retrying with direct API stream output…"
+        )
+        direct_input = build_safe_run_input(url, store=False)
+        direct_items, direct_token = await run_youtube_actor(
+            url, quality, status_message=status_message, run_input=direct_input)
+        direct_assets = extract_download_assets(direct_items)
+        if direct_assets:
+            items, token, assets = direct_items, direct_token, direct_assets
+        else:
+            items, token = direct_items or items, direct_token or token
+
+    if not assets:
+        err_bits = _items_messages(items)
+        kv_ids = _collect_kv_store_ids(items)
         raise YouTubeApiError(
             "Apify finished, but no downloadable file URL was found in the dataset.\n"
-            + (("API message: " + " | ".join(err_bits[:2]) + "\n") if err_bits else "")
-            + f"Dataset keys: {', '.join(keys)[:220]}"
+            + (("API message: " + " | ".join(err_bits[:3]) + "\n") if err_bits else "")
+            + (("KV store: " + ", ".join(kv_ids[:3]) + "\n") if kv_ids else "")
+            + f"Dataset keys: {_dataset_keys_preview(items)}"
         )
     asset = assets[0]
     await _safe_edit(

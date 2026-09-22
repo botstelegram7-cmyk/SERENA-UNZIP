@@ -303,6 +303,11 @@ Optional S3/Azure/GCS fields are omitted by default because this actor validates
 - If all tokens are parked, the bot retries them instead of refusing forever.
 - `/ytcheck` shows the actor id, token pool status, quality, format, and
   transcription mode.
+- If Apify finishes with `NO_RESULTS` or a dataset that only contains
+  `defaultKeyValueStoreId`/`error`/`note`, Serena stays API-only and tries to
+  recover by listing the run's Apify KV-store records. If no media record is
+  found, it retries once with the official minimal actor input and finally with
+  direct API stream output.
 
 **Progress display**
 
