@@ -217,6 +217,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `APIFY_API_TOKEN` … `_5` | ➖ | API tokens for the Apify YouTube Downloader actor. Set `APIFY_API_TOKEN_2` … `_5` for extra quota; if one token is exhausted/rate-limited, the bot parks it and tries the next. Legacy aliases `APIFY_TOKEN` … `_5` are also accepted. |
 | `APIFY_YOUTUBE_ACTOR_ID` | ➖ | Apify actor id for YouTube downloads. Default: `UUhJDfKJT2SsXdclR`. |
 | `APIFY_YOUTUBE_DEFAULT_QUALITY` | ➖ | Quality used for auto-detected YouTube links. Default: `720p`. The `/ytdl` menu can request `360p`, `480p`, `720p`, `1080p`, or Best. |
+| `APIFY_YOUTUBE_STORE_IN_KVSTORE` | ➖ | Store the API-created YouTube file in Apify KV store so the bot can fetch it reliably. Default: `1`. |
 | `APIFY_YOUTUBE_TRANSCRIPTION` | ➖ | Transcription/subtitle mode passed to the actor. Default: `ALWAYS_TRANSCRIBE`. Set `disabled`/`off` to omit this field. |
 | `APIFY_YOUTUBE_TIMEOUT_SEC` | ➖ | Max time to wait for the Apify actor before falling back/failing. Default: `900`. |
 | `YOUTUBE_COOKIES` | ➖ | Netscape `cookies.txt` export from a signed-in browser for the yt-dlp fallback. The Apify API path is preferred when `APIFY_API_TOKEN` is set. |
@@ -255,7 +256,7 @@ The bot sends the same shape of input as Apify's generated Python snippet:
 ```python
 run_input = {
     "videos": [{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}],
-    "storeInKVStore": None,
+    "storeInKVStore": True,
     "preferredQuality": "720p",
     "preferredFormat": "mp4",
     "filenameTemplateParts": ["title"],
@@ -284,6 +285,7 @@ run_input = {
    ```env
    APIFY_YOUTUBE_DEFAULT_QUALITY=720p
    APIFY_YOUTUBE_FORMAT=mp4
+   APIFY_YOUTUBE_STORE_IN_KVSTORE=1
    APIFY_YOUTUBE_TRANSCRIPTION=ALWAYS_TRANSCRIBE
    APIFY_YOUTUBE_TIMEOUT_SEC=900
    ```
@@ -645,8 +647,9 @@ its own infrastructure.
    returns "out of credit" the bot parks it for six hours and continues on the
    next one, so a run is not interrupted.
 
-Check the state of the pool at any time with `/tbtest`, which reports each key
-as *ready* or *exhausted*.
+Check the state of the pool at any time with `/tbtest <link>`, which reports each
+key as *ready* or *exhausted* and now also tests whether the API resolver returns
+real downloadable links for that share.
 
 **How the bot chooses:** with a key configured the API is tried first. If it
 cannot answer and `TERABOX_COOKIE` is set, the direct scraper runs as a

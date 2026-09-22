@@ -20,7 +20,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 from pyrogram.errors import FloodWait, MessageNotModified
@@ -143,7 +143,7 @@ def build_run_input(url: str, quality: str, preferred_format: Optional[str] = No
     q = (quality or Config.APIFY_YOUTUBE_DEFAULT_QUALITY or "720p").strip() or "720p"
     data: Dict[str, Any] = {
         "videos": [{"url": url}],
-        "storeInKVStore": None,
+        "storeInKVStore": bool(getattr(Config, "APIFY_YOUTUBE_STORE_IN_KVSTORE", True)),
         "preferredQuality": q,
         "preferredFormat": fmt,
         "filenameTemplateParts": ["title"],
@@ -294,12 +294,21 @@ async def _run_actor_once(session: aiohttp.ClientSession, token: str,
     )
     if i_status >= 400:
         raise YouTubeApiError(f"APIFY_HTTP_{i_status}: {_api_error(i_status, i_data, i_text)}")
+    kv_id = run.get("defaultKeyValueStoreId") or ""
     if isinstance(i_data, list):
-        return [x for x in i_data if isinstance(x, dict)]
+        items = [x for x in i_data if isinstance(x, dict)]
+        for item in items:
+            if kv_id:
+                item.setdefault("__defaultKeyValueStoreId", kv_id)
+        return items
     if isinstance(i_data, dict):
         maybe = i_data.get("items") or i_data.get("data") or []
         if isinstance(maybe, list):
-            return [x for x in maybe if isinstance(x, dict)]
+            items = [x for x in maybe if isinstance(x, dict)]
+            for item in items:
+                if kv_id:
+                    item.setdefault("__defaultKeyValueStoreId", kv_id)
+            return items
     raise YouTubeApiError("Apify returned no dataset items")
 
 
@@ -498,6 +507,29 @@ def extract_download_assets(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 "item": item,
                 "parent": parent,
             })
+
+        # Some actors store the binary in the run's default key-value store and
+        # output only the record key. Construct the authenticated record URL.
+        kv_id = item.get("__defaultKeyValueStoreId")
+        if kv_id:
+            for rk in ("keyValueStoreKey", "kvStoreKey", "kvKey", "storeKey", "recordKey", "fileKey", "outputKey"):
+                rec = item.get(rk)
+                if isinstance(rec, str) and rec.strip():
+                    value = f"{_APIFY_BASE}/key-value-stores/{kv_id}/records/{quote(rec.strip(), safe='')}"
+                    if value in seen:
+                        continue
+                    seen.add(value)
+                    title = _first_str(item, keys=("filename", "fileName", "name", "title", "videoTitle"))
+                    assets.append({
+                        "url": value,
+                        "key": rk,
+                        "filename": _safe_name(title or rec, ".mp4"),
+                        "size": _first_size(item),
+                        "content_type": "video/mp4",
+                        "item": item,
+                        "parent": item,
+                    })
+                    break
     assets.sort(key=_asset_score, reverse=True)
     return assets
 
@@ -668,12 +700,32 @@ async def download_youtube_via_api(url: str, output_dir: str, quality: str,
     return path
 
 
+
+
+async def check_actor_access() -> str:
+    """Cheap diagnostics: verify token + actor visibility without running it."""
+    tokens = _usable_tokens()
+    if not tokens:
+        return "not configured"
+    token = tokens[0]
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            status, data, text = await _request_json(
+                session, "GET", f"{_APIFY_BASE}/acts/{_actor_api_id()}", token)
+        except Exception as e:
+            return f"failed ({type(e).__name__}: {str(e)[:60]})"
+    if status == 200:
+        return "reachable"
+    return f"HTTP {status}: {_api_error(status, data, text)[:120]}"
+
 async def diagnose(url: str = "") -> str:
     lines = ["<b>YouTube API Diagnostics</b>", ""]
     lines.append(f"Apify actor: <code>{_actor_api_id()}</code>")
     lines.append(f"API tokens: {api_key_status()}")
     lines.append(f"Default quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b>")
     lines.append(f"Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
+    lines.append(f"Store in KV: <b>{'yes' if Config.APIFY_YOUTUBE_STORE_IN_KVSTORE else 'no'}</b>")
     lines.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
     if url:
         lines.append(f"Link parsed as YouTube: <b>{'yes' if is_youtube_url(url) else 'no'}</b>")

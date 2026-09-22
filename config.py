@@ -108,6 +108,7 @@ class Config:
     APIFY_YOUTUBE_ACTOR_ID = os.getenv("APIFY_YOUTUBE_ACTOR_ID", "UUhJDfKJT2SsXdclR").strip()
     APIFY_YOUTUBE_DEFAULT_QUALITY = os.getenv("APIFY_YOUTUBE_DEFAULT_QUALITY", "720p").strip()
     APIFY_YOUTUBE_FORMAT = os.getenv("APIFY_YOUTUBE_FORMAT", "mp4").strip()
+    APIFY_YOUTUBE_STORE_IN_KVSTORE = os.getenv("APIFY_YOUTUBE_STORE_IN_KVSTORE", "1").strip().lower() not in ("0", "false", "off", "no", "none")
     APIFY_YOUTUBE_TRANSCRIPTION = (
         os.getenv("APIFY_YOUTUBE_TRANSCRIPTION")
         or os.getenv("YOUTUBE_API_TRANSCRIPTION", "ALWAYS_TRANSCRIBE")

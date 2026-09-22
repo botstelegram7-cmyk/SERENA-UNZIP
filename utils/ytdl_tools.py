@@ -379,11 +379,13 @@ async def youtube_diagnose(url: str = "") -> str:
     out = ["<b>YouTube Diagnostics</b>", ""]
 
     try:
-        from utils.youtube_api import api_key_status, has_api_tokens, is_youtube_url
+        from utils.youtube_api import api_key_status, check_actor_access, has_api_tokens, is_youtube_url
         out.append(f"Apify actor: <code>{Config.APIFY_YOUTUBE_ACTOR_ID}</code>")
         out.append(f"API tokens: {api_key_status()}")
         out.append(f"API mode: <b>{'ready' if has_api_tokens() else 'not configured'}</b>")
+        out.append(f"Actor access: <b>{await check_actor_access()}</b>")
         out.append(f"Quality: <b>{Config.APIFY_YOUTUBE_DEFAULT_QUALITY}</b> · Format: <b>{Config.APIFY_YOUTUBE_FORMAT}</b>")
+        out.append(f"Store in KV: <b>{'yes' if Config.APIFY_YOUTUBE_STORE_IN_KVSTORE else 'no'}</b>")
         out.append(f"Transcribe: <b>{Config.APIFY_YOUTUBE_TRANSCRIPTION or 'disabled'}</b>")
         if url:
             out.append(f"Input link: <b>{'YouTube' if is_youtube_url(url) else 'not YouTube'}</b>")

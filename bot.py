@@ -281,11 +281,19 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.0"
-BOT_CODENAME = "YouTube API + Beautiful ETA"
+BOT_VERSION  = "v3.12.1"
+BOT_CODENAME = "API Download Fixes + ETA Everywhere"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.1": [
+        "TeraBox no longer stops at the first mirror when that mirror withholds dlink; it keeps trying mirrors such as dm.1024tera.com",
+        "TeraBox diagnostics now tests the API resolver and shows the real API error/result",
+        "YouTube diagnostics now verifies Apify actor access without starting a download",
+        "YouTube API stores files in Apify KV by default so the bot can fetch them reliably",
+        "Generic YouTube download failures no longer overwrite the real API/yt-dlp reason",
+        "Telegram file downloads used by ZIP, merge, info and password checks now show the ETA panel",
+    ],
     "v3.12.0": [
         "YouTube downloads now use the Apify API actor before falling back to yt-dlp",
         "Multiple Apify API tokens are supported with automatic failover",
@@ -2845,7 +2853,11 @@ async def on_file(client, message):
         await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
         st=await message.reply_text("TXT downloading…")
         try:
-            p=await client.download_media(message.document,file_name=str(temp_root))
+            start = time.time()
+            p=await client.download_media(
+                message.document, file_name=str(temp_root),
+                progress=progress_for_pyrogram,
+                progress_args=(st, start, fname, "to server"))
             content=Path(p).read_text(encoding="utf-8",errors="ignore")
         except Exception as e: await st.edit_text(f"TXT download failed:\n<code>{e}</code>"); return
         try: await st.delete()
@@ -3616,7 +3628,11 @@ async def _auto_try_passwords(client, reply_msg, orig):
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    try: dl=await client.download_media(doc,file_name=str(temp_root))
+    start = time.time()
+    try:
+        dl=await client.download_media(
+            doc, file_name=str(temp_root), progress=progress_for_pyrogram,
+            progress_args=(status, start, fname, "to server"))
     except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     found=None
     for pw in COMMON_PASSWORDS:
@@ -3874,7 +3890,11 @@ async def _handle_file_info(client, dest, orig):
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    try: dl=await client.download_media(media,file_name=str(temp_root))
+    start = time.time()
+    try:
+        dl=await client.download_media(
+            media, file_name=str(temp_root), progress=progress_for_pyrogram,
+            progress_args=(status, start, fname, "to server"))
     except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
     info=await get_media_info(dl)
     if not info:
@@ -4180,14 +4200,22 @@ async def _do_create_zip(client, cq, uid):
     for i,f in enumerate(sess["files"],1):
         try:
             await status.edit_text(f"Downloading file {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
-            p=await client.download_file(f["file_id"],file_name=str(temp_root/f["file_name"]))
+            start = time.time()
+            p=await client.download_file(
+                f["file_id"], file_name=str(temp_root/f["file_name"]),
+                progress=progress_for_pyrogram,
+                progress_args=(status, start, f["file_name"], "to server"))
             if p: dl_paths.append(str(temp_root/f["file_name"]))
         except Exception:
             # fallback
             try:
                 import tempfile
                 tmp=str(temp_root/f["file_name"])
-                await client.download_media(f["file_id"],file_name=str(temp_root))
+                start = time.time()
+                await client.download_media(
+                    f["file_id"], file_name=str(temp_root),
+                    progress=progress_for_pyrogram,
+                    progress_args=(status, start, f["file_name"], "to server"))
                 dl_paths.append(tmp)
             except Exception: pass
     if not dl_paths: await status.edit_text("Files download failed."); zip_sessions.pop(uid,None); return
@@ -4219,7 +4247,11 @@ async def _do_merge_videos(client, cq, uid):
         try:
             await status.edit_text(f"Video {i}/{len(sess['files'])}: <code>{f['file_name']}</code>")
             dest_path=str(temp_root/f["file_name"])
-            await client.download_media(f["file_id"],file_name=str(temp_root))
+            start = time.time()
+            await client.download_media(
+                f["file_id"], file_name=str(temp_root),
+                progress=progress_for_pyrogram,
+                progress_args=(status, start, f["file_name"], "to server"))
             paths.append(dest_path)
         except Exception: pass
     if len(paths)<2: await status.edit_text("Videos download failed."); merge_sessions.pop(uid,None); return
@@ -5463,7 +5495,9 @@ async def handle_links_download_all(client, cq, original_msg):
                 except Exception: pass
             else:
                 fail+=1
-                await _safe_edit(st,f"Download failed:\n<code>{url[:80]}</code>")
+                # _ytdl_direct_download already leaves the detailed API/yt-dlp
+                # reason in the status message. Do not overwrite it with a
+                # generic "Download failed" line.
         except Exception as e:
             fail+=1
             if st: await _safe_edit(st,f"<code>{str(e)[:150]}</code>")

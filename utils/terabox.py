@@ -35,7 +35,7 @@ import json
 import os
 import re
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
 import aiohttp
@@ -275,20 +275,16 @@ def _wall_message() -> str:
     if has_cookie():
         return (
             "<b>TeraBox ne is request ko block kar diya.</b>\n\n"
-            "Cookie set hai lekin phir bhi refuse kar raha hai. Wajah:\n"
-            "• Cookie expire ho gayi hai\n"
-            "• File adult/restricted flag wali hai\n"
-            "• Server IP par temporary limit hai\n\n"
-            "<b>Fix:</b> browser se fresh <code>ndus</code> cookie"
-            "lekar <code>TERABOX_COOKIE</code> update karo.")
+            "File list mil gayi, lekin signed download link server IP ko "
+            "nahi diya gaya. Cookie set hone ke baad bhi ye IP-level block "
+            "ho sakta hai.\n\n"
+            "<b>Fix:</b> <code>XAPIVERSE_KEY</code> API ko sahi/active rakho "
+            "ya residential proxy laga kar <code>TERABOX_PROXY</code> set karo.")
     return (
         "<b>TeraBox ne server IP se access block kiya.</b>\n\n"
-        "<i>Link bilkul sahi hai</i> — TeraBox anonymous datacenter IPs ko "
-        "file list nahi deta. Browser me khulta hai, server se nahi.\n\n"
-        "<b>Fix:</b> TeraBox me login karke browser se <code>ndus</code>"
-        "cookie copy karo aur <code>TERABOX_COOKIE</code> env var me daalo.\n\n"
-        "<i>Chrome → F12 → Application → Cookies → terabox.com → ndus</i>")
-
+        "Link real hai, par datacenter IP ko TeraBox download link nahi de raha.\n\n"
+        "<b>Fix:</b> <code>XAPIVERSE_KEY</code> API set karo, ya residential "
+        "proxy ke saath <code>TERABOX_PROXY</code> use karo.")
 
 # Remembers why the last request failed, so a transport-level problem
 # (bad cookie, DNS, timeout) is reported instead of being mistaken for
@@ -432,32 +428,101 @@ def api_key_status() -> str:
     return " · ".join(bits)
 
 
+def _api_walk(obj: Any) -> Iterable[Dict]:
+    """Yield every dict inside an API response, regardless of nesting."""
+    if isinstance(obj, dict):
+        yield obj
+        for v in obj.values():
+            yield from _api_walk(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _api_walk(v)
+
+
+def _api_size(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    m = re.match(r"([0-9]+(?:\.[0-9]+)?)\s*([kmgt]?i?b|bytes?)", text, re.I)
+    if not m:
+        return 0
+    num = float(m.group(1)); unit = m.group(2).lower(); mult = 1
+    if unit.startswith("k"): mult = 1024
+    elif unit.startswith("m"): mult = 1024 ** 2
+    elif unit.startswith("g"): mult = 1024 ** 3
+    elif unit.startswith("t"): mult = 1024 ** 4
+    return int(num * mult)
+
+
+def _first_api_link(entry: Dict) -> str:
+    """Return the best downloadable URL from a xAPIverse item.
+
+    xAPIverse has used a few names over time. Prefer actual download links,
+    then stream URLs; ignore thumbnails/subtitles.
+    """
+    keys = (
+        "fast_download_link", "fastDownloadLink", "normal_dlink",
+        "normalDlink", "download_url", "downloadUrl", "download_link",
+        "downloadLink", "dlink", "direct_link", "directLink",
+        "file_url", "fileUrl", "stream_url", "streamUrl", "url", "link",
+    )
+    for key in keys:
+        value = entry.get(key)
+        if isinstance(value, dict):
+            # fast_stream_url can be {"360p": "...m3u8"}; use the first URL.
+            value = next((v for v in value.values() if isinstance(v, str)), "")
+        if isinstance(value, list):
+            value = next((v for v in value if isinstance(v, str)), "")
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            low_key = key.lower()
+            low_val = value.lower()
+            if any(bad in low_key or bad in low_val for bad in ("thumb", "subtitle", "caption")):
+                continue
+            return value.strip()
+    return ""
+
+
 def _items_from_api(payload: Dict) -> List[Dict]:
-    """Map the API response onto the same shape list_files() returns."""
+    """Map many possible xAPIverse response shapes onto list_files() entries."""
     out: List[Dict] = []
-    for e in (payload.get("list") or []):
-        if str(e.get("is_dir") or "0") == "1":
+    seen = set()
+
+    for e in _api_walk(payload):
+        # Skip directories/folders; only downloadable files should be returned.
+        if str(e.get("is_dir") or e.get("isdir") or "0") == "1":
             continue
-        link = (e.get("normal_dlink") or e.get("stream_url") or "").strip()
-        if not link:
+        if str(e.get("type") or "").lower() in ("folder", "dir", "directory"):
             continue
-        try:
-            size = int(e.get("size") or 0)
-        except (TypeError, ValueError):
-            size = 0
+
+        link = _first_api_link(e)
+        if not link or link in seen:
+            continue
+        seen.add(link)
+
+        name = (e.get("name") or e.get("server_filename") or e.get("filename")
+                or e.get("file_name") or os.path.basename(e.get("file_path") or "")
+                or os.path.basename(urlparse(link).path) or "terabox_file")
+        size = 0
+        for sk in ("size", "fileSize", "filesize", "size_bytes", "sizeBytes", "contentLength"):
+            size = _api_size(e.get(sk))
+            if size:
+                break
+
         out.append({
-            "name": e.get("name") or os.path.basename(
-                e.get("file_path") or "") or "file",
+            "name": _safe_name(str(name)),
             "size": size,
-            "fs_id": "",
+            "fs_id": str(e.get("fs_id") or e.get("fsId") or ""),
             "dlink": link,
-            "path": e.get("file_path") or "",
+            "path": e.get("file_path") or e.get("path") or "",
             "is_dir": False,
             "mirror": "xapiverse",
             "thumbnail": e.get("thumbnail") or "",
         })
     return out
-
 
 async def list_files_via_api(url: str) -> List[Dict]:
     """Resolve a share through xAPIverse. Raises TeraboxError on failure."""
@@ -535,18 +600,23 @@ async def list_files(url: str) -> List[Dict]:
             "Format aisa hona chahiye: <code>terabox.com/s/1xxxxxxx</code>")
 
     # The API resolves the share on its own infrastructure, so it sidesteps
-    # the address block entirely. Try it first when a key is configured,
-    # and fall back to scraping if it cannot answer.
+    # the address block entirely. Try it first when a key is configured.
+    # If it fails and direct scraping also fails, include the API reason in the
+    # final error instead of hiding it behind the old IP-block message.
+    api_error = ""
     if has_api_key():
         try:
             items = await list_files_via_api(url)
             if items:
                 return items
-        except TeraboxError:
-            if not has_cookie():
+        except TeraboxError as e:
+            api_error = str(e)
+            if not has_cookie() and not _proxy():
                 raise          # nothing else to try
-        except Exception:
-            pass
+        except Exception as e:
+            api_error = f"{type(e).__name__}: {str(e)[:160]}"
+            if not has_cookie() and not _proxy():
+                raise TeraboxError(api_error)
 
     problem = cookie_problem()
     if problem and problem != "not set":
@@ -559,6 +629,7 @@ async def list_files(url: str) -> List[Dict]:
     jar = aiohttp.CookieJar(unsafe=True)
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=20, sock_read=30)
     seen_errno = 0
+    withheld_names = ""
 
     async with aiohttp.ClientSession(cookie_jar=jar, timeout=timeout) as session:
         # Prefer the mirror the user actually pasted, then sweep the rest.
@@ -579,23 +650,12 @@ async def list_files(url: str) -> List[Dict]:
                         # listing one does not.
                         await _mint_dlinks(session, mirror, surl, token, files)
                     if not any(f.get("dlink") for f in files):
-                        names = ", ".join(f["name"][:40] for f in files[:2])
-                        raise TeraboxError(
-                            "<b>File mil gayi, par TeraBox download link"
-                            "nahi de raha.</b>\n\n"
-                            f"<i>{names}</i>\n\n"
-                            + ("Cookie set hai lekin TeraBox ne phir bhi mana "
-                               "kiya. Aksar wajah: file adult/restricted flag "
-                               "wali hai, ya cookie expire ho gayi.\n\n"
-                               "Browser se fresh <code>ndus</code> cookie lo,"
-                               "ya <code>TERABOX_PROXY</code> set karo "
-                               "(residential proxy) — IP block ka yahi pakka fix hai."
-                               if has_cookie() else
-                               "Iske liye login zaroori hai.\n\n"
-                               "<code>TERABOX_COOKIE</code> me apni"
-                               "<code>ndus</code> cookie daalo — "
-                               "<i>Chrome → F12 → Application → Cookies "
-                               "→ terabox.com → ndus</i>"))
+                        # This mirror listed the file but withheld the dlink.
+                        # Do NOT stop here: /tbtest often shows another mirror
+                        # (for example dm.1024tera.com) can mint the same file.
+                        withheld_names = ", ".join(f["name"][:40] for f in files[:2])
+                        seen_errno = seen_errno or 140
+                        continue
                     return files
                 raise TeraboxError(
                     "<b>Is share me koi file nahi mili.</b>\n\n"
@@ -608,7 +668,12 @@ async def list_files(url: str) -> List[Dict]:
     if seen_errno in _ERRNO_HELP:
         raise TeraboxError(_ERRNO_HELP[seen_errno])
     if seen_errno in (140, 400210, 460020, -6):
-        raise TeraboxError(_wall_message())
+        msg = _wall_message()
+        if withheld_names:
+            msg += f"\n\n<i>File seen: {withheld_names}</i>"
+        if api_error:
+            msg += f"\n\n<b>API attempt failed:</b>\n<code>{api_error[:220]}</code>"
+        raise TeraboxError(msg)
     transport = _LAST_TRANSPORT_ERROR.get("v") or ""
     if not seen_errno and transport:
         # Never reached TeraBox at all — say so rather than blaming its API
@@ -829,12 +894,24 @@ async def diagnose(url: str = "") -> str:
         out.append(f"Cookie: set (ndus, {len(val)} chars)")
     out.append(f"API keys: {api_key_status()}")
     px = _proxy()
-    out.append(f"Proxy: {'' + px.split('@')[-1][:32] if px else ' not set'}")
+    out.append(f"Proxy: {px.split('@')[-1][:32] if px else 'not set'}")
     if url:
         out.append(f"surl: <code>{extract_surl(url) or 'not parsed'}</code>")
     out.append("")
 
     surl = extract_surl(url) if url else ""
+    if surl and has_api_key():
+        try:
+            api_items = await list_files_via_api(url)
+            api_links = sum(1 for f in api_items if f.get("dlink"))
+            api_size = sum(int(f.get("size") or 0) for f in api_items)
+            out.append(
+                f"API resolve: <b>{len(api_items)} files</b> · "
+                f"links {api_links}/{len(api_items)}"
+                + (f" · {human_size(api_size)}" if api_size else ""))
+        except Exception as e:
+            out.append(f"API resolve: <b>failed</b> — <code>{str(e)[:180]}</code>")
+        out.append("")
     if not surl:
         out += ["<i>Tip: <code>/tbtest &lt;link&gt;</code> chalao — bina link ke "
                 "sirf reachability test hoti hai, file list nahi.</i>", ""]
@@ -872,10 +949,10 @@ async def diagnose(url: str = "") -> str:
                        400210: "verification required"}.get(errno, f"errno {errno}")
                 out.append(f"{mirror}: {tag}"
                            + (f" (jsToken {'' if token else ''})"))
-    out += ["", "<i>Listing lekin dlink = TeraBox file dikhata hai par"
+    out += ["", "<i>Listing lekin dlink = TeraBox file dikhata hai par "
             "download link rok raha hai. Ye IP-level block hai — cookie se "
             "theek nahi hota.</i>"]
     if not _proxy():
-        out.append("<i> Fix: residential proxy laga kar"
+        out.append("<i>Fix: API key working rakho, ya residential proxy laga kar "
                    "<code>TERABOX_PROXY</code> set karo.</i>")
     return "\n".join(out)
