@@ -230,6 +230,53 @@ def mark_account_used():
         acc["uses"] += 1
 
 
+# Cookies that identify the BROWSER, not the account. They survive a
+# logout, so exporting two accounts from one browser copies them verbatim.
+_DEVICE_COOKIE_KEYS = ("datr", "ig_did", "mid")
+
+
+def _jar_of(raw: str) -> Dict[str, str]:
+    """Parse one account's cookie text without touching global state."""
+    jar: Dict[str, str] = {}
+    text = (raw or "")
+    if "\\n" in text and "\n" not in text:
+        text = text.replace("\\n", "\n")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 7:
+            jar[parts[5].strip()] = parts[6].strip()
+    if not jar and "=" in text:
+        for piece in text.replace("\n", ";").split(";"):
+            if "=" in piece:
+                k, _, v = piece.partition("=")
+                jar[k.strip()] = v.strip()
+    return jar
+
+
+def shared_device_warning() -> str:
+    """Flag accounts exported from the same browser.
+
+    datr / ig_did / mid identify the device and persist across logout, so
+    two accounts captured from one browser carry identical values.
+    Instagram then sees a single device driving both, which defeats the
+    point of rotating and is itself a strong automation signal.
+    """
+    accounts = _load_accounts()
+    if len(accounts) < 2:
+        return ""
+    jars = [_jar_of(a["raw"]) for a in accounts]
+    shared = [k for k in _DEVICE_COOKIE_KEYS
+              if len({j.get(k, "") for j in jars if j.get(k)}) == 1
+              and any(j.get(k) for j in jars)]
+    if not shared:
+        return ""
+    return ("same browser: " + ", ".join(shared) +
+            " identical across accounts")
+
+
 def account_status() -> str:
     """Human-readable pool state for diagnostics."""
     accounts = _load_accounts()
@@ -295,6 +342,13 @@ def _note_cookie_change():
 def cookies_as_dict() -> Dict[str, str]:
     """Parse Netscape-format OR 'k=v; k=v' cookie string into a dict."""
     _note_cookie_change()      # fresh cookies clear a stale cooldown
+    # Record the use here: this is the one call every request path goes
+    # through. Without it last_used never moved and "least recently used"
+    # always picked account #1, so the pool never actually rotated.
+    try:
+        mark_account_used()
+    except Exception:
+        pass
     raw = _active_raw().strip()
     if not raw:
         return {}
@@ -2084,6 +2138,12 @@ async def diagnose() -> str:
 
     # 2. Account pool
     out += ["", f"Accounts: {account_status()}"]
+    _warn = shared_device_warning()
+    if _warn:
+        out.append(f"<b>Warning</b> - {_warn}")
+        out.append("<i>Export each account from a different browser or a "
+                   "private window; otherwise Instagram sees one device "
+                   "running both and rotation gains nothing.</i>")
 
     # 3. Current cooldown
     rl = rate_limit_remaining()

@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.9.2"
-BOT_CODENAME = "Photo Posts"
+BOT_VERSION  = "v3.9.3"
+BOT_CODENAME = "Real Rotation"
 BOT_RELEASED = "19 Sep 2026"
 
 CHANGELOG = {
+    "v3.9.3": [
+        "Fixed rotation never advancing past the first account",
+        "<code>/igtest</code> warns when accounts share one browser fingerprint",
+        "Usage counts now reflect real activity",
+    ],
     "v3.9.2": [
         "Fixed photo posts failing while reels worked",
         "The embed page is retried instead of giving up after one dropped connection",
