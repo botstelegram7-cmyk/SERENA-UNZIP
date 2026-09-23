@@ -9,12 +9,20 @@ URL_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Markdown-style links appear in pasted text from many apps:
+# [name](https://example.com/file). Extract the URL inside parentheses first so
+# the generic URL regex does not keep the leading display text plus `](`.
+MARKDOWN_LINK_REGEX = re.compile(
+    r"\[[^\]]*\]\((https?://[^)\s]+)\)",
+    re.IGNORECASE,
+)
+
 # Links pasted without a scheme, e.g. "instagram.com/reel/ABC/" or
 # "www.youtube.com/watch?v=..". People copy these from mobile share sheets
 # all the time, so treat them as real URLs.
 BARE_URL_REGEX = re.compile(
     r"(?<![\w@/.])((?:www\.)?[a-z0-9][a-z0-9\-]*(?:\.[a-z0-9\-]+)*"
-    r"\.(?:com|net|org|tv|me|co|io|live|app|be|ly|in|to|cc|xyz|watch)"
+    r"\.(?:com|net|org|tv|me|co|io|live|app|be|ly|in|to|cc|xyz|watch|site|dev|cloud)"
     r"(?:/[^\s]*)?)",
     re.IGNORECASE,
 )
@@ -52,7 +60,13 @@ def find_links_in_text(text: str) -> List[str]:
         out.append(url)
 
     spans = []
+    for m in MARKDOWN_LINK_REGEX.finditer(text):
+        spans.append(m.span())
+        _add(m.group(1))
+
     for m in URL_REGEX.finditer(text):
+        if any(s <= m.start() < e for s, e in spans):
+            continue
         spans.append(m.span())
         _add(m.group(1))
 

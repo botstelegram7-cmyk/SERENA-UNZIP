@@ -245,6 +245,16 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 
 ---
 
+## 🔗 Direct Download Links
+
+Serena can download direct file URLs, including extension-less token gateways
+such as `dl-worker.teraboxdl.site/?token=...`. These are handled as plain direct
+HTTP downloads, not through yt-dlp and not through TeraBox cookies. The bot also
+understands Markdown/rich links, follows JSON/text wrappers that contain the real
+file URL, and infers a filename/extension from response headers or content type.
+
+---
+
 ## 🗜️ Video Compression Safety
 
 Compression cannot be done only from a Telegram `file_id`: Telegram can resend a

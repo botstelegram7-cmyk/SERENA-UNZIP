@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.8"
-BOT_CODENAME = "Safe Compression + File Captions"
+BOT_VERSION  = "v3.12.9"
+BOT_CODENAME = "Direct Link Gateway Fix"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.9": [
+        "Direct token/download gateway links such as dl-worker.teraboxdl.site are now treated as direct files, not yt-dlp pages",
+        "Markdown/rich Telegram links are extracted correctly instead of corrupting the URL with bracket text",
+        "Direct downloads now follow JSON/text wrapper URLs and infer filenames/extensions from headers, content type, or media probe",
+    ],
     "v3.12.8": [
         "Audio extraction, split, watermark, and compression now use the output file name as the default caption when no custom caption is set",
         "Large video compression now stops before download when it would exceed configured source-size or free-disk safety limits",
@@ -687,6 +692,30 @@ def _safe_remove(path: str) -> None:
             os.remove(path)
     except Exception:
         pass
+
+
+async def _add_detected_media_ext(path: str) -> str:
+    """If a direct gateway saved media without extension, add one for Telegram."""
+    try:
+        if not path or Path(path).suffix:
+            return path
+        info = await get_media_info(path)
+        if not info:
+            return path
+        ext = ""
+        if info.get("video_codec"):
+            ext = ".mp4"
+        elif info.get("audio_codec"):
+            ext = ".m4a"
+        if not ext:
+            return path
+        new_path = path + ext
+        if not os.path.exists(new_path):
+            os.rename(path, new_path)
+            return new_path
+    except Exception:
+        pass
+    return path
 
 
 def _compress_preflight_error(source_size: int, temp_root: Path) -> str:
@@ -2997,9 +3026,23 @@ async def _start_instagram_flow(client, message, url):
     await _run_instagram_download(client, status, info, uid)
 
 
+def _links_from_message(message, content: str = "") -> List[str]:
+    """Extract links from visible text plus rich Telegram text_link entities."""
+    links = find_links_in_text(content or "")
+    seen = {u.lower().rstrip("/") for u in links}
+    for ent in list(getattr(message, "entities", None) or []) + list(getattr(message, "caption_entities", None) or []):
+        url = (getattr(ent, "url", None) or "").strip()
+        if not url:
+            continue
+        key = url.lower().rstrip("/")
+        if key not in seen:
+            seen.add(key); links.append(url)
+    return links
+
+
 async def process_links_message(client, message, content):
     if not message.from_user: return
-    links=find_links_in_text(content or "")
+    links=_links_from_message(message, content or "")
     # In groups — silently ignore non-URL messages (no kachra)
     if not links:
         if message.chat and message.chat.type not in (enums.ChatType.PRIVATE,):
@@ -3148,7 +3191,7 @@ async def on_text(client, message):
     # Links are always actioned (that is why people add the bot), but plain
     # chatter is ignored unless the bot is mentioned or replied to.
     if message.chat and message.chat.type != enums.ChatType.PRIVATE:
-        has_link = bool(find_links_in_text(txt))
+        has_link = bool(_links_from_message(message, txt))
         if not has_link:
             try:
                 me = await client.get_me()
@@ -5613,6 +5656,7 @@ async def handle_links_download_all(client, cq, original_msg):
         try:
             st=await client.send_message(chat_id,f"{url[:60]}…",reply_to_message_id=reply_to)
             fp=await download_file(url,dest,status_message=st,file_name=base,direction="Downloading")
+            fp=await _add_detected_media_ext(fp)
             bn=os.path.basename(fp); await st.edit_text(f"Uploading: {bn}")
             start_u=time.time()
             if is_video_path(bn):
@@ -5623,6 +5667,9 @@ async def handle_links_download_all(client, cq, original_msg):
             else:
                 sent=await client.send_document(chat_id,fp,caption=bn,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
+            _safe_remove(fp)
+            try: _safe_remove(thumb)
+            except Exception: pass
             try: await st.delete()
             except Exception: pass
             ok+=1; await log_output(client,user,sent,f"direct link: {url}")
