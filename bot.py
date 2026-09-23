@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.10"
-BOT_CODENAME = "Five-Second ETA Updates"
+BOT_VERSION  = "v3.12.11"
+BOT_CODENAME = "Direct Video Duration + Polished Link UI"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.11": [
+        "Direct-link video uploads now pass detected duration to Telegram to avoid the 0:00 video badge",
+        "Video duration detection now falls back to ffmpeg when ffprobe returns no duration",
+        "Link detection, download-start, and completion messages were rewritten with cleaner professional wording",
+    ],
     "v3.12.10": [
         "ETA/progress panels now default to exactly 5-second update intervals",
         "Progress edits are never sent faster than every 5 seconds to reduce Telegram rate-limit/FloodWait risk",
@@ -595,9 +600,29 @@ async def _get_video_duration(path: str) -> int:
         )
         out, _ = await proc.communicate()
         val = out.decode().strip()
-        return int(float(val)) if val else 0
+        if val:
+            dur = int(float(val))
+            if dur > 0:
+                return dur
     except Exception:
-        return 0
+        pass
+    # Fallback for hosts/images where ffprobe is missing or returns empty,
+    # while ffmpeg is still present for thumbnail/compression commands.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-i", path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        text = err.decode(errors="ignore")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+        if m:
+            h, mi, sec = m.groups()
+            return int(int(h) * 3600 + int(mi) * 60 + float(sec))
+    except Exception:
+        pass
+    return 0
 
 def _secs_to_midnight():
     now=datetime.datetime.utcnow()
@@ -3097,19 +3122,19 @@ async def process_links_message(client, message, content):
     cats={}
     for u in links:
         k=classify_link(u); cats[k]=cats.get(k,0)+1
-    # Friendly names — "telegram: 1" meant nothing to anyone but the code
-    LABEL = {"gdrive":("","Google Drive"), "m3u8":("","Live stream"),
-             "direct":("","Direct file"), "telegram":("","Telegram"),
-             "ytdl":("","Video site"),   "filehost":("","File host"),
-             "instagram":("","Instagram"),"unknown":("","Other link")}
+    # Friendly names — polished labels for the download confirmation panel.
+    LABEL = {"gdrive":("☁️","Google Drive"), "m3u8":("📡","Stream playlist"),
+             "direct":("📦","Direct downloadable file"), "telegram":("✈️","Telegram link"),
+             "ytdl":("🎬","Video/audio site"),   "filehost":("🗂","File host"),
+             "instagram":("📸","Instagram media"),"unknown":("🔗","Other link")}
     lines=[]
     for k,v in cats.items():
-        icon,name = LABEL.get(k,("","Other link"))
-        lines.append(f"{icon} {name}" + (f" × <b>{v}</b>" if v>1 else ""))
+        icon,name = LABEL.get(k,("🔗","Other link"))
+        lines.append(f"{icon} <b>{name}</b>" + (f" × <b>{v}</b>" if v>1 else ""))
     n=len(links)
-    head=f"<b>{n} link{'s' if n!=1 else ''} found</b>" if n!=1 else "<b>Link found</b>"
+    head=f"🔗 <b>{n} links detected</b>" if n!=1 else "🔗 <b>Link detected</b>"
     await message.reply_text(
-        head+"\n\n"+"\n".join(lines)+"\n\n<i>What would you like to do?</i>",
+        head+"\n\n"+"\n".join(lines)+"\n\n<i>Select an action to continue.</i>",
         reply_markup=InlineKeyboardMarkup([
             [_btn("Download All", f"links|download_all|{message.chat.id}|{message.id}", "success")],
             [_btn("Cleaned TXT", f"links|clean_txt|{message.chat.id}|{message.id}", "primary"),
@@ -5644,10 +5669,16 @@ async def handle_links_download_all(client, cq, original_msg):
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
     temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
+    active = []
+    if candidates: active.append(f"📦 Direct files: <b>{len(candidates)}</b>")
+    if ytdls: active.append(f"🎬 Video/audio sites: <b>{len(ytdls)}</b>")
+    if gdrives: active.append(f"☁️ Google Drive: <b>{len(gdrives)}</b>")
+    if teraboxes: active.append(f"🗂 TeraBox shares: <b>{len(teraboxes)}</b>")
+    if m3u8s: active.append(f"📡 Streams: <b>{len(m3u8s)}</b>")
     try: await cq.message.edit_text(
-        f"Direct: {len(candidates)} | Video sites: {len(ytdls)} |"
-        f"GDrive: {len(gdrives)} | TeraBox: {len(teraboxes)} | "
-        f"m3u8: {len(m3u8s)}\nDownloading…")
+        "🚀 <b>Download started</b>\n\n"
+        + "\n".join(active)
+        + "\n\n<i>Progress updates every 5 seconds.</i>")
     except Exception: pass
     ok=fail=0; chat_id=cq.message.chat.id; reply_to=cq.message.id
     is_priv=cq.message.chat.type==enums.ChatType.PRIVATE; pinned=False
@@ -5664,17 +5695,19 @@ async def handle_links_download_all(client, cq, original_msg):
             fp=await _add_detected_media_ext(fp)
             bn=os.path.basename(fp); await st.edit_text(f"Uploading: {bn}")
             start_u=time.time()
+            thumb = ""
             if is_video_path(bn):
                 default_cap, yt_thumb = _youtube_caption_thumb_for(fp, bn)
                 cap=await build_caption(uid,default_cap); thumb=yt_thumb or await choose_thumbnail(uid,fp)
+                dur=await _get_video_duration(fp)
                 sent=await client.send_video(chat_id,fp,caption=cap,thumb=thumb,
+                    duration=dur, supports_streaming=True,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
             else:
                 sent=await client.send_document(chat_id,fp,caption=bn,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,bn,"to Telegram"),reply_to_message_id=reply_to)
             _safe_remove(fp)
-            try: _safe_remove(thumb)
-            except Exception: pass
+            _safe_remove(thumb)
             try: await st.delete()
             except Exception: pass
             ok+=1; await log_output(client,user,sent,f"direct link: {url}")
@@ -5787,19 +5820,19 @@ async def handle_links_download_all(client, cq, original_msg):
         if user_cancelled.get(uid): break
         await offer_m3u8_menu(client,cq,uid,url,temp_root)
     if ok and not fail:
-        summary = (f"<b>Complete.</b> {ok} file"
-                   f"{'s' if ok!=1 else ''} bhej di.")
+        summary = ("✅ <b>Download complete</b>\n\n"
+                   f"📦 Files sent: <b>{ok}</b>")
     elif ok and fail:
-        summary = (f"<b>Adhoora</b>\n\n"
-                   f"{ok} delivered\n{fail} failed")
+        summary = ("⚠️ <b>Partially complete</b>\n\n"
+                   f"✅ Delivered: <b>{ok}</b>\n"
+                   f"❌ Failed: <b>{fail}</b>")
     elif fail:
-        summary = (f"<b>Download failed</b>\n\n"
-                   f"<i>Upar har link ka alag message see — "
-                   f"usme wajah likhi hai.</i>")
+        summary = ("❌ <b>Download failed</b>\n\n"
+                   "<i>Please check the status message above for the exact reason.</i>")
     else:
-        summary = "Nothing downloadable was found."
+        summary = "ℹ️ <b>No downloadable file was found.</b>"
     if m3u8s:
-        summary += f"\n\n{len(m3u8s)} stream — quality buttons upar hain."
+        summary += f"\n\n📡 Streams queued: <b>{len(m3u8s)}</b>. Use the quality buttons above."
     try: await cq.message.edit_text(summary)
     except Exception: pass
     if is_priv and pinned:
