@@ -236,9 +236,32 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `QUEUE_END_GIF` | ⬜ | Giphy MP4 URL or Telegram sticker file_id — sent after each ZIP extract |
 | `TEMP_DIR` | ⬜ | Temp folder path (default: `./downloads`) |
 | `ETA_UPDATE_INTERVAL` | ⬜ | Progress/ETA edit delay in seconds. The bot clamps it to the requested 5–6 second window; default follows `PROGRESS_UPDATE_INTERVAL` or 5.5s. |
+| `COMPRESS_MAX_SOURCE_MB` | ⬜ | Max input size for video compression. Default: `1536` MB to protect small deploy disks; set `0` only on a large VPS. |
+| `COMPRESS_MIN_FREE_MB` | ⬜ | Free disk reserve required before compression starts. Default: `1024`. |
+| `COMPRESS_DISK_MULTIPLIER` | ⬜ | Safe disk multiplier for compression preflight. Default: `1.6`. |
 | `MAX_FILE_SIZE_MB` | ⬜ | Max file size to process (default: `2000`) |
 | `FREE_DAILY_TASK_LIMIT` | ⬜ | Daily task limit for free users (default: `30`) |
 | `AUTO_DELETE_MINUTES` | ⬜ | Delete temp files after N minutes (default: `30`) |
+
+---
+
+## 🗜️ Video Compression Safety
+
+Compression cannot be done only from a Telegram `file_id`: Telegram can resend a
+`file_id` without downloading, but it cannot change the bytes. To create a
+smaller file, FFmpeg must read the video and write a new output file. Serena
+therefore checks the source size and free disk before downloading so 2–4 GB
+videos do not fill small Render/Railway disks and crash the bot.
+
+Tune this on larger servers:
+
+```env
+COMPRESS_MAX_SOURCE_MB=1536
+COMPRESS_MIN_FREE_MB=1024
+COMPRESS_DISK_MULTIPLIER=1.6
+```
+
+Set `COMPRESS_MAX_SOURCE_MB=0` only on a VPS with enough temporary storage.
 
 ---
 

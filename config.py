@@ -65,6 +65,14 @@ class Config:
     MAX_ARCHIVE_SIZE_PREMIUM_MB = int(os.getenv("MAX_ARCHIVE_SIZE_PREMIUM_MB", "10240"))
     AUTO_SPLIT_MB               = int(os.getenv("AUTO_SPLIT_MB", "1900"))
 
+    # Video compression is disk-heavy: true compression cannot happen directly
+    # on a Telegram file_id because ffmpeg needs bytes. These guards prevent
+    # 2–4 GB inputs from filling small Render/Railway disks. Set max to 0 to
+    # disable the source-size cap on a large VPS.
+    COMPRESS_MAX_SOURCE_MB      = int(os.getenv("COMPRESS_MAX_SOURCE_MB", "1536"))
+    COMPRESS_MIN_FREE_MB        = int(os.getenv("COMPRESS_MIN_FREE_MB", "1024"))
+    COMPRESS_DISK_MULTIPLIER    = float(os.getenv("COMPRESS_DISK_MULTIPLIER", "1.6"))
+
     # ── yt-dlp / downloader ───────────────────────────────────────
     INSTAGRAM_COOKIES  = os.getenv("INSTAGRAM_COOKIES", "")   # Full Netscape format
 

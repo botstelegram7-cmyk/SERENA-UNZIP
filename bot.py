@@ -281,11 +281,17 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.7"
-BOT_CODENAME = "Compression Reply Fix"
+BOT_VERSION  = "v3.12.8"
+BOT_CODENAME = "Safe Compression + File Captions"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.8": [
+        "Audio extraction, split, watermark, and compression now use the output file name as the default caption when no custom caption is set",
+        "Large video compression now stops before download when it would exceed configured source-size or free-disk safety limits",
+        "Compression deletes source/output temp files as soon as possible to reduce storage pressure on small deploy services",
+        "Split tasks from inline buttons now keep the real requester id instead of silently ignoring clicks",
+    ],
     "v3.12.7": [
         "Fixed Compress button tasks that silently ignored resolution clicks from inline file action menus",
         "Compression now gives clear replies for expired/missing/original-file errors instead of returning silently",
@@ -655,6 +661,64 @@ def _youtube_caption_thumb_for(fp: str, fallback_name: str) -> Tuple[str, str]:
         return build_youtube_caption(meta, fallback_name), youtube_thumbnail_for(fp, meta)
     except Exception:
         return fallback_name, ""
+
+
+def _media_file_name(media, fallback: str = "file") -> str:
+    return (getattr(media, "file_name", None) or fallback or "file").strip() or "file"
+
+
+def _media_file_size(media) -> int:
+    try:
+        return int(getattr(media, "file_size", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _is_video_media(orig, media=None) -> bool:
+    media = media or getattr(orig, "video", None) or getattr(orig, "document", None)
+    fname = _media_file_name(media, "video.mp4") if media else ""
+    mime = (getattr(media, "mime_type", "") or "").lower() if media else ""
+    return bool(getattr(orig, "video", None)) or is_video_file(fname) or mime.startswith("video/")
+
+
+def _safe_remove(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def _compress_preflight_error(source_size: int, temp_root: Path) -> str:
+    """Return a user-facing reason if compression would risk storage crash."""
+    cap_mb = int(getattr(Config, "COMPRESS_MAX_SOURCE_MB", 1536) or 0)
+    src_mb = source_size / 1048576 if source_size else 0
+    if cap_mb and source_size and src_mb > cap_mb:
+        return (
+            "<b>This video is too large for safe compression on this deploy.</b>\n\n"
+            f"📦 Source: <b>{human_bytes(source_size)}</b>\n"
+            f"🛡 Safe compression cap: <b>{cap_mb} MB</b>\n\n"
+            "Telegram <code>file_id</code> can resend the same file without downloading, "
+            "but it cannot create a compressed copy. FFmpeg must read the video bytes, "
+            "so compressing 2–4 GB files can fill Render/Railway disk and crash the bot.\n\n"
+            "Use <code>/split</code>, send a smaller video, or move the bot to a VPS/large disk "
+            "and raise <code>COMPRESS_MAX_SOURCE_MB</code>.")
+    try:
+        free = shutil.disk_usage(str(temp_root)).free
+    except Exception:
+        return ""
+    reserve = int(getattr(Config, "COMPRESS_MIN_FREE_MB", 1024) or 1024) * 1048576
+    mult = float(getattr(Config, "COMPRESS_DISK_MULTIPLIER", 1.6) or 1.6)
+    needed = int((source_size or 0) * mult) + reserve
+    if source_size and free < needed:
+        return (
+            "<b>Not enough temporary storage for safe compression.</b>\n\n"
+            f"📦 Source: <b>{human_bytes(source_size)}</b>\n"
+            f"💽 Free disk: <b>{human_bytes(free)}</b>\n"
+            f"🛡 Required safe free space: <b>{human_bytes(needed)}</b>\n\n"
+            "Compression was stopped before downloading, so the deploy service will not fill storage."
+        )
+    return ""
 
 # ════════════════════════════════════════════════════════════════════════════
 # LOGGING
@@ -1901,7 +1965,7 @@ async def file_command_handler(client, message):
     elif cmd=="compress":
         if not await check_rate_limit(uid,message): return
         await _trigger_compress(client,message,r,cid,mid,requester_id=uid)
-    elif cmd=="split": await _trigger_split(client,message,r,cid,mid,fname)
+    elif cmd=="split": await _trigger_split(client,message,r,cid,mid,fname,requester_id=uid)
     elif cmd=="audio": await handle_extract_audio(client,None,r,reply_to_msg=message)
     elif cmd=="unzip":
         if not is_archive_file(fname): await message.reply_text("Ye archive is not available."); return
@@ -3332,9 +3396,9 @@ async def callbacks(client, cq: CallbackQuery):
         except Exception: await cq.answer("File not found.",show_alert=True); return
         await cq.answer()
         media=orig.document or orig.video; fname=(media.file_name if media else None) or "file"
-        await _trigger_split(client,cq.message,orig,int(cid),int(mid),fname); return
+        await _trigger_split(client,cq.message,orig,int(cid),int(mid),fname,requester_id=cq.from_user.id); return
     if data.startswith("splitq|"):
-        _,tid,smb=data.split("|",2); await cq.answer(); await _do_split(client,cq,tid,int(smb)); return
+        _,tid,smb=data.split("|",2); await _do_split(client,cq,tid,int(smb)); return
     if data.startswith("subs|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
@@ -3886,35 +3950,43 @@ async def handle_extract_audio(client, cq, msg, reply_to_msg=None):
     uid=user.id
     if await is_banned(uid):
         if cq: await cq.answer("Banned.",show_alert=True); return
-    video=msg.video
-    if not video:
-        if cq: await cq.answer("Video is not available.",show_alert=True); return
+    media=msg.video or msg.document
+    if not media or not _is_video_media(msg, media):
+        if cq: await cq.answer("Video is not available.",show_alert=True)
+        else: await ((reply_to_msg or msg).reply_text("Video is not available."))
+        return
     lock=get_lock(uid)
     if lock.locked():
-        if cq: await cq.answer("A task is already running.",show_alert=True); return
+        if cq: await cq.answer("A task is already running.",show_alert=True)
+        else: await ((reply_to_msg or msg).reply_text("A task is already running."))
+        return
     if cq: await cq.answer()
     dest_msg=(cq.message if cq else None) or reply_to_msg or msg
     if not await check_rate_limit(uid,dest_msg): return
     async with lock:
-        fname=video.file_name or "video.mp4"; base=os.path.splitext(fname)[0]
+        fname=_media_file_name(media,"video.mp4"); base=os.path.splitext(fname)[0] or "audio"
         temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex
         temp_root.mkdir(parents=True,exist_ok=True)
         await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
         status=await dest_msg.reply_text("Downloading video for audio extract…"); start=time.time()
         try:
-            dl=await client.download_media(video,file_name=str(temp_root),
+            dl=await client.download_media(media,file_name=str(temp_root),
                 progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
         except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
-        audio_path=str(temp_root/f"{base}.m4a")
+        audio_name=f"{base}.m4a"
+        audio_path=str(temp_root/audio_name)
         try: await extract_audio(dl,audio_path)
         except Exception as e: await status.edit_text(f"ffmpeg error:\n<code>{e}</code>"); return
+        finally: _safe_remove(dl)
+        cap=await build_caption(uid,audio_name)
         await status.edit_text("Uploading audio…"); start_u=time.time()
         try:
             # BUG FIX #4 — send_audio not send_document
             sent=await client.send_audio(dest_msg.chat.id,audio_path,
-                caption=f"Extracted from: <b>{fname}</b>",title=base,performer="Serena Bot",
-                progress=progress_for_pyrogram,progress_args=(status,start_u,f"{base}.m4a","to Telegram"),
+                caption=cap,title=base,performer="Serena Bot",
+                progress=progress_for_pyrogram,progress_args=(status,start_u,audio_name,"to Telegram"),
                 reply_to_message_id=dest_msg.id)
+            _safe_remove(audio_path)
             try: await status.delete()
             except Exception: pass
             try: await log_output(client,user,sent,"audio extracted")
@@ -3958,10 +4030,8 @@ async def _handle_file_info(client, dest, orig):
 # ── Compress ─────────────────────────────────────────────────────────────────
 async def _trigger_compress(client, dest, orig, cid, mid, requester_id: int = None):
     media = orig.video or orig.document
-    fname = (getattr(media, "file_name", None) if media else None) or ("video.mp4" if getattr(orig, "video", None) else "file")
-    mime = (getattr(media, "mime_type", "") or "").lower() if media else ""
-    is_video_media = bool(getattr(orig, "video", None)) or is_video_file(fname) or mime.startswith("video/")
-    if not media or not is_video_media:
+    fname = _media_file_name(media, "video.mp4" if getattr(orig, "video", None) else "file") if media else "file"
+    if not media or not _is_video_media(orig, media):
         await dest.reply_text("Ye video is not available. Please reply to a video file with <code>/compress</code>.")
         return
     uid = requester_id or (dest.from_user.id if dest.from_user else 0)
@@ -3971,7 +4041,12 @@ async def _trigger_compress(client, dest, orig, cid, mid, requester_id: int = No
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":fname}
+    source_size = _media_file_size(media)
+    preflight = _compress_preflight_error(source_size, temp_root)
+    if preflight:
+        await dest.reply_text(preflight)
+        return
+    COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":fname,"source_size":source_size}
     await dest.reply_text(f"Compress: <code>{fname}</code>\nResolution:",
         reply_markup=InlineKeyboardMarkup([
             [_btn("360p", f"comprq|{tid}|360", "primary"),_btn("480p", f"comprq|{tid}|480", "primary")],
@@ -3999,8 +4074,14 @@ async def _do_compress(client, cq, tid, res):
         COMPRESS_TASKS.pop(tid,None)
         return
     media=orig.video or orig.document
-    if not media:
+    if not media or not _is_video_media(orig, media):
         await cq.message.reply_text("Original video is not available anymore.")
+        COMPRESS_TASKS.pop(tid,None)
+        return
+    source_size = _media_file_size(media) or int(info.get("source_size") or 0)
+    preflight = _compress_preflight_error(source_size, Path(info["temp_root"]))
+    if preflight:
+        await cq.message.reply_text(preflight)
         COMPRESS_TASKS.pop(tid,None)
         return
     lock=get_lock(uid)
@@ -4013,7 +4094,9 @@ async def _do_compress(client, cq, tid, res):
                 dl=await client.download_media(media,file_name=str(temp_root),
                     progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
             except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
-            out=str(temp_root/f"compressed_{res}p.mp4")
+            source_mb = (os.path.getsize(dl) if dl and os.path.exists(dl) else source_size) / 1048576
+            out_name = f"{Path(info['fname']).stem}_{res}p_compressed.mp4"
+            out=str(temp_root/out_name)
             await status.edit_text(
                 f"🗜 <b>Compressing to {res}p</b>\n\n"
                 f"📄 <code>{info['fname']}</code>\n"
@@ -4035,28 +4118,38 @@ async def _do_compress(client, cq, tid, res):
                     f"⏳ ETA      : <b>{eta}</b>")
 
             try: await compress_video(dl,out,resolution=res,on_progress=_comp_progress,update_interval=5.5)
-            except Exception as e: await status.edit_text(f"Compression failed:\n<code>{e}</code>"); return
+            except Exception as e:
+                _safe_remove(dl)
+                await status.edit_text(f"Compression failed:\n<code>{e}</code>"); return
+            _safe_remove(dl)  # free source file before upload to protect disk
             if not os.path.exists(out) or os.path.getsize(out) < 1024:
+                _safe_remove(out)
                 await status.edit_text("Compression failed: output file was not created."); return
-            thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{Path(info['fname']).stem}_{res}p.mp4")
+            thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,out_name)
             dur=await _get_video_duration(out)
             await status.edit_text("Uploading compressed video…"); start_u=time.time()
             try:
                 sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,duration=dur,
                     supports_streaming=True,
-                    progress=progress_for_pyrogram,progress_args=(status,start_u,f"compressed_{res}p.mp4","to Telegram"),
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),
                     reply_to_message_id=cq.message.id)
                 try: await status.delete()
                 except Exception: pass
                 await log_output(client,cq.from_user,sent,f"compressed {res}p")
             except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
-            await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
+            finally:
+                _safe_remove(out)
+                _safe_remove(thumb)
+            await update_user_stats(uid,source_mb)
     finally:
         COMPRESS_TASKS.pop(tid,None)
 
 # ── Split ────────────────────────────────────────────────────────────────────
-async def _trigger_split(client, dest, orig, cid, mid, fname):
-    uid=dest.from_user.id if dest.from_user else 0
+async def _trigger_split(client, dest, orig, cid, mid, fname, requester_id: int = None):
+    uid=requester_id or (dest.from_user.id if dest.from_user else 0)
+    if not uid:
+        await dest.reply_text("Could not identify the requester. Please try /split again.")
+        return
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
@@ -4069,13 +4162,22 @@ async def _trigger_split(client, dest, orig, cid, mid, fname):
 
 async def _do_split(client, cq, tid, size_mb):
     info=SPLIT_TASKS.get(tid)
-    if not info: await cq.message.reply_text("Task expired."); return
+    if not info:
+        await cq.answer("Task expired.", show_alert=True)
+        await cq.message.reply_text("Split task expired. Please run /split again."); return
     uid=cq.from_user.id
-    if uid!=info["user_id"]: return
+    if uid!=info["user_id"]:
+        await cq.answer("This split task is not yours.", show_alert=True); return
+    try: await cq.answer("Starting split…")
+    except Exception: pass
     if not await check_rate_limit(uid,cq.message): return
-    orig=await client.get_messages(info["chat_id"],info["msg_id"])
+    try:
+        orig=await client.get_messages(info["chat_id"],info["msg_id"])
+    except Exception as e:
+        await cq.message.reply_text(f"Original file not found:\n<code>{e}</code>"); SPLIT_TASKS.pop(tid,None); return
     media=orig.document or orig.video
-    if not media: return
+    if not media:
+        await cq.message.reply_text("Original file is not available anymore."); SPLIT_TASKS.pop(tid,None); return
     lock=get_lock(uid)
     if lock.locked(): await cq.message.reply_text("A task is already running."); return
     async with lock:
@@ -4087,22 +4189,28 @@ async def _do_split(client, cq, tid, size_mb):
         except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
         await status.edit_text(f"Splitting into {size_mb}MB parts…")
         try: parts=await split_file(dl,part_size_mb=size_mb)
-        except Exception as e: await status.edit_text(f"Split failed:\n<code>{e}</code>"); return
+        except Exception as e:
+            _safe_remove(dl)
+            await status.edit_text(f"Split failed:\n<code>{e}</code>"); return
+        source_mb = os.path.getsize(dl)/(1024*1024) if os.path.exists(dl) else 0
+        _safe_remove(dl)  # parts are created; free original before upload
         await status.edit_text(f"Sending {len(parts)} parts…")
         for i,pp in enumerate(parts,1):
             pname=os.path.basename(pp)
             st=await client.send_message(cq.message.chat.id,f"Part {i}/{len(parts)}",reply_to_message_id=cq.message.id)
             start_u=time.time()
             try:
-                await client.send_document(cq.message.chat.id,pp,caption=pname,
+                part_cap=await build_caption(uid,pname)
+                await client.send_document(cq.message.chat.id,pp,caption=part_cap,
                     progress=progress_for_pyrogram,progress_args=(st,start_u,pname,"to Telegram"),reply_to_message_id=cq.message.id)
+                _safe_remove(pp)
                 try: await st.delete()
                 except Exception: pass
             except Exception as e: await st.edit_text(f"Part {i} failed: <code>{e}</code>")
         try: await status.delete()
         except Exception: pass
         await cq.message.reply_text(f"Split done! {len(parts)} parts sent.")
-        await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
+        await update_user_stats(uid,source_mb)
     SPLIT_TASKS.pop(tid,None)
 
 # ── Subtitles ─────────────────────────────────────────────────────────────────
@@ -4164,9 +4272,9 @@ async def _handle_screenshot_with_time(client, dest, orig, time_str):
 # ── Watermark ─────────────────────────────────────────────────────────────────
 async def _handle_watermark(client, dest, orig, wtext):
     media=orig.video or orig.document
-    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video is not available."); return
+    if not media or not _is_video_media(orig, media): await dest.reply_text("Ye video is not available."); return
     uid=dest.from_user.id if dest.from_user else 0
-    fname=media.file_name or "video.mp4"
+    fname=_media_file_name(media,"video.mp4")
     if not await check_rate_limit(uid,dest): return
     temp_root=Path(Config.TEMP_DIR)/str(uid)/uuid.uuid4().hex; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
@@ -4175,20 +4283,26 @@ async def _handle_watermark(client, dest, orig, wtext):
         dl=await client.download_media(media,file_name=str(temp_root),
             progress=progress_for_pyrogram,progress_args=(status,start,fname,"to server"))
     except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
-    out=str(temp_root/f"wm_{Path(fname).stem}.mp4")
+    out_name=f"{Path(fname).stem}_watermarked.mp4"
+    out=str(temp_root/out_name)
     await status.edit_text("Adding watermark…")
     try: await add_watermark(dl,out,wtext)
-    except Exception as e: await status.edit_text(f"Watermark failed:\n<code>{e}</code>"); return
-    thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{fname}")
+    except Exception as e:
+        _safe_remove(dl)
+        await status.edit_text(f"Watermark failed:\n<code>{e}</code>"); return
+    _safe_remove(dl)
+    thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,out_name)
     dur=await _get_video_duration(out)
     await status.edit_text("Uploading…"); start_u=time.time()
     try:
         sent=await client.send_video(dest.chat.id,out,caption=cap,thumb=thumb,duration=dur,
-            progress=progress_for_pyrogram,progress_args=(status,start_u,fname,"to Telegram"),reply_to_message_id=dest.id)
+            progress=progress_for_pyrogram,progress_args=(status,start_u,out_name,"to Telegram"),reply_to_message_id=dest.id)
         try: await status.delete()
         except Exception: pass
         await log_output(client,dest.from_user,sent,"watermark added")
     except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
+    finally:
+        _safe_remove(out); _safe_remove(thumb)
 
 # ── Rename ────────────────────────────────────────────────────────────────────
 async def _do_rename(client, dest, orig, new_name):
