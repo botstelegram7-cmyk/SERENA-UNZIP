@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.9"
-BOT_CODENAME = "Direct Link Gateway Fix"
+BOT_VERSION  = "v3.12.10"
+BOT_CODENAME = "Five-Second ETA Updates"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.10": [
+        "ETA/progress panels now default to exactly 5-second update intervals",
+        "Progress edits are never sent faster than every 5 seconds to reduce Telegram rate-limit/FloodWait risk",
+        "YouTube API waiting and FFmpeg compression progress were aligned to the same 5-second cadence",
+    ],
     "v3.12.9": [
         "Direct token/download gateway links such as dl-worker.teraboxdl.site are now treated as direct files, not yt-dlp pages",
         "Markdown/rich Telegram links are extracted correctly instead of corrupting the URL with bracket text",
@@ -4160,7 +4165,7 @@ async def _do_compress(client, cq, tid, res):
                     f"🚀 Speed    : <b>{spd}</b>\n"
                     f"⏳ ETA      : <b>{eta}</b>")
 
-            try: await compress_video(dl,out,resolution=res,on_progress=_comp_progress,update_interval=5.5)
+            try: await compress_video(dl,out,resolution=res,on_progress=_comp_progress,update_interval=5.0)
             except Exception as e:
                 _safe_remove(dl)
                 await status.edit_text(f"Compression failed:\n<code>{e}</code>"); return

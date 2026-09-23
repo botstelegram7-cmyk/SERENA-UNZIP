@@ -1,4 +1,4 @@
-# utils/progress.py — beautiful ETA display, throttled to 5–6 seconds
+# utils/progress.py — beautiful ETA display, throttled to 5 seconds
 import asyncio
 import os
 import time
@@ -54,13 +54,15 @@ def _progress_key(message: Message) -> Tuple[int, int]:
 
 
 def _update_interval() -> float:
-    """Keep ETA edits in the requested 5–6 second window."""
+    """Keep ETA edits at a safe 5-second minimum to avoid Telegram flood waits."""
     raw = os.getenv("ETA_UPDATE_INTERVAL", str(getattr(Config, "PROGRESS_UPDATE_INTERVAL", 5) or 5))
     try:
         val = float(raw)
     except Exception:
-        val = 5.5
-    return max(5.0, min(6.0, val))
+        val = 5.0
+    # Never edit faster than every 5 seconds. Owners may raise the env value
+    # if their bot still hits rate limits, but the default is exactly 5s.
+    return max(5.0, val)
 
 
 def _dot_bar(percent: float, width: int = 20) -> str:
@@ -146,7 +148,7 @@ async def progress_for_pyrogram(
       • remaining time / ETA
       • elapsed time
 
-    Telegram edits are throttled to 5–6 seconds by default to avoid flood waits.
+    Telegram edits are throttled to 5 seconds by default to avoid flood waits.
     """
     if not message:
         return

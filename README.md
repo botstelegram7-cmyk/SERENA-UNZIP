@@ -235,7 +235,7 @@ uvicorn server:fastapi_app --host 0.0.0.0 --port 8000
 | `INSTAGRAM_COOKIES` | ⚠️ | Instagram cookies (Netscape or header format). **Strongly recommended** — Instagram blocks anonymous datacenter IPs. Required for Stories/Highlights. |
 | `QUEUE_END_GIF` | ⬜ | Giphy MP4 URL or Telegram sticker file_id — sent after each ZIP extract |
 | `TEMP_DIR` | ⬜ | Temp folder path (default: `./downloads`) |
-| `ETA_UPDATE_INTERVAL` | ⬜ | Progress/ETA edit delay in seconds. The bot clamps it to the requested 5–6 second window; default follows `PROGRESS_UPDATE_INTERVAL` or 5.5s. |
+| `ETA_UPDATE_INTERVAL` | ⬜ | Progress/ETA edit delay in seconds. Default: `5`. The bot will not edit faster than every 5 seconds to avoid Telegram rate limits; raise it if your host still gets FloodWaits. |
 | `COMPRESS_MAX_SOURCE_MB` | ⬜ | Max input size for video compression. Default: `1536` MB to protect small deploy disks; set `0` only on a large VPS. |
 | `COMPRESS_MIN_FREE_MB` | ⬜ | Free disk reserve required before compression starts. Default: `1024`. |
 | `COMPRESS_DISK_MULTIPLIER` | ⬜ | Safe disk multiplier for compression preflight. Default: `1.6`. |
@@ -368,7 +368,7 @@ API-created files are downloaded by the bot with the new ETA panel:
 ```
 
 The same display is used for Telegram uploads and TeraBox downloads. Updates are
-throttled to 5–6 seconds to avoid Telegram edit flood limits.
+throttled to 5 seconds by default to avoid Telegram edit flood limits.
 
 > Use this only for videos you own or have permission to download. YouTube's
 > Terms of Service and copyright rules still apply.

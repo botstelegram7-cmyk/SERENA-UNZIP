@@ -282,7 +282,7 @@ async def _run_actor_once(session: aiohttp.ClientSession, token: str,
         if elapsed > timeout:
             raise YouTubeApiError(f"YouTube API timed out after {human_time(int(elapsed))}")
 
-        await asyncio.sleep(5.5)
+        await asyncio.sleep(5.0)
         tick += 1
         await _show_waiting(status_message, source_url, quality, started, tick)
 
