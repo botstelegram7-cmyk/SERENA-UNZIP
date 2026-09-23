@@ -281,11 +281,16 @@ app = Client(
 # ── Version & changelog ──────────────────────────────────────────────────────
 # Bump BOT_VERSION on every user-visible release and add its entry to
 # CHANGELOG. /version renders this, so users always know what they are on.
-BOT_VERSION  = "v3.12.6"
-BOT_CODENAME = "YouTube Real Caption + Thumbnail"
+BOT_VERSION  = "v3.12.7"
+BOT_CODENAME = "Compression Reply Fix"
 BOT_RELEASED = "22 Sep 2026"
 
 CHANGELOG = {
+    "v3.12.7": [
+        "Fixed Compress button tasks that silently ignored resolution clicks from inline file action menus",
+        "Compression now gives clear replies for expired/missing/original-file errors instead of returning silently",
+        "Video compression now shows a live FFmpeg progress panel with progress, speed, output size, and ETA",
+    ],
     "v3.12.6": [
         "YouTube API uploads now use the real YouTube title/channel/description as the Telegram caption when available",
         "YouTube API uploads now fetch and attach the actual YouTube thumbnail instead of only generating a frame thumbnail",
@@ -1895,7 +1900,7 @@ async def file_command_handler(client, message):
     elif cmd=="pdf": await _trigger_pdf_tools(client,message,r,fname)
     elif cmd=="compress":
         if not await check_rate_limit(uid,message): return
-        await _trigger_compress(client,message,r,cid,mid)
+        await _trigger_compress(client,message,r,cid,mid,requester_id=uid)
     elif cmd=="split": await _trigger_split(client,message,r,cid,mid,fname)
     elif cmd=="audio": await handle_extract_audio(client,None,r,reply_to_msg=message)
     elif cmd=="unzip":
@@ -3318,9 +3323,9 @@ async def callbacks(client, cq: CallbackQuery):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
         except Exception: await cq.answer("File not found.",show_alert=True); return
-        await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid)); return
+        await cq.answer(); await _trigger_compress(client,cq.message,orig,int(cid),int(mid),requester_id=cq.from_user.id); return
     if data.startswith("comprq|"):
-        _,tid,res=data.split("|",2); await cq.answer(); await _do_compress(client,cq,tid,res); return
+        _,tid,res=data.split("|",2); await _do_compress(client,cq,tid,res); return
     if data.startswith("split|"):
         _,cid,mid=data.split("|",2)
         try: orig=await client.get_messages(int(cid),int(mid))
@@ -3951,15 +3956,23 @@ async def _handle_file_info(client, dest, orig):
     await status.edit_text(txt)
 
 # ── Compress ─────────────────────────────────────────────────────────────────
-async def _trigger_compress(client, dest, orig, cid, mid):
-    media=orig.video or orig.document
-    if not media or not is_video_file(media.file_name or ""): await dest.reply_text("Ye video is not available."); return
-    uid=dest.from_user.id if dest.from_user else 0
+async def _trigger_compress(client, dest, orig, cid, mid, requester_id: int = None):
+    media = orig.video or orig.document
+    fname = (getattr(media, "file_name", None) if media else None) or ("video.mp4" if getattr(orig, "video", None) else "file")
+    mime = (getattr(media, "mime_type", "") or "").lower() if media else ""
+    is_video_media = bool(getattr(orig, "video", None)) or is_video_file(fname) or mime.startswith("video/")
+    if not media or not is_video_media:
+        await dest.reply_text("Ye video is not available. Please reply to a video file with <code>/compress</code>.")
+        return
+    uid = requester_id or (dest.from_user.id if dest.from_user else 0)
+    if not uid:
+        await dest.reply_text("Could not identify the requester. Please try /compress again.")
+        return
     tid=uuid.uuid4().hex
     temp_root=Path(Config.TEMP_DIR)/str(uid)/tid; temp_root.mkdir(parents=True,exist_ok=True)
     await register_temp_path(uid,str(temp_root),Config.AUTO_DELETE_DEFAULT_MIN)
-    COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":media.file_name or "video.mp4"}
-    await dest.reply_text(f"Compress: <code>{media.file_name or 'video'}</code>\nResolution:",
+    COMPRESS_TASKS[tid]={"user_id":uid,"chat_id":cid,"msg_id":mid,"temp_root":str(temp_root),"fname":fname}
+    await dest.reply_text(f"Compress: <code>{fname}</code>\nResolution:",
         reply_markup=InlineKeyboardMarkup([
             [_btn("360p", f"comprq|{tid}|360", "primary"),_btn("480p", f"comprq|{tid}|480", "primary")],
             [_btn("720p", f"comprq|{tid}|720", "primary"),_btn("1080p", f"comprq|{tid}|1080", "primary")],
@@ -3967,39 +3980,79 @@ async def _trigger_compress(client, dest, orig, cid, mid):
 
 async def _do_compress(client, cq, tid, res):
     info=COMPRESS_TASKS.get(tid)
-    if not info: await cq.message.reply_text("Task expired."); return
+    if not info:
+        await cq.answer("Task expired.", show_alert=True)
+        try: await cq.message.reply_text("Compression task expired. Please run /compress again.")
+        except Exception: pass
+        return
     uid=cq.from_user.id
-    if uid!=info["user_id"]: return
+    if uid!=info["user_id"]:
+        await cq.answer("This compression task is not yours.", show_alert=True)
+        return
+    try: await cq.answer("Starting compression…")
+    except Exception: pass
     if not await check_rate_limit(uid,cq.message): return
-    orig=await client.get_messages(info["chat_id"],info["msg_id"])
+    try:
+        orig=await client.get_messages(info["chat_id"],info["msg_id"])
+    except Exception as e:
+        await cq.message.reply_text(f"Original video not found:\n<code>{e}</code>")
+        COMPRESS_TASKS.pop(tid,None)
+        return
     media=orig.video or orig.document
-    if not media: return
+    if not media:
+        await cq.message.reply_text("Original video is not available anymore.")
+        COMPRESS_TASKS.pop(tid,None)
+        return
     lock=get_lock(uid)
     if lock.locked(): await cq.message.reply_text("A task is already running."); return
-    async with lock:
-        temp_root=Path(info["temp_root"])
-        status=await cq.message.reply_text(f"Downloading for {res}p compression…"); start=time.time()
-        try:
-            dl=await client.download_media(media,file_name=str(temp_root),
-                progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
-        except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
-        out=str(temp_root/f"compressed_{res}p.mp4")
-        await status.edit_text(f"Compressing to {res}p…")
-        try: await compress_video(dl,out,resolution=res)
-        except Exception as e: await status.edit_text(f"Compression failed:\n<code>{e}</code>"); return
-        thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{Path(info['fname']).stem}_{res}p.mp4")
-        dur=await _get_video_duration(out)
-        await status.edit_text("Uploading…"); start_u=time.time()
-        try:
-            sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,duration=dur,
-                progress=progress_for_pyrogram,progress_args=(status,start_u,f"compressed_{res}p.mp4","to Telegram"),
-                reply_to_message_id=cq.message.id)
-            try: await status.delete()
-            except Exception: pass
-            await log_output(client,cq.from_user,sent,f"compressed {res}p")
-        except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
-        await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
-    COMPRESS_TASKS.pop(tid,None)
+    try:
+        async with lock:
+            temp_root=Path(info["temp_root"])
+            status=await cq.message.reply_text(f"Downloading for {res}p compression…"); start=time.time()
+            try:
+                dl=await client.download_media(media,file_name=str(temp_root),
+                    progress=progress_for_pyrogram,progress_args=(status,start,info["fname"],"to server"))
+            except Exception as e: await status.edit_text(f"Download failed:\n<code>{e}</code>"); return
+            out=str(temp_root/f"compressed_{res}p.mp4")
+            await status.edit_text(
+                f"🗜 <b>Compressing to {res}p</b>\n\n"
+                f"📄 <code>{info['fname']}</code>\n"
+                "[○○○○○○○○○○○○○○○○○○○○]\n"
+                "📊 Progress : starting…\n"
+                "⏳ ETA      : calculating…")
+
+            async def _comp_progress(pct, eta, spd, size_txt):
+                dots = 20
+                filled = max(0, min(dots, int(float(pct) / 100 * dots)))
+                bar = "●" * filled + "○" * (dots - filled)
+                await _safe_edit(status,
+                    f"🗜 <b>Compressing to {res}p</b>\n\n"
+                    f"📄 <code>{info['fname']}</code>\n"
+                    f"[{bar}]\n"
+                    f"📊 Progress : <b>{float(pct):.1f}%</b>\n"
+                    f"📦 Output   : <b>{size_txt}</b>\n"
+                    f"🚀 Speed    : <b>{spd}</b>\n"
+                    f"⏳ ETA      : <b>{eta}</b>")
+
+            try: await compress_video(dl,out,resolution=res,on_progress=_comp_progress,update_interval=5.5)
+            except Exception as e: await status.edit_text(f"Compression failed:\n<code>{e}</code>"); return
+            if not os.path.exists(out) or os.path.getsize(out) < 1024:
+                await status.edit_text("Compression failed: output file was not created."); return
+            thumb=await choose_thumbnail(uid,out); cap=await build_caption(uid,f"{Path(info['fname']).stem}_{res}p.mp4")
+            dur=await _get_video_duration(out)
+            await status.edit_text("Uploading compressed video…"); start_u=time.time()
+            try:
+                sent=await client.send_video(cq.message.chat.id,out,caption=cap,thumb=thumb,duration=dur,
+                    supports_streaming=True,
+                    progress=progress_for_pyrogram,progress_args=(status,start_u,f"compressed_{res}p.mp4","to Telegram"),
+                    reply_to_message_id=cq.message.id)
+                try: await status.delete()
+                except Exception: pass
+                await log_output(client,cq.from_user,sent,f"compressed {res}p")
+            except Exception as e: await status.edit_text(f"Upload failed:\n<code>{e}</code>")
+            await update_user_stats(uid,os.path.getsize(dl)/(1024*1024))
+    finally:
+        COMPRESS_TASKS.pop(tid,None)
 
 # ── Split ────────────────────────────────────────────────────────────────────
 async def _trigger_split(client, dest, orig, cid, mid, fname):
